@@ -1016,9 +1016,10 @@ def sim_verify(recipe, blocks, io, seed=7, quiet=False):
                     ron[c] = v
                     push_dependents(kind, c)
         return ({net: any(pw.get((cell[0] + dx, cell[1] + dz), 0) >= 1
-                          for dx, dz in DIRS)
-                 for cell, net in lampnet.items()},
-                {c: v for c, v in pw.items() if v})
+                         for dx, dz in DIRS)
+                for cell, net in lampnet.items()},
+                {c: v for c, v in pw.items() if v},
+                {c: 1 if tl.get(c, False) else 0 for c in torch})
 
     ins = recipe["inputs"]
     if 2 ** len(ins) <= 4096:
@@ -1032,7 +1033,7 @@ def sim_verify(recipe, blocks, io, seed=7, quiet=False):
     bad = []
     lastlive = {}
     for vec in combos:
-        got, live = run(vec)
+        got, live, _tl = run(vec)
         exp = eval_net(recipe, vec)
         for net in recipe["outputs"]:
             if bool(got.get(net, False)) != bool(exp[net]):
