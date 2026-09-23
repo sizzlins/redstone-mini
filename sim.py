@@ -201,7 +201,8 @@ def sim_verify(recipe, blocks, io, seed=7, quiet=False, collect=False):
                 for cell, net in lampnet.items()},
                 {c: v for c, v in pw.items() if v},
                 {c: 1 if tl.get(c, False) else 0 for c in torch},
-                ticks[0])
+                ticks[0],
+                {c: 1 if ron.get(c, False) else 0 for c in rep})
 
     ins = recipe["inputs"]
     if 2 ** len(ins) <= 4096:
@@ -221,7 +222,7 @@ def sim_verify(recipe, blocks, io, seed=7, quiet=False, collect=False):
                   "lamps": {f"{x},{z}": n for (x, z), n in io["lamps"].items()},
                   "vectors": {}}
     for vec in combos:
-        got, live, tlive, nticks = run(vec)
+        got, live, tlive, nticks, rlive = run(vec)
         exp = eval_net(recipe, vec)
         for net in recipe["outputs"]:
             if bool(got.get(net, False)) != bool(exp[net]):
@@ -234,7 +235,8 @@ def sim_verify(recipe, blocks, io, seed=7, quiet=False, collect=False):
                 "t": {f"{x},{z}": v for (x, z), v in tlive.items()},
                 "lamps": {f"{x},{z}": 1 if got.get(net, False) else 0
                           for (x, z), net in io["lamps"].items()},
-                "ticks": nticks}
+                "ticks": nticks,
+                "r": {f"{x},{z}": v for (x, z), v in rlive.items()}}
     if bad:
         raise RuntimeError(f"SIM MISMATCH x{len(bad)}: {bad[:4]} live: {sorted(lastlive.items())}")
     if not quiet:
