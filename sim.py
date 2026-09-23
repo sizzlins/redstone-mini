@@ -35,7 +35,8 @@ def sim_verify(recipe, blocks, io, seed=7, quiet=False, collect=False):
     """Independent redstone simulation of the PLACED build (ignores layout nets).
     Plays input vectors through torch/dust physics to a fixed point, compares
     lamps against eval_net. Catches opens/shorts the static guards can't see.
-    # ponytail: flat single-level physics only (all our builds are); delay unmodeled.
+    # ponytail: flat single-level physics only (all our builds are); vanilla
+    # tick delays (torch +1, repeater +its delay stage).
     """
     import random as _r
     dust, torch, lampat, rep, rblk, cob = set(), {}, set(), {}, set(), set()
@@ -238,4 +239,19 @@ def sim_verify(recipe, blocks, io, seed=7, quiet=False, collect=False):
     if not quiet:
         print(f"sim ok: {len(combos)} vectors, lamps match logic")
     return states
+
+
+if __name__ == "__main__":
+    # ponytail: one runnable check — delay-4 chain must settle at exactly tick 4.
+    _blocks = [(1, 1, 0, "minecraft:repeater[facing=east,delay=4]"),
+               (2, 1, 0, "minecraft:redstone_wire"),
+               (3, 1, 0, "minecraft:redstone_lamp")]
+    _io = {"levers": {(0, 0): "a"}, "lamps": {(3, 0): "y"}, "nets": {}}
+    _recipe = {"inputs": ["a"], "outputs": ["y"],
+               "gates": [{"out": "y", "op": "OR", "args": ["a", "a"]}]}
+    _st = sim_verify(_recipe, _blocks, _io, quiet=True, collect=True)
+    assert _st["vectors"]["1"]["lamps"] == {"3,0": 1}, _st["vectors"]["1"]
+    assert _st["vectors"]["1"]["ticks"] == 4, _st["vectors"]["1"]["ticks"]
+    assert _st["vectors"]["0"]["lamps"] == {"3,0": 0}, _st["vectors"]["0"]
+    print("tick ok: delay-4 settles at tick 4")
 
