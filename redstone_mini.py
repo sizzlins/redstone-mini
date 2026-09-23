@@ -103,6 +103,12 @@ COLORS = {"minecraft:stone": 0x8a8a8a, "minecraft:redstone_wire": 0xe02020,
           "minecraft:iron_block": 0xd8dee6, "minecraft:gold_block": 0xf5c542,
           "minecraft:diamond_block": 0x4de3e3, "minecraft:redstone_block": 0xb01010,
           "minecraft:lever": 0x7a5a2e, "minecraft:redstone_lamp": 0xffa726}
+# ponytail: textures stream from your fork at runtime, no PNGs in this repo. Flat color stays as offline fallback.
+TEXBASE = "https://raw.githubusercontent.com/sizzlins/minecraft-assets/master/data/1.21.8/blocks/"
+TEXMAP = {"minecraft:stone": "stone.png", "minecraft:redstone_wire": "redstone_dust_dot.png",
+          "minecraft:iron_block": "iron_block.png", "minecraft:gold_block": "gold_block.png",
+          "minecraft:diamond_block": "diamond_block.png", "minecraft:redstone_block": "redstone_block.png",
+          "minecraft:lever": "lever.png", "minecraft:redstone_lamp": "redstone_lamp_on.png"}
 
 def export_mcfunction(blocks, path, oy=64):
     with open(path, "w") as f:
@@ -114,11 +120,12 @@ def export_mcfunction(blocks, path, oy=64):
 
 def export_html(blocks, size, path):
     W, D = size
-    data = [{"p": [x, y, z], "c": COLORS.get(b, 0xffffff), "b": b} for x, y, z, b in blocks]
+    data = [{"p": [x, y, z], "c": COLORS.get(b, 0xffffff), "b": b,
+             "t": TEXBASE + TEXMAP.get(b, "stone.png")} for x, y, z, b in blocks]
     html = """<!doctype html><html><head><meta charset=utf-8><title>redstone build</title>
 <style>body{margin:0;font-family:sans-serif}#t{position:fixed;top:8px;left:8px;background:#111;color:#fff;padding:8px 12px;border-radius:8px}</style>
 <script type="importmap">{"imports":{"three":"https://unpkg.com/three@0.160.0/build/three.module.js","three/addons/":"https://unpkg.com/three@0.160.0/examples/jsm/"}}</script>
-</head><body><div id=t>drag to orbit, scroll to zoom — red tall = wire, metal = gates</div>
+</head><body><div id=t>drag to orbit, scroll to zoom — textures from your minecraft-assets fork</div>
 <script type="module">import * as T from 'three';import {OrbitControls} from 'three/addons/controls/OrbitControls.js';
 const B=DATA;const s=new T.Scene();s.background=new T.Color(0x1a2028);
 const cam=new T.PerspectiveCamera(50,innerWidth/innerHeight,.1,1000);cam.position.set(12,12,16);
@@ -126,7 +133,16 @@ const r=new T.WebGLRenderer({antialias:true});r.setSize(innerWidth,innerHeight);
 const c=new OrbitControls(cam,r.domElement);c.target.set(CX,0,CZ);
 s.add(new T.AmbientLight(0xffffff,.9));const d=new T.DirectionalLight(0xffffff,.8);d.position.set(10,20,10);s.add(d);
 const g=new T.BoxGeometry(.92,.92,.92);
-for(const b of B){const m=new T.Mesh(g,new T.MeshLambertMaterial({color:b.c}));m.position.set(b.p[0],b.p[1],b.p[2]);s.add(m);}
+const loader=new T.TextureLoader();loader.setCrossOrigin('anonymous');
+const matCache={};
+function matFor(b){if(matCache[b.b])return matCache[b.b];
+ const tex=loader.load(b.t,(t)=>{t.magFilter=T.NearestFilter;t.colorSpace=T.SRGBColorSpace;});
+ tex.magFilter=T.NearestFilter;tex.colorSpace=T.SRGBColorSpace;
+ const m=new T.MeshLambertMaterial({color:0xffffff,map:tex});
+ matCache[b.b]=m;return m;}
+const flatG=new T.BoxGeometry(.92,.18,.92);
+for(const b of B){const isWire=b.b==='minecraft:redstone_wire';
+ const m=new T.Mesh(isWire?flatG:g,matFor(b));m.position.set(b.p[0],b.p[1]+(isWire?-0.37:0),b.p[2]);s.add(m);}
 (function a(){requestAnimationFrame(a);c.update();r.render(s,cam);})();</script></body></html>"""
     html = html.replace("DATA", json.dumps(data)).replace("CX", str(W / 2)).replace("CZ", str(D / 2))
     open(path, "w").write(html)
