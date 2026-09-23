@@ -157,7 +157,7 @@ def layout(recipe, seed=None):
     banded = any(g.get("band") is not None for g in gates)
     if banded:
         maxband = max(g.get("band", -1) for g in gates)
-        W = 6 + (maxband + 1) * 16 + 10
+        W = 6 + (maxband + 1) * 24 + 10
         counts = {}
         for g in gates:
             b = g.get("band", -1)
@@ -288,7 +288,7 @@ def layout(recipe, seed=None):
         else:
             gz = bandnext.get(b, 12)
             bandnext[b] = gz + 14
-            ox = 6 + b * 16
+            ox = 6 + b * 24
         op, o, a = g["op"], g["out"], g["args"]
         if op == "OR":
             # repeater-isolated OR (wiki): diodes sit on their drivers' side,
