@@ -76,10 +76,11 @@ def expand_gates(gates):
             op, o, a = g["op"], g["out"], g["args"]
             if op == "XOR":
                 t1, t2, t3 = T("xo"), T("xa"), T("xn")
-                nxt += [{"out": t1, "op": "OR", "args": [a[0], a[1]]},
-                        {"out": t2, "op": "AND", "args": [a[0], a[1]]},
-                        {"out": t3, "op": "NOT", "args": [t2]},
-                        {"out": o, "op": "AND", "args": [t1, t3]}]
+                bd = g.get("band")
+                nxt += [{"out": t1, "op": "OR", "args": [a[0], a[1]], "band": bd},
+                        {"out": t2, "op": "AND", "args": [a[0], a[1]], "band": bd},
+                        {"out": t3, "op": "NOT", "args": [t2], "band": bd},
+                        {"out": o, "op": "AND", "args": [t1, t3], "band": bd}]
                 changed = True
             else:
                 nxt.append(g)
@@ -153,10 +154,19 @@ def astar(starts, goal, net, W, D, solid, rings, wires, junctions, margin=None):
 
 def layout(recipe, seed=None):
     gates = expand_gates(recipe["gates"])
-    W = max(30, len(recipe["inputs"]) * 3 + 10)
+    banded = any(g.get("band") is not None for g in gates)
+    if banded:
+        maxband = max(g.get("band", -1) for g in gates)
+        W = 6 + (maxband + 1) * 16 + 10
+        counts = {}
+        for g in gates:
+            b = g.get("band", -1)
+            counts[b] = counts.get(b, 0) + 1
+        D = 12 + max(counts.values()) * 14 + 12
+    else:
+        W = max(30, len(recipe["inputs"]) * 3 + 10)
+        D = 12 + len(gates) * 14 + 12
     cx = W // 2
-    rows = len(gates)
-    D = 12 + rows * 14 + 12
     blocks = []  # (x, y, z, block-id [+state])
     solid, rings, wires, junctions, repeaters, paths = {}, {}, {}, {}, {}, []
     FLOOR = "minecraft:stone"
@@ -208,29 +218,31 @@ def layout(recipe, seed=None):
         paths.append((path, net))
         return path
 
-    # compact: each lever sits on its first load's row, each lamp on its
-    # driver's row. Feed rows are globally distinct (pitch 14 > offsets 0..5),
-    # so feeds never share a row and marathons disappear.
-    rows = [12 + i * 14 for i in range(len(gates))]
-    firstload = {}
-    for i, g in enumerate(gates):
-        if g["op"] == "AND":
-            for a, off in zip(g["args"], (0, 3)):
-                firstload[a] = min(firstload.get(a, 1e9), rows[i] + off)
-        else:
-            for a in g["args"]:
-                firstload[a] = min(firstload.get(a, 1e9), rows[i])
+    # levers batch 1: inputs whose first load is an OR junction. Unbanded sit
+    # top-left; banded sit by their band (short hops, no marathons). The
+    # junction taps their feed in place. Others get levers by their load
+    # ports after placement (zero-wire taps, no maze).
+    firstuse = {}
+    for g in gates:
+        for k, a in enumerate(g["args"]):
+            if a not in firstuse:
+                firstuse[a] = (g["op"], k, g.get("band"))
     pos = {}
     for idx, name in enumerate(recipe["inputs"]):
-        if name not in firstload:
+        if name not in firstuse:
             continue  # unused input: no lever
-        x, rz = 2 + idx * 3, firstload[name]
-        blocks.append((x, 1, rz, "minecraft:lever"))
-        solid[(x, rz)] = ("lever", name)
+        op, role, band = firstuse[name]
+        if op != "OR":
+            continue  # placed by load port later
+        x = 16 * band + (2 if role == 0 else 5) if band is not None else 2 + idx * 3
+        if (x, 6) in solid or (x, 6) in wires or (x + 1, 6) in solid or (x + 1, 6) in wires:
+            raise RuntimeError(f"lever spot taken for {name} at {(x, 6)}")
+        blocks.append((x, 1, 6, "minecraft:lever"))
+        solid[(x, 6)] = ("lever", name)
         for dx, dz in DIRS:
-            ring(x + dx, rz + dz, own(name))
-        wires[(x + 1, rz)] = name
-        pos[name] = (x + 1, rz)
+            ring(x + dx, 6 + dz, own(name))
+        wires[(x + 1, 6)] = name
+        pos[name] = (x + 1, 6)
     if any(a in ("0", "1") for g in gates for a in g["args"]):
         wires[(0, 3)] = "0"
         pos["0"] = (0, 3)
@@ -272,41 +284,47 @@ def layout(recipe, seed=None):
         stamp_wire([(ox - 2, gz), (ox - 1, gz)], A)
         stamp_wire([(ox - 2, gz + 3), (ox - 1, gz + 3)], B)
         stamp_wire([(ox + 2, gz), (ox + 2, gz + 1)], na)
-        stamp_wire([(ox + 2, gz + 3), (ox + 3, gz + 3), (ox + 4, gz + 3),
-                    (ox + 4, gz + 2), (ox + 3, gz + 2)], nb)
+        # ponytail: ~B hugs the west side on purpose. It must never touch the
+        # NOR torch (ox+4,gz+1): torch->wire->block->torch is a ring oscillator
+        # that blinks instead of computing whenever both NOTs are off.
+        stamp_wire([(ox + 2, gz + 3), (ox + 3, gz + 3), (ox + 3, gz + 2)], nb)
         stamp_wire([(ox + 5, gz + 1), (ox + 6, gz + 1)], O)
         return (ox - 2, gz), (ox - 2, gz + 3), (ox + 6, gz + 1)
 
     recs = []
-    outrow = {}
+    bandnext = {}
+    firstport = {}  # input -> port cell of its first AND/NOT load
     for i, g in enumerate(gates):
-        gz = rows[i]
-        ox = cx
+        b = g.get("band")
+        if b is None:
+            gz, ox = 12 + i * 14, cx
+        else:
+            gz = bandnext.get(b, 12)
+            bandnext[b] = gz + 14
+            ox = 6 + b * 16
         op, o, a = g["op"], g["out"], g["args"]
         if op == "OR":
-            # junction taps driver-A in place (zero wire); only driver-B routes.
-            ax, az = pos[a[0]]
-            j = None
-            for dx, dz in ((1, 0), (0, 1), (0, -1), (-1, 0)):
-                c = (ax + dx, az + dz)
-                if c in solid or c in wires or c in rings:
-                    continue
-                j = c
-                break
-            if j is None:
-                j = (ox, gz)
-                route(pos[a[0]], j, a[0])
-            else:
-                wires[j] = a[0]
-            junctions[j] = {a[0], a[1], o}
+            # repeater-isolated OR (wiki): each input passes a diode into the
+            # junction, so a live input can never back-drive the other net.
+            j = (ox, gz)
+            ra, rb = (ox - 1, gz), (ox, gz - 1)
+            for c in (j, ra, rb):
+                if c in solid or c in wires:
+                    raise RuntimeError(f"OR cell blocked at {c}")
+            blocks.append((ra[0], 1, ra[1], "minecraft:repeater[facing=east,delay=1]"))
+            solid[ra] = ("repeater", o)
+            blocks.append((rb[0], 1, rb[1], "minecraft:repeater[facing=south,delay=1]"))
+            solid[rb] = ("repeater", o)
+            wires[j] = o
+            junctions[j] = {o}
             pos[o] = j
-            outrow[o] = gz
-            recs.append((op, o, a, (j, j != (ox, gz))))
+            recs.append((op, o, a, (j, ra, rb)))
             continue
         if op == "AND":
             pa, pb, po = stamp_and(ox, gz, a[0], a[1], o)
             pos[o] = po
-            outrow[o] = gz + 1
+            for sig, port in ((a[0], pa), (a[1], pb)):
+                firstport.setdefault(sig, port)
             recs.append((op, o, a, (pa, pb, po)))
             continue
         if op != "NOT":
@@ -322,26 +340,43 @@ def layout(recipe, seed=None):
             raise RuntimeError(f"out cell blocked at {(bx + 2, bz)}")
         wires[(bx + 2, bz)] = o
         pos[o] = (bx + 2, bz)
-        outrow[o] = gz
+        firstport.setdefault(a[0], (bx - 1, bz))
         recs.append((op, o, a, (bx, bz)))
 
-    for name in recipe["outputs"]:
-        dr = outrow[name]
-        blocks.append((W - 2, 1, dr, "minecraft:redstone_lamp"))
-        solid[(W - 2, dr)] = ("lamp", name)
+    for idx, name in enumerate(recipe["inputs"]):
+        if name not in firstport or name in pos:
+            continue  # unused, or OR-first (already placed)
+        px, pz = firstport[name]
+        lx, fx = px - 2, px - 1
+        if (lx, pz) in solid or (lx, pz) in wires or (fx, pz) in solid or (fx, pz) in wires:
+            raise RuntimeError(f"lever spot taken for {name} at {(lx, pz)}")
+        blocks.append((lx, 1, pz, "minecraft:lever"))
+        solid[(lx, pz)] = ("lever", name)
         for dx, dz in DIRS:
-            ring(W - 2 + dx, dr + dz, own(name))
-        recs.append(("OUT", name, [name], (W - 3, dr)))
+            ring(lx + dx, pz + dz, own(name))
+        stamp_wire([(fx, pz)], name)  # touches port stub: zero-wire tap
+        pos[name] = (fx, pz)
+
+    for name in recipe["outputs"]:
+        ox_, oz = pos[name]
+        fx, lx = ox_ + 1, ox_ + 2
+        if (lx, oz) in solid or (lx, oz) in wires or (fx, oz) in solid or (fx, oz) in wires:
+            raise RuntimeError(f"lamp spot taken for {name} at {(lx, oz)}")
+        stamp_wire([(fx, oz)], name)  # touches out stub: zero-wire tap
+        blocks.append((lx, 1, oz, "minecraft:redstone_lamp"))
+        solid[(lx, oz)] = ("lamp", name)
+        for dx, dz in DIRS:
+            ring(lx + dx, oz + dz, own(name))
+        recs.append(("OUT", name, [name], (fx, oz)))
 
     # phase 2: route every net through the finished field, shortest hops first
     # so long runs maze around settled locals instead of fencing them in.
     tasks = []
     for op, o, a, cell in recs:
         if op == "OR":
-            j, tapped = cell
-            if not tapped:
-                tasks.append((pos[a[0]], j, a[0]))
-            tasks.append((pos[a[1]], j, a[1]))
+            j, ra, rb = cell
+            tasks += [(pos[a[0]], (ra[0] - 1, ra[1]), a[0]),
+                      (pos[a[1]], (rb[0], rb[1] - 1), a[1])]
         elif op == "AND":
             pa, pb, po = cell
             tasks += [(pos[a[0]], pa, a[0]), (pos[a[1]], pb, a[1])]
@@ -384,22 +419,36 @@ def layout(recipe, seed=None):
                 paths.remove((p, m))
         pending = [(s, t, net)] + block_tasks + pending
 
-    # repeaters: dust dies after 15 blocks; boost straight runs in-line (sides stay isolated).
+    # repeaters: dust dies after 15 blocks. Backward cover from each goal:
+    # every path cell ends within 14 of a booster-or-source behind it.
+    def is_straight(path, i):
+        if i <= 0 or i >= len(path) - 1:
+            return False
+        (x0, z0), (x1, z1), (x2, z2) = path[i - 1], path[i], path[i + 1]
+        return (x0 == x1 == x2) or (z0 == z1 == z2)
+
+    def place_rep(path, net, j):
+        (x0, z0), (x1, z1) = path[j - 1], path[j]
+        dx, dz = x1 - x0, z1 - z0
+        facing = {(1, 0): "east", (-1, 0): "west", (0, 1): "south", (0, -1): "north"}[(dx, dz)]
+        for f in ((x1 + dx, z1 + dz), (x1 - dx, z1 - dz)):
+            w = wires.get(f)
+            if w is not None and w != net:
+                raise RuntimeError(f"repeater guard {net} vs {w} at {f}")
+        del wires[(x1, z1)]
+        repeaters[(x1, z1)] = (net, facing)
+
     for path, net in paths:
-        last = 0
-        for i in range(1, len(path) - 1):
-            (x0, z0), (x1, z1), (x2, z2) = path[i - 1], path[i], path[i + 1]
-            straight = (x0 == x1 == x2) or (z0 == z1 == z2)
-            if i - last >= 14 and straight and i < len(path) - 2:
-                dx, dz = x1 - x0, z1 - z0
-                facing = {(1, 0): "east", (-1, 0): "west", (0, 1): "south", (0, -1): "north"}[(dx, dz)]
-                for f in ((x1 + dx, z1 + dz), (x1 - dx, z1 - dz)):
-                    w = wires.get(f)
-                    if w is not None and w != net:
-                        raise RuntimeError(f"repeater guard {net} vs {w} at {f}")
-                del wires[(x1, z1)]
-                repeaters[(x1, z1)] = (net, facing)
-                last = i
+        n = len(path)
+        i = n - 1
+        while i > 14:
+            cands = [j for j in range(max(1, i - 14), min(i - 1, n - 1) + 1)
+                     if is_straight(path, j)]
+            if not cands:
+                raise RuntimeError(f"unboostable gap on {net} near index {i} (twisty path)")
+            j = min(cands)
+            place_rep(path, net, j)
+            i = j
 
     # checker: no two nets may share/side-touch dust, except at OR junctions.
     for (x, z), net in wires.items():
@@ -450,7 +499,10 @@ def layout(recipe, seed=None):
     for x in range(W):
         for z in range(D):
             out.append((x, 0, z, "minecraft:stone"))
-    return sorted(out), (W, D)
+    io = {"levers": {c: n for c, (k, n) in solid.items() if k == "lever"},
+          "lamps": {c: n for c, (k, n) in solid.items() if k == "lamp"},
+          "nets": dict(wires)}
+    return sorted(out), (W, D), io
 
 COLORS = {"minecraft:stone": 0x8a8a8a, "minecraft:redstone_wire": 0xe02020,
           "minecraft:cobblestone": 0x7a7a7a, "minecraft:redstone_wall_torch": 0xd83a00,
@@ -462,12 +514,22 @@ TEXMAP = {"minecraft:stone": "stone.png", "minecraft:cobblestone": "cobblestone.
           "minecraft:redstone_lamp": "redstone_lamp_on.png",
           "minecraft:redstone_block": "redstone_block.png", "minecraft:repeater": "repeater.png"}
 
-def layout_retry(recipe, tries=12):
-    """Randomized-restart maze routing: reshuffle net order until the field fits."""
+def layout_retry(recipe, tries=12, verify=False):
+    """Randomized-restart maze routing: reshuffle net order until the field fits.
+    With verify, keep going until the placed build also passes redstone sim
+    (generate-and-test: the sim is the selector, not just the guard)."""
     last = None
     for t in range(tries):
         try:
-            return layout(recipe, seed=None if t == 0 else t)
+            out = layout(recipe, seed=None if t == 0 else t)
+        except RuntimeError as e:
+            last = e
+            continue
+        if not verify:
+            return out
+        try:
+            sim_verify(recipe, out[0], out[2], quiet=True)
+            return out
         except RuntimeError as e:
             last = e
     raise last
@@ -560,19 +622,182 @@ y = t OR c
 """
 
 def build_adder8():
-    """8-bit ripple-carry adder. 5 two-input gates per bit, no new gate types."""
+    """8-bit ripple-carry adder. Bit i lives in band i (datapath columns)."""
     ins = [f"A{i}" for i in range(8)] + [f"B{i}" for i in range(8)]
     gates = []
     for i in range(8):
         a, b, cin, cout = f"A{i}", f"B{i}", f"C{i}", f"C{i+1}"
         if i == 0:
             cin = "0"
-        gates += [{"out": f"X{i}", "op": "XOR", "args": [a, b]},
-                  {"out": f"S{i}", "op": "XOR", "args": [f"X{i}", cin]},
-                  {"out": f"T{i}", "op": "AND", "args": [a, b]},
-                  {"out": f"U{i}", "op": "AND", "args": [f"X{i}", cin]},
-                  {"out": cout, "op": "OR", "args": [f"T{i}", f"U{i}"]}]
+        gates += [{"out": f"X{i}", "op": "XOR", "args": [a, b], "band": i},
+                  {"out": f"S{i}", "op": "XOR", "args": [f"X{i}", cin], "band": i},
+                  {"out": f"T{i}", "op": "AND", "args": [a, b], "band": i},
+                  {"out": f"U{i}", "op": "AND", "args": [f"X{i}", cin], "band": i},
+                  {"out": cout, "op": "OR", "args": [f"T{i}", f"U{i}"], "band": i}]
     return {"inputs": ins, "outputs": [f"S{i}" for i in range(8)] + ["C8"], "gates": gates}
+
+def sim_verify(recipe, blocks, io, seed=7, quiet=False):
+    """Independent redstone simulation of the PLACED build (ignores layout nets).
+    Plays input vectors through torch/dust physics to a fixed point, compares
+    lamps against eval_net. Catches opens/shorts the static guards can't see.
+    # ponytail: flat single-level physics only (all our builds are); delay unmodeled.
+    """
+    import random as _r
+    from collections import deque
+    dust, torch, lampat, rep, rblk, cob = set(), {}, set(), {}, set(), set()
+    for x, y, z, bid in blocks:
+        if y != 1:
+            continue
+        b, c = base(bid), (x, z)
+        if b == "minecraft:redstone_wire":
+            dust.add(c)
+        elif b == "minecraft:redstone_wall_torch":
+            face = bid.split("facing=")[1].rstrip("]") if "facing=" in bid else "east"
+            back = {"east": (-1, 0), "west": (1, 0), "south": (0, -1), "north": (0, 1)}[face]
+            torch[c] = (c[0] + back[0], c[1] + back[1])
+        elif b == "minecraft:redstone_lamp":
+            lampat.add(c)
+        elif b == "minecraft:repeater":
+            face = bid.split("facing=")[1].split(",")[0] if "facing=" in bid else "east"
+            rep[c] = {"east": (1, 0), "west": (-1, 0), "south": (0, 1), "north": (0, -1)}[face]
+        elif b == "minecraft:redstone_block":
+            rblk.add(c)
+        elif b == "minecraft:cobblestone":
+            cob.add(c)
+    lever = dict(io["levers"])
+    lampnet = dict(io["lamps"])
+    attach_rev = {}
+    for t, a in torch.items():
+        attach_rev.setdefault(a, []).append(t)
+
+    def run(vec):
+        # signal levels 0-15 (dust loses 1 per block). Levels drain phantom
+        # latches that boolean models can't: no source => decays to 0.
+        pw, pb, pbs, tl, ron = {}, {}, {}, {}, {}
+        for c in torch:
+            tl[c] = False
+        q = deque()
+        q.extend(("d", c) for c in dust)
+        q.extend(("c", c) for c in cob)
+        q.extend(("t", c) for c in torch)
+        q.extend(("r", c) for c in rep)
+
+        def push_dependents(kind, c):
+            for dx, dz in DIRS:
+                m = (c[0] + dx, c[1] + dz)
+                if m in dust:
+                    q.append(("d", m))
+                elif m in cob:
+                    q.append(("c", m))
+                elif m in rep:
+                    d = rep[m]
+                    if (m[0] - d[0], m[1] - d[1]) == c:
+                        q.append(("r", m))
+
+        def dust_lvl(c):
+            lv = 0
+            for dx, dz in DIRS:
+                m = (c[0] + dx, c[1] + dz)
+                if m in torch and tl.get(m, False):
+                    return 15
+                if m in lever and vec.get(lever[m], False):
+                    return 15
+                if m in rblk:
+                    return 15
+                if m in cob and pbs.get(m, False):
+                    return 15
+                if m in dust:
+                    lv = max(lv, pw.get(m, 0) - 1)
+                if m in rep:
+                    d = rep[m]
+                    if (m[0] + d[0], m[1] + d[1]) == c and ron.get(m, False):
+                        return 15
+            return max(lv, 0)
+
+        def cob_state(c):
+            pwrd, strong = False, False
+            for dx, dz in DIRS:
+                m = (c[0] + dx, c[1] + dz)
+                if m in dust and pw.get(m, 0) >= 1:
+                    pwrd = True
+                if m in rblk:
+                    pwrd, strong = True, True
+                if m in rep:
+                    d = rep[m]
+                    if (m[0] + d[0], m[1] + d[1]) == c and ron.get(m, False):
+                        pwrd, strong = True, True
+            return pwrd, strong
+
+        def rep_on(c):
+            d = rep[c]
+            b = (c[0] - d[0], c[1] - d[1])
+            if b in dust and pw.get(b, 0) >= 1:
+                return True
+            if b in cob and pb.get(b, False):
+                return True
+            if b in lever and vec.get(lever[b], False):
+                return True
+            return b in rblk
+
+        n = 0
+        from collections import Counter as _Counter
+        hot = _Counter()
+        while q:
+            n += 1
+            if n > 20000:
+                live = {c: v for c, v in pw.items() if v}
+                raise RuntimeError(f"sim not settling on {vec}. live: {sorted(live.items())} torches: {tl} ron: {ron}")
+            kind, c = q.popleft()
+            hot[(kind, c)] += 1
+            if kind == "d":
+                v = dust_lvl(c)
+                if pw.get(c, 0) != v:
+                    pw[c] = v
+                    push_dependents(kind, c)
+            elif kind == "c":
+                v, s = cob_state(c)
+                if pb.get(c, False) != v or pbs.get(c, False) != s:
+                    pb[c], pbs[c] = v, s
+                    push_dependents(kind, c)
+                    for t in attach_rev.get(c, []):
+                        q.append(("t", t))
+            elif kind == "t":
+                v = not pb.get(torch[c], False)
+                if tl.get(c, False) != v:
+                    tl[c] = v
+                    push_dependents(kind, c)
+            elif kind == "r":
+                v = rep_on(c)
+                if ron.get(c, False) != v:
+                    ron[c] = v
+                    push_dependents(kind, c)
+        return ({net: any(pw.get((cell[0] + dx, cell[1] + dz), 0) >= 1
+                          for dx, dz in DIRS)
+                 for cell, net in lampnet.items()},
+                {c: v for c, v in pw.items() if v})
+
+    ins = recipe["inputs"]
+    if 2 ** len(ins) <= 4096:
+        combos = [{ins[j]: (k >> j) & 1 for j in range(len(ins))} for k in range(2 ** len(ins))]
+    else:
+        rr = _r.Random(seed)
+        combos = [{n: 0 for n in ins}, {n: 1 for n in ins},
+                  {n: j % 2 for j, n in enumerate(ins)},
+                  {n: (j + 1) % 2 for j, n in enumerate(ins)}]
+        combos += [{n: rr.randint(0, 1) for n in ins} for _ in range(60)]
+    bad = []
+    lastlive = {}
+    for vec in combos:
+        got, live = run(vec)
+        exp = eval_net(recipe, vec)
+        for net in recipe["outputs"]:
+            if bool(got.get(net, False)) != bool(exp[net]):
+                bad.append((vec, net, got.get(net), bool(exp[net])))
+                lastlive = live
+    if bad:
+        raise RuntimeError(f"SIM MISMATCH x{len(bad)}: {bad[:4]} live: {sorted(lastlive.items())}")
+    if not quiet:
+        print(f"sim ok: {len(combos)} vectors, lamps match logic")
 
 def demo():
     r = parse_recipe(DEMO)
@@ -581,7 +806,7 @@ def demo():
             for c in (0, 1):
                 got = eval_net(r, {"a": a, "b": b, "c": c})["y"]
                 assert got == ((a and b) or c), (a, b, c, got)
-    blocks, size = layout_retry(r)
+    blocks, size, io = layout_retry(r, verify=True)
     assert any(base(b) == "minecraft:cobblestone" for *_, b in blocks), "gate block missing"
     assert any(base(b) == "minecraft:redstone_wall_torch" for *_, b in blocks), "torch missing"
     export_mcfunction(blocks, "build.mcfunction")
@@ -596,7 +821,7 @@ def demo_alu8():
         got = eval_net(r, v)
         s = sum(got[f"S{i}"] << i for i in range(8))
         assert (s, got["C8"]) == ((a + b) & 255, (a + b) >> 8), (a, b, s)
-    blocks, size = layout_retry(r)
+    blocks, size, io = layout_retry(r, verify=True)
     export_mcfunction(blocks, "build_alu8.mcfunction")
     export_html(blocks, size, "build_alu8.html", "8-bit adder")
     print(f"alu8 ok: {len(blocks)} blocks -> build_alu8.html + build_alu8.mcfunction")
@@ -608,7 +833,7 @@ if __name__ == "__main__":
     elif len(sys.argv) > 1:  # custom recipe file
         text = open(sys.argv[1]).read()
         r = parse_recipe(text)
-        blocks, size = layout_retry(r)
+        blocks, size, io = layout_retry(r, verify=True)
         export_mcfunction(blocks, "build.mcfunction")
         export_html(blocks, size, "build.html", sys.argv[1])
         print(f"custom ok: {len(blocks)} blocks -> build.html + build.mcfunction")
