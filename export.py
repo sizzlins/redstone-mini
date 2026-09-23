@@ -159,8 +159,7 @@ wireBs.forEach((b,idx)=>{dummy.position.set(b.p[0],b.p[1]-0.41,b.p[2]);dummy.upd
 s.add(dotI);
 for(const [lst,geo,isE] of [[armE,armEG,true],[armN,armNG,false]]){if(!lst.length)continue;const im=new T.InstancedMesh(geo,redM,lst.length);lst.forEach(([b,dx,dz],idx)=>{dummy.position.set(b.p[0]+dx*0.31,b.p[1]-0.41,b.p[2]+dz*0.31);dummy.updateMatrix();im.setMatrixAt(idx,dummy.matrix);});s.add(im);if(isE)armEIM=im;else armNIM=im;}
 }
-// ponytail: levers/torches are 2 boxes each (base+stick, stick+head),
-// not cubes. All our wall torches face east, hence the +x offset.
+// ponytail: levers/torches are 2 boxes each (base+stick, stick+head), not cubes.
 const leverMeshes={},torchHeads={};
 for(const b of B){
  if(b.b==='minecraft:lever'){
@@ -188,9 +187,9 @@ dotBIM=new T.InstancedMesh(dotG2,redM.clone(),repBs.length);
 nubIM=new T.InstancedMesh(nubG,darkM,repBs.length);
 repBs.forEach((b,idx)=>{const f=b.f||[1,0],ang=Math.atan2(-f[1],f[0]);
  dummy.rotation.set(0,ang,0);dummy.position.set(b.p[0],b.p[1]-0.3,b.p[2]);dummy.updateMatrix();repSlabIM.setMatrixAt(idx,dummy.matrix);
- const c=Math.cos(ang),s=Math.sin(ang),lx=0.22;
- [[dotFIM,lx],[dotBIM,-lx]].forEach(([im,ox])=>{dummy.position.set(b.p[0]+ox*c,b.p[1]-0.12,b.p[2]-ox*s);dummy.updateMatrix();im.setMatrixAt(idx,dummy.matrix);im.setColorAt(idx,new T.Color(0x4a1408));});
- const nx=(b.dl-2.5)*0.12;dummy.position.set(b.p[0]+nx*c,b.p[1]-0.12,b.p[2]-nx*s);dummy.updateMatrix();nubIM.setMatrixAt(idx,dummy.matrix);
+ const cs=Math.cos(ang),sn=Math.sin(ang),lx=0.22;
+ [[dotFIM,lx],[dotBIM,-lx]].forEach(([im,ox])=>{dummy.position.set(b.p[0]+ox*cs,b.p[1]-0.12,b.p[2]-ox*sn);dummy.updateMatrix();im.setMatrixAt(idx,dummy.matrix);im.setColorAt(idx,new T.Color(0x4a1408));});
+ const nx=(b.dl-2.5)*0.12;dummy.position.set(b.p[0]+nx*cs,b.p[1]-0.12,b.p[2]-nx*sn);dummy.updateMatrix();nubIM.setMatrixAt(idx,dummy.matrix);
  dummy.rotation.set(0,0,0);repOrder.push(b.p[0]+','+b.p[2]);});
  s.add(repSlabIM);s.add(dotFIM);s.add(dotBIM);s.add(nubIM);}
 // ponytail: interactivity is state-switching, not physics. Python simulated
@@ -230,7 +229,8 @@ r.domElement.addEventListener('pointerup',e=>{
  _ray.setFromCamera(_ptr,cam);
  const hits=_ray.intersectObjects(Object.values(leverMeshes).flatMap(o=>[o.base,o.stick]));
  if(hits.length){const k=hits[0].object.userData.lever;leverState[LEVERNET[k]]^=1;click(leverState[LEVERNET[k]]);
-  applyState(INPUTS.map(n=>leverState[n]?'1':'0').join(''));}});
+   applyState(INPUTS.map(n=>leverState[n]?'1':'0').join(''));}});
+applyState(INPUTS.map(n=>'0').join(''));
 (function a(){requestAnimationFrame(a);c.update();r.render(s,cam);})();</script></body></html>"""
     st = extra or None
     html = (html.replace("STATESJSON", json.dumps(st))
