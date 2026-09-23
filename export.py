@@ -67,7 +67,7 @@ def export_mcfunction(blocks, path, oy=64):
 
 
 
-def export_html(blocks, size, path, label="build"):
+def export_html(blocks, size, path, label="build", extra=None):
     W, D = size
     # ponytail: floor renders as one plane, not W*D cubes. Keeps big previews fast.
     solidxy = {(x, z) for x, y, z, b in blocks if y == 1}
@@ -115,8 +115,8 @@ const torchHeadG=new T.BoxGeometry(.26,.26,.26);
 const brownM=new T.MeshLambertMaterial({color:0x7a5a2e});
 const darkM=new T.MeshLambertMaterial({color:0x4a2f16});
 const redM=new T.MeshLambertMaterial({color:0xc02020});
-const glowM=new T.MeshLambertMaterial({color:0xffd23e});
 const groups={};
+const lampMesh={mesh:null,order:[]};
 for(const b of B){const k=b.b;if(k==='minecraft:lever'||k==='minecraft:redstone_wall_torch')continue;((groups[k] ??= []).push(b));}
 const dummy=new T.Object3D();
 for(const k in groups){const arr=groups[k];const b0=arr[0];
@@ -128,29 +128,76 @@ for(const k in groups){const arr=groups[k];const b0=arr[0];
  arr.forEach((b,idx)=>{let y=b.p[1];
   if(k==='minecraft:repeater')y-=0.3;
   dummy.position.set(b.p[0],y,b.p[2]);dummy.updateMatrix();im.setMatrixAt(idx,dummy.matrix);});
+ if(k==='minecraft:redstone_lamp'){lampMesh.mesh=im;lampMesh.order=arr.map(b=>b.p[0]+','+b.p[2]);}
  s.add(im);}
 // ponytail: dust renders as center dot + arms toward connections (like the
 // game), from the arms bitmask computed trackside. No custom models.
 const wireBs=B.filter(b=>b.b==='minecraft:redstone_wire');
-if(wireBs.length){const dotI=new T.InstancedMesh(dotG,redM,wireBs.length);
-const armE=[],armN=[];
+let dotI=null,armEIM=null,armNIM=null;const armE=[],armN=[];
+if(wireBs.length){dotI=new T.InstancedMesh(dotG,redM,wireBs.length);
 wireBs.forEach((b,idx)=>{dummy.position.set(b.p[0],b.p[1]-0.41,b.p[2]);dummy.updateMatrix();dotI.setMatrixAt(idx,dummy.matrix);if(b.a&1)armE.push([b,1,0]);if(b.a&2)armE.push([b,-1,0]);if(b.a&4)armN.push([b,0,1]);if(b.a&8)armN.push([b,0,-1]);});
 s.add(dotI);
-for(const [lst,geo] of [[armE,armEG],[armN,armNG]]){if(!lst.length)continue;const im=new T.InstancedMesh(geo,redM,lst.length);lst.forEach(([b,dx,dz],idx)=>{dummy.position.set(b.p[0]+dx*0.31,b.p[1]-0.41,b.p[2]+dz*0.31);dummy.updateMatrix();im.setMatrixAt(idx,dummy.matrix);});s.add(im);}
+for(const [lst,geo,isE] of [[armE,armEG,true],[armN,armNG,false]]){if(!lst.length)continue;const im=new T.InstancedMesh(geo,redM,lst.length);lst.forEach(([b,dx,dz],idx)=>{dummy.position.set(b.p[0]+dx*0.31,b.p[1]-0.41,b.p[2]+dz*0.31);dummy.updateMatrix();im.setMatrixAt(idx,dummy.matrix);});s.add(im);if(isE)armEIM=im;else armNIM=im;}
 }
 // ponytail: levers/torches are 2 boxes each (base+stick, stick+head),
 // not cubes. All our wall torches face east, hence the +x offset.
+const leverMeshes={},torchHeads={};
 for(const b of B){
  if(b.b==='minecraft:lever'){
   const m1=new T.Mesh(leverBaseG,brownM);m1.position.set(b.p[0],b.p[1]-0.35,b.p[2]);s.add(m1);
   const m2=new T.Mesh(leverStickG,darkM);m2.position.set(b.p[0],b.p[1]+0.02,b.p[2]);s.add(m2);
+  const key=b.p[0]+','+b.p[2];leverMeshes[key]={base:m1,stick:m2};
+  m1.userData.lever=key;m2.userData.lever=key;
  }else if(b.b==='minecraft:redstone_wall_torch'){
   const m1=new T.Mesh(torchStickG,darkM);m1.position.set(b.p[0]+0.28,b.p[1]-0.15,b.p[2]);s.add(m1);
-  const m2=new T.Mesh(torchHeadG,glowM);m2.position.set(b.p[0]+0.28,b.p[1]+0.22,b.p[2]);s.add(m2);
+  const hm=new T.MeshLambertMaterial({color:0xffd23e});
+  const m2=new T.Mesh(torchHeadG,hm);m2.position.set(b.p[0]+0.28,b.p[1]+0.22,b.p[2]);s.add(m2);
+  torchHeads[b.p[0]+','+b.p[2]]=m2;
  }
 }
+// ponytail: interactivity is state-switching, not physics. Python simulated
+// every combo; the page just flips lever meshes and recolors. No timing.
+const STATES=STATESJSON,INPUTS=INPUTJSON,LEVERNET=LEVERJSON,LAMPNET=LAMPJSON;
+const dotIdx={},armEIdx={},armNIdx={};
+wireBs.forEach((b,idx)=>{dotIdx[b.p[0]+','+b.p[2]]=idx;});
+let _ai=0;for(const [b,dx,dz] of armE){armEIdx[b.p[0]+','+b.p[2]+','+dx+','+dz]=_ai++;}
+_ai=0;for(const [b,dx,dz] of armN){armNIdx[b.p[0]+','+b.p[2]+','+dx+','+dz]=_ai++;}
+const wireCol=l=>new T.Color().setHSL(0.0,0.85,0.06+0.5*l/15);
+const leverState={};for(const k in LEVERNET)leverState[LEVERNET[k]]=0;
+function readout(extra){
+ const ins=INPUTS.map(n=>n+'='+(leverState[n]?'1':'0')).join(' ');
+ const outs=Object.entries(LAMPNET).map(([c,n])=>n+'='+(extra&&extra.lamps&&extra.lamps[c]?'1':'0')).join(' ');
+ document.getElementById('t').textContent='click a lever! '+ins+(outs?' -> '+outs:'');
+}
+function applyState(key){
+ const v=STATES?STATES.vectors[key]:null;
+ const paint=(mesh,idx,lvl)=>{mesh.setColorAt(idx,wireCol(lvl));mesh.instanceColor.needsUpdate=true;};
+ for(const k in dotIdx){const lvl=v&&v.w[k]?v.w[k]:0;paint(dotI,dotIdx[k],lvl);}
+ armE.forEach(([b,dx,dz],i)=>{const k=b.p[0]+','+b.p[2];const lvl=v&&v.w[k]?v.w[k]:0;paint(armEIM,i,lvl);});
+ armN.forEach(([b,dx,dz],i)=>{const k=b.p[0]+','+b.p[2];const lvl=v&&v.w[k]?v.w[k]:0;paint(armNIM,i,lvl);});
+ for(const k in torchHeads){torchHeads[k].material.color.set(v&&v.t[k]?0xffd23e:0x4a1408);}
+ if(lampMesh.mesh){const arr=lampMesh.order;arr.forEach((k,i)=>{lampMesh.mesh.setColorAt(i,new T.Color(v&&v.lamps&&v.lamps[k]?0xffffff:0x353535));});lampMesh.mesh.instanceColor.needsUpdate=true;}
+ for(const k in leverMeshes){const n=LEVERNET[k];leverMeshes[k].stick.rotation.x=leverState[n]?-0.5:0.25;}
+ readout(v);
+}
+const _ray=new T.Raycaster(),_ptr=new T.Vector2();let _down=null;
+r.domElement.addEventListener('pointerdown',e=>{_down=[e.clientX,e.clientY];});
+r.domElement.addEventListener('pointerup',e=>{
+ if(!STATES||!_down)return;
+ const moved=Math.hypot(e.clientX-_down[0],e.clientY-_down[1]);_down=null;
+ if(moved>5)return;
+ _ptr.x=(e.clientX/innerWidth)*2-1;_ptr.y=-(e.clientY/innerHeight)*2+1;
+ _ray.setFromCamera(_ptr,cam);
+ const hits=_ray.intersectObjects(Object.values(leverMeshes).flatMap(o=>[o.base,o.stick]));
+ if(hits.length){const k=hits[0].object.userData.lever;leverState[LEVERNET[k]]^=1;
+  applyState(INPUTS.map(n=>leverState[n]?'1':'0').join(''));}});
 (function a(){requestAnimationFrame(a);c.update();r.render(s,cam);})();</script></body></html>"""
-    html = (html.replace("DATA", json.dumps(data)).replace("CX", str(W / 2)).replace("CZ", str(D / 2))
+    st = extra or None
+    html = (html.replace("STATESJSON", json.dumps(st))
+            .replace("INPUTJSON", json.dumps(st["inputs"] if st else []))
+            .replace("LEVERJSON", json.dumps(st["levers"] if st else {}))
+            .replace("LAMPJSON", json.dumps(st["lamps"] if st else {}))
+            .replace("DATA", json.dumps(data)).replace("CX", str(W / 2)).replace("CZ", str(D / 2))
             .replace("TEXSTONE", json.dumps(TEXBASE + "stone.png"))
             .replace("STAMP", build_stamp(label, len(blocks)))
             .replace("MAXD", str(max(W, D))).replace("FW", str(W)).replace("FD", str(D)))

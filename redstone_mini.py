@@ -22,12 +22,12 @@ def demo():
             for c in (0, 1):
                 got = eval_net(r, {"a": a, "b": b, "c": c})["y"]
                 assert got == ((a and b) or c), (a, b, c, got)
-    blocks, size, io = layout_retry(r, verify=True)
+    blocks, size, io, st = layout_retry(r, verify=True)
     assert any(base(b) == "minecraft:cobblestone" for *_, b in blocks), "gate block missing"
     assert any(base(b) == "minecraft:redstone_wall_torch" for *_, b in blocks), "torch missing"
     export_mcfunction(blocks, "build.mcfunction")
     export_schem(blocks, "build.schem")
-    export_html(blocks, size, "build.html", "2-gate demo")
+    export_html(blocks, size, "build.html", "2-gate demo", st)
     print(f"ok: {len(blocks)} blocks -> build.html + build.mcfunction")
 
 
@@ -40,10 +40,10 @@ def demo_alu8():
         got = eval_net(r, v)
         s = sum(got[f"S{i}"] << i for i in range(8))
         assert (s, got["C8"]) == ((a + b) & 255, (a + b) >> 8), (a, b, s)
-    blocks, size, io = layout_retry(r, verify=True)
+    blocks, size, io, st = layout_retry(r, verify=True)
     export_mcfunction(blocks, "build_alu8.mcfunction")
     export_schem(blocks, "build_alu8.schem")
-    export_html(blocks, size, "build_alu8.html", "8-bit adder")
+    export_html(blocks, size, "build_alu8.html", "8-bit adder", st)
     print(f"alu8 ok: {len(blocks)} blocks -> build_alu8.html + build_alu8.mcfunction")
 
 if __name__ == "__main__":
@@ -53,8 +53,8 @@ if __name__ == "__main__":
     elif len(sys.argv) > 1:  # custom recipe file
         text = open(sys.argv[1]).read()
         r = parse_recipe(text)
-        blocks, size, io = layout_retry(r, verify=True)
+        blocks, size, io, st = layout_retry(r, verify=True)
         export_mcfunction(blocks, "build.mcfunction")
         export_schem(blocks, "build.schem")
-        export_html(blocks, size, "build.html", sys.argv[1])
+        export_html(blocks, size, "build.html", sys.argv[1], st)
         print(f"custom ok: {len(blocks)} blocks -> build.html + build.mcfunction")
