@@ -1,0 +1,3 @@
+IN a, b
+OUT y
+y = a XOR b
