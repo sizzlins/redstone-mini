@@ -81,6 +81,18 @@ def export_html(blocks, size, path, label="build", extra=None):
              "t": TEXBASE + TEXMAP.get(base(b), "stone.png"),
              "a": arms(x, z) if base(b) == "minecraft:redstone_wire" else 0}
             for x, y, z, b in blocks if not (b == "minecraft:stone" and y == 0)]
+    fdir = {"east": (1, 0), "west": (-1, 0), "south": (0, 1), "north": (0, -1)}
+    mountxy = {(x, z) for x, y, z, b in blocks if y == 1 and base(b) in ("minecraft:cobblestone", "minecraft:stone")}
+    torchinfo = {}
+    for x, y, z, bid in blocks:
+        if y == 1 and base(bid) == "minecraft:redstone_wall_torch":
+            f = bid.split("facing=")[1].rstrip("]") if "facing=" in bid else "east"
+            d = fdir[f]
+            torchinfo[(x, z)] = {"f": list(d), "m": 1 if (x - d[0], z - d[1]) in mountxy else 0}
+    for d in data:
+        if d["b"] == "minecraft:redstone_wall_torch":
+            t = torchinfo[(d["p"][0], d["p"][2])]
+            d["f"], d["m"] = t["f"], t["m"]
     html = """<!doctype html><html><head><meta charset=utf-8><title>redstone build</title>
 <style>body{margin:0;font-family:sans-serif}#t{position:fixed;top:8px;left:8px;background:#111;color:#fff;padding:8px 12px;border-radius:8px}</style>
 <script type="importmap">{"imports":{"three":"https://unpkg.com/three@0.160.0/build/three.module.js","three/addons/":"https://unpkg.com/three@0.160.0/examples/jsm/"}}</script>
@@ -115,6 +127,7 @@ const torchHeadG=new T.BoxGeometry(.26,.26,.26);
 const brownM=new T.MeshLambertMaterial({color:0x7a5a2e});
 const darkM=new T.MeshLambertMaterial({color:0x4a2f16});
 const redM=new T.MeshLambertMaterial({color:0xc02020});
+const redDarkM=new T.MeshLambertMaterial({color:0x6a1010});
 const groups={};
 const lampMesh={mesh:null,order:[]};
 for(const b of B){const k=b.b;if(k==='minecraft:lever'||k==='minecraft:redstone_wall_torch')continue;((groups[k] ??= []).push(b));}
@@ -148,12 +161,15 @@ for(const b of B){
   const m2=new T.Mesh(leverStickG,darkM);m2.position.set(b.p[0],b.p[1]+0.02,b.p[2]);s.add(m2);
   const key=b.p[0]+','+b.p[2];leverMeshes[key]={base:m1,stick:m2};
   m1.userData.lever=key;m2.userData.lever=key;
- }else if(b.b==='minecraft:redstone_wall_torch'){
-  const m1=new T.Mesh(torchStickG,darkM);m1.position.set(b.p[0]+0.28,b.p[1]-0.15,b.p[2]);s.add(m1);
-  const hm=new T.MeshLambertMaterial({color:0xffd23e});
-  const m2=new T.Mesh(torchHeadG,hm);m2.position.set(b.p[0]+0.28,b.p[1]+0.22,b.p[2]);s.add(m2);
-  torchHeads[b.p[0]+','+b.p[2]]=m2;
- }
+  }else if(b.b==='minecraft:redstone_wall_torch'){
+   const f=b.f||[1,0],wall=b.m===1;
+   const px=b.p[0]+(wall?f[0]*0.30:0),pz=b.p[2]+(wall?f[1]*0.30:0);
+   const m1=new T.Mesh(torchStickG,redDarkM);m1.position.set(px,b.p[1]-0.15,pz);
+   if(wall){m1.rotation.z=-f[0]*0.2;m1.rotation.x=f[1]*0.2;}s.add(m1);
+   const hm=new T.MeshLambertMaterial({color:0xff2a1a});
+   const m2=new T.Mesh(torchHeadG,hm);m2.position.set(px+(wall?f[0]*0.08:0),b.p[1]+0.22,pz+(wall?f[1]*0.08:0));s.add(m2);
+   torchHeads[b.p[0]+','+b.p[2]]=m2;
+  }
 }
 // ponytail: interactivity is state-switching, not physics. Python simulated
 // every combo; the page just flips lever meshes and recolors. No timing.
@@ -175,7 +191,7 @@ function applyState(key){
  for(const k in dotIdx){const lvl=v&&v.w[k]?v.w[k]:0;paint(dotI,dotIdx[k],lvl);}
  armE.forEach(([b,dx,dz],i)=>{const k=b.p[0]+','+b.p[2];const lvl=v&&v.w[k]?v.w[k]:0;paint(armEIM,i,lvl);});
  armN.forEach(([b,dx,dz],i)=>{const k=b.p[0]+','+b.p[2];const lvl=v&&v.w[k]?v.w[k]:0;paint(armNIM,i,lvl);});
- for(const k in torchHeads){torchHeads[k].material.color.set(v&&v.t[k]?0xffd23e:0x4a1408);}
+ for(const k in torchHeads){torchHeads[k].material.color.set(v&&v.t[k]?0xff2a1a:0x4a1408);}
  if(lampMesh.mesh){const arr=lampMesh.order;arr.forEach((k,i)=>{lampMesh.mesh.setColorAt(i,new T.Color(v&&v.lamps&&v.lamps[k]?0xffffff:0x353535));});lampMesh.mesh.instanceColor.needsUpdate=true;}
  for(const k in leverMeshes){const n=LEVERNET[k];leverMeshes[k].stick.rotation.x=leverState[n]?-0.5:0.25;}
  readout(v);
