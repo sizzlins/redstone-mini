@@ -103,8 +103,8 @@ COLORS = {"minecraft:stone": 0x8a8a8a, "minecraft:redstone_wire": 0xe02020,
           "minecraft:iron_block": 0xd8dee6, "minecraft:gold_block": 0xf5c542,
           "minecraft:diamond_block": 0x4de3e3, "minecraft:redstone_block": 0xb01010,
           "minecraft:lever": 0x7a5a2e, "minecraft:redstone_lamp": 0xffa726}
-# ponytail: textures stream from your fork at runtime, no PNGs in this repo. Flat color stays as offline fallback.
-TEXBASE = "https://raw.githubusercontent.com/sizzlins/minecraft-assets/master/data/1.21.8/blocks/"
+# ponytail: textures stream from the upstream asset pack at runtime, no PNGs in this repo. Flat color stays as offline fallback.
+TEXBASE = "https://raw.githubusercontent.com/PrismarineJS/minecraft-assets/master/data/1.21.8/blocks/"
 TEXMAP = {"minecraft:stone": "stone.png", "minecraft:redstone_wire": "redstone_dust_dot.png",
           "minecraft:iron_block": "iron_block.png", "minecraft:gold_block": "gold_block.png",
           "minecraft:diamond_block": "diamond_block.png", "minecraft:redstone_block": "redstone_block.png",

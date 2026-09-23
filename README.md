@@ -22,8 +22,8 @@ python redstone_mini.py my.txt
 
 Supports: AND OR XOR NOT. `build.mcfunction` = list of `setblock` to paste in a flat world.
 
-Preview `build.html` streams real textures from your fork
-`sizzlins/minecraft-assets` (needs internet, falls back to flat colors offline).
+Preview `build.html` streams real textures from the upstream
+`PrismarineJS/minecraft-assets` pack (needs internet, falls back to flat colors offline).
 
 ## Note
 Visual model only for now, not tick-accurate redstone.
