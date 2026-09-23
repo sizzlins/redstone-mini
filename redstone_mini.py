@@ -279,80 +279,172 @@ def layout(recipe, seed=None):
         return (ox - 2, gz), (ox - 2, gz + 3), (ox + 6, gz + 1)
 
     recs = []
-    bandnext = {}
+    bandrows = {}
     firstport = {}  # input -> port cell of its first AND/NOT load
+    # grid slot per gate (fallback positions) + reservation boxes so chained
+    # tiles never steal a future grid slot (grid stays provably placeable).
+    gridpos = []
     for i, g in enumerate(gates):
         b = g.get("band")
         if b is None:
-            gz, ox = 12 + i * 14, cx
+            gridpos.append((cx, 12 + i * 14))
         else:
-            gz = bandnext.get(b, 12)
-            bandnext[b] = gz + 14
-            ox = 6 + b * 24
+            gz = bandrows.get(b, 12)
+            bandrows[b] = gz + 14
+            gridpos.append((6 + b * 24, gz))
+    def footprint(op, ox, gz):
+        if op == "AND":
+            return {(x, z) for x in range(ox - 2, ox + 9) for z in range(gz - 1, gz + 8)}
+        if op == "NOT":
+            return {(x, z) for x in range(ox - 3, ox + 4) for z in range(gz - 1, gz + 2)}
+        return {(x, z) for x in range(ox - 3, ox + 4) for z in range(gz - 3, gz + 4)}
+
+    reserved = [footprint(g["op"], *gridpos[i]) for i, g in enumerate(gates)]
+    others_reserved = []
+    for i in range(len(gates)):
+        u = set()
+        for j, box in enumerate(reserved):
+            if j != i:
+                u |= box
+        others_reserved.append(u)
+
+    def _snap():
+        return (len(blocks), dict(wires), dict(solid),
+                {k: set(v) for k, v in rings.items()},
+                dict(pos), dict(junctions), len(recs), dict(firstport))
+
+    def _restore(s):
+        nb, w, so, ri, p, jn, nr, fp = s
+        del blocks[nb:]
+        wires.clear(); wires.update(w)
+        solid.clear(); solid.update(so)
+        rings.clear(); rings.update(ri)
+        pos.clear(); pos.update(p)
+        junctions.clear(); junctions.update(jn)
+        del recs[nr:]
+        for k in [k for k in firstport if k not in fp]:
+            del firstport[k]
+    def _free(cells):
+        return all(c not in solid and c not in wires for c in cells)
+
+    for i, g in enumerate(gates):
+        ox, gz = gridpos[i]
         op, o, a = g["op"], g["out"], g["args"]
         if op == "OR":
-            # repeater-isolated OR (wiki): diodes sit on their drivers' side,
-            # facing the junction, so entries stay short instead of marathoning.
-            j = (ox, gz)
-            if j in solid or j in wires:
-                raise RuntimeError(f"OR cell blocked at {j}")
-            reps = []
-            seen = {j}
-            for sig in a:
-                sx, sz = pos[sig]
-                if abs(sx - ox) >= abs(sz - gz):
-                    order = [(1 if sx >= ox else -1, 0)]
-                else:
-                    order = [(0, 1 if sz >= gz else -1)]
-                order += [(1, 0), (-1, 0), (0, 1), (0, -1)]
-                done = False
-                for dx, dz in order:
-                    for step in (1, 2, 3):
-                        r = (j[0] + dx * step, j[1] + dz * step)
-                        b = (j[0] + dx * (step + 1), j[1] + dz * (step + 1))
-                        if r in solid or r in wires or b in solid or b in wires \
-                           or r in seen or b in seen:
-                            continue
-                        facing = {(1, 0): "west", (-1, 0): "east",
-                                  (0, 1): "north", (0, -1): "south"}[(dx, dz)]
-                        blocks.append((r[0], 1, r[1], f"minecraft:repeater[facing={facing},delay=1]"))
-                        solid[r] = ("repeater", o)
-                        reps.append((r, b))
-                        seen.add(r)
-                        seen.add(b)
-                        done = True
-                        break
-                    if done:
-                        break
-                if not done:
-                    raise RuntimeError(f"OR cell blocked around {j} for {sig}")
-            wires[j] = o
-            junctions[j] = {o}
-            pos[o] = j
-            recs.append((op, o, a, (j, reps)))
+            # repeater-isolated OR (wiki). Junction stays on-grid (merging by
+            # touch would short); diodes face drivers. Grid fallback inside.
+            jx, jz = ox, gz
+            if not (0 <= jx - 3 and jx + 3 < W and 0 <= jz - 3 and jz + 3 < D):
+                raise RuntimeError(f"OR out of bounds for {o}")
+            s = _snap()
+            try:
+                    j = (jx, jz)
+                    if j in solid or j in wires:
+                        raise RuntimeError(f"OR cell blocked at {j}")
+                    reps = []
+                    seen = {j}
+                    for sig in a:
+                        sx, sz = pos[sig]
+                        if abs(sx - jx) >= abs(sz - jz):
+                            order = [(1 if sx >= jx else -1, 0)]
+                        else:
+                            order = [(0, 1 if sz >= jz else -1)]
+                        order += [(1, 0), (-1, 0), (0, 1), (0, -1)]
+                        ok = False
+                        for dx, dz in order:
+                            for step in (1, 2, 3):
+                                r = (j[0] + dx * step, j[1] + dz * step)
+                                b = (j[0] + dx * (step + 1), j[1] + dz * (step + 1))
+                                if r in solid or r in wires or b in solid or b in wires \
+                                   or r in seen or b in seen:
+                                    continue
+                                facing = {(1, 0): "west", (-1, 0): "east",
+                                          (0, 1): "north", (0, -1): "south"}[(dx, dz)]
+                                blocks.append((r[0], 1, r[1], f"minecraft:repeater[facing={facing},delay=1]"))
+                                solid[r] = ("repeater", o)
+                                reps.append((r, b))
+                                seen.add(r)
+                                seen.add(b)
+                                ok = True
+                                break
+                            if ok:
+                                break
+                        if not ok:
+                            raise RuntimeError(f"OR cell blocked around {j} for {sig}")
+                    wires[j] = o
+                    junctions[j] = {o}
+                    pos[o] = j
+                    recs.append((op, o, a, (j, reps)))
+            except RuntimeError:
+                _restore(s)
+                raise
             continue
         if op == "AND":
-            pa, pb, po = stamp_and(ox, gz, a[0], a[1], o)
-            pos[o] = po
-            for sig, port in ((a[0], pa), (a[1], pb)):
-                firstport.setdefault(sig, port)
-            recs.append((op, o, a, (pa, pb, po)))
+            # in-A port lands touching its driver (zero-wire tap). Chained
+            # stays local (else grid): marches cause top-edge stranding.
+            # (in-B chaining marches north; dropped for that reason.)
+            dv = pos.get(a[0])
+            cands = []
+            if dv is not None and dv not in junctions:
+                cands.append((dv[0] + 3, dv[1]))
+            cands.append((ox, gz))
+            placed = False
+            for ox2, gz2 in cands:
+                if not (0 <= ox2 - 2 and ox2 + 6 < W and 0 <= gz2 and gz2 + 6 < D):
+                    continue
+                if abs(ox2 - ox) > 16 or abs(gz2 - gz) > 7:
+                    continue
+                if not footprint("AND", ox2, gz2).isdisjoint(others_reserved[i]):
+                    continue
+                s = _snap()
+                try:
+                    pa, pb, po = stamp_and(ox2, gz2, a[0], a[1], o)
+                    pos[o] = po
+                    for sig, port in ((a[0], pa), (a[1], pb)):
+                        firstport.setdefault(sig, port)
+                    recs.append((op, o, a, (pa, pb, po)))
+                    placed = True
+                    break
+                except RuntimeError:
+                    _restore(s)
+            if not placed:
+                raise RuntimeError(f"AND blocked for {o}")
             continue
         if op != "NOT":
             raise ValueError(f"bad primitive {op}")
-        nets = own(o, *a)
-        bx, bz = ox, gz
-        stamp_cobble(bx, bz, o)
-        stamp_torch(bx + 1, bz, o)
-        for rx, rz in ((bx - 1, bz), (bx + 1, bz), (bx, bz - 1), (bx, bz + 1),
-                       (bx + 2, bz), (bx + 1, bz - 1), (bx + 1, bz + 1)):
-            ring(rx, rz, nets)
-        if (bx + 2, bz) in wires:
-            raise RuntimeError(f"out cell blocked at {(bx + 2, bz)}")
-        wires[(bx + 2, bz)] = o
-        pos[o] = (bx + 2, bz)
-        firstport.setdefault(a[0], (bx - 1, bz))
-        recs.append((op, o, a, (bx, bz)))
+        dv = pos.get(a[0])
+        cands = []
+        if dv is not None and dv not in junctions:
+            cands.append((dv[0] + 3, dv[1]))
+        cands.append((ox, gz))
+        placed = False
+        for bx, bz in cands:
+            if not (0 <= bx - 2 and bx + 2 < W and 0 <= bz - 1 and bz + 1 < D):
+                continue
+            if abs(bx - ox) > 16 or abs(bz - gz) > 7:
+                continue
+            if not footprint("NOT", bx, bz).isdisjoint(others_reserved[i]):
+                continue
+            s = _snap()
+            try:
+                nets = own(o, *a)
+                stamp_cobble(bx, bz, o)
+                stamp_torch(bx + 1, bz, o)
+                for rx, rz in ((bx - 1, bz), (bx + 1, bz), (bx, bz - 1), (bx, bz + 1),
+                               (bx + 2, bz), (bx + 1, bz - 1), (bx + 1, bz + 1)):
+                    ring(rx, rz, nets)
+                if (bx + 2, bz) in wires:
+                    raise RuntimeError(f"out cell blocked at {(bx + 2, bz)}")
+                wires[(bx + 2, bz)] = o
+                pos[o] = (bx + 2, bz)
+                firstport.setdefault(a[0], (bx - 1, bz))
+                recs.append((op, o, a, (bx, bz)))
+                placed = True
+                break
+            except RuntimeError:
+                _restore(s)
+        if not placed:
+            raise RuntimeError(f"NOT blocked for {o}")
 
     for idx, name in enumerate(recipe["inputs"]):
         if name not in firstport or name in pos:
@@ -370,15 +462,23 @@ def layout(recipe, seed=None):
 
     for name in recipe["outputs"]:
         ox_, oz = pos[name]
-        fx, lx = ox_ + 1, ox_ + 2
-        if (lx, oz) in solid or (lx, oz) in wires or (fx, oz) in solid or (fx, oz) in wires:
-            raise RuntimeError(f"lamp spot taken for {name} at {(lx, oz)}")
-        stamp_wire([(fx, oz)], name)  # touches out stub: zero-wire tap
-        blocks.append((lx, 1, oz, "minecraft:redstone_lamp"))
-        solid[(lx, oz)] = ("lamp", name)
-        for dx, dz in DIRS:
-            ring(lx + dx, oz + dz, own(name))
-        recs.append(("OUT", name, [name], (fx, oz)))
+        done = False
+        for dx, dz in ((1, 0), (0, 1), (-1, 0), (0, -1)):
+            fx, lx = (ox_ + dx, oz + dz), (ox_ + dx * 2, oz + dz * 2)
+            if not (0 <= lx[0] < W and 0 <= lx[1] < D):
+                continue
+            if lx in solid or lx in wires or fx in solid or fx in wires:
+                continue
+            stamp_wire([fx], name)  # touches out stub: zero-wire tap
+            blocks.append((lx[0], 1, lx[1], "minecraft:redstone_lamp"))
+            solid[lx] = ("lamp", name)
+            for ddx, ddz in DIRS:
+                ring(lx[0] + ddx, lx[1] + ddz, own(name))
+            recs.append(("OUT", name, [name], fx))
+            done = True
+            break
+        if not done:
+            raise RuntimeError(f"lamp spot taken for {name} at {(ox_, oz)}")
 
     # phase 2: route every net through the finished field, shortest hops first
     # so long runs maze around settled locals instead of fencing them in.
