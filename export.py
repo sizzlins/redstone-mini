@@ -102,7 +102,7 @@ function flatMat(b){const k='f'+b.c;if(matCache[k])return matCache[k];
 const stoneTex=loader.load(TEXSTONE,(t)=>{t.wrapS=t.wrapT=T.RepeatWrapping;t.repeat.set(FW,FD);t.magFilter=T.NearestFilter;t.colorSpace=T.SRGBColorSpace;});
 stoneTex.wrapS=stoneTex.wrapT=T.RepeatWrapping;stoneTex.repeat.set(FW,FD);
 const floor=new T.Mesh(new T.PlaneGeometry(FW,FD),new T.MeshLambertMaterial({map:stoneTex}));
-floor.rotation.x=-Math.PI/2;floor.position.set(FW/2-0.5,-0.5,FD/2-0.5);s.add(floor);
+floor.rotation.x=-Math.PI/2;floor.position.set(FW/2-0.5,0.46,FD/2-0.5);s.add(floor);
 const cubeG=new T.BoxGeometry(.92,.92,.92);
 const flatG=new T.BoxGeometry(.92,.18,.92);
 const dotG=new T.BoxGeometry(.3,.12,.3);
@@ -181,6 +181,7 @@ function applyState(key){
  readout(v);
 }
 const _ray=new T.Raycaster(),_ptr=new T.Vector2();let _down=null;
+let AC=null;function click(on){try{AC=AC||new (window.AudioContext||window.webkitAudioContext)();const o=AC.createOscillator(),g=AC.createGain();o.type='square';o.frequency.value=on?2200:1400;g.gain.setValueAtTime(0.08,AC.currentTime);g.gain.exponentialRampToValueAtTime(0.001,AC.currentTime+0.06);o.connect(g);g.connect(AC.destination);o.start();o.stop(AC.currentTime+0.07);}catch(e){}}
 r.domElement.addEventListener('pointerdown',e=>{_down=[e.clientX,e.clientY];});
 r.domElement.addEventListener('pointerup',e=>{
  if(!STATES||!_down)return;
@@ -189,7 +190,7 @@ r.domElement.addEventListener('pointerup',e=>{
  _ptr.x=(e.clientX/innerWidth)*2-1;_ptr.y=-(e.clientY/innerHeight)*2+1;
  _ray.setFromCamera(_ptr,cam);
  const hits=_ray.intersectObjects(Object.values(leverMeshes).flatMap(o=>[o.base,o.stick]));
- if(hits.length){const k=hits[0].object.userData.lever;leverState[LEVERNET[k]]^=1;
+ if(hits.length){const k=hits[0].object.userData.lever;leverState[LEVERNET[k]]^=1;click(leverState[LEVERNET[k]]);
   applyState(INPUTS.map(n=>leverState[n]?'1':'0').join(''));}});
 (function a(){requestAnimationFrame(a);c.update();r.render(s,cam);})();</script></body></html>"""
     st = extra or None
