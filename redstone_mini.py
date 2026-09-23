@@ -162,7 +162,7 @@ def astar(starts, goal, net, W, D, solid, rings, wires, junctions, margin=None):
                 heapq.heappush(open_h, (ng + abs(m[0] - goal[0]) + abs(m[1] - goal[1]), ng, m, cell))
     return None
 
-def layout(recipe, seed=None):
+def layout(recipe, seed=None, grow=0):
     gates = expand_gates(recipe["gates"])
     banded = any(g.get("band") is not None for g in gates)
     if banded:
@@ -176,6 +176,10 @@ def layout(recipe, seed=None):
     else:
         W = max(30, len(recipe["inputs"]) * 3 + 10)
         D = 12 + len(gates) * 14 + 12
+    # ponytail: infinite room = grow on demand. Each grow doubles the field;
+    # placement is deterministic so extra space only ever helps detours.
+    W = min(int(W * (1.5 ** grow)), 2000)
+    D = min(int(D * (1.5 ** grow)), 2000)
     cx = W // 2
     blocks = []  # (x, y, z, block-id [+state])
     solid, rings, wires, junctions, repeaters, paths = {}, {}, {}, {}, {}, []
@@ -693,19 +697,21 @@ TEXMAP = {"minecraft:stone": "stone.png", "minecraft:cobblestone": "cobblestone.
           "minecraft:redstone_lamp": "redstone_lamp_on.png",
           "minecraft:redstone_block": "redstone_block.png", "minecraft:repeater": "repeater.png"}
 
-def layout_retry(recipe, tries=12, verify=False):
+def layout_retry(recipe, tries=12, verify=False, grows=3):
     """Randomized-restart maze routing: reshuffle net order until the field fits.
     With verify, keep going until the placed build also passes redstone sim
-    (generate-and-test: the sim is the selector, not just the guard)."""
+    (generate-and-test: the sim is the selector, not just the guard).
+    Field grows on failure (effectively infinite room, capped at 2000)."""
     last = None
-    for t in range(tries):
-        try:
-            out = layout(recipe, seed=None if t == 0 else t)
-        except RuntimeError as e:
-            last = e
-            continue
-        if not verify:
-            return out
+    for grow in range(grows):
+        for t in range(tries):
+            try:
+                out = layout(recipe, seed=None if t == 0 else t, grow=grow)
+            except RuntimeError as e:
+                last = e
+                continue
+            if not verify:
+                return out
         try:
             sim_verify(recipe, out[0], out[2], quiet=True)
             return out
