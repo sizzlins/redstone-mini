@@ -153,7 +153,7 @@ def astar(starts, goal, net, W, D, solid, rings, wires, junctions, margin=None):
 
 def layout(recipe, seed=None):
     gates = expand_gates(recipe["gates"])
-    W = max(50, len(recipe["inputs"]) * 3 + 22)
+    W = max(30, len(recipe["inputs"]) * 3 + 10)
     cx = W // 2
     rows = len(gates)
     D = 12 + rows * 14 + 12
@@ -194,15 +194,29 @@ def layout(recipe, seed=None):
         paths.append((path, net))
         return path
 
+    # compact: each lever sits on its first load's row, each lamp on its
+    # driver's row. Feed rows are globally distinct (pitch 14 > offsets 0..5),
+    # so feeds never share a row and marathons disappear.
+    rows = [12 + i * 14 for i in range(len(gates))]
+    firstload = {}
+    for i, g in enumerate(gates):
+        if g["op"] == "AND":
+            for a, off in zip(g["args"], (0, 3)):
+                firstload[a] = min(firstload.get(a, 1e9), rows[i] + off)
+        else:
+            for a in g["args"]:
+                firstload[a] = min(firstload.get(a, 1e9), rows[i])
     pos = {}
-    for i, name in enumerate(recipe["inputs"]):
-        x = 2 + i * 3
-        blocks.append((x, 1, 2, "minecraft:lever"))
-        solid[(x, 2)] = ("lever", name)
+    for idx, name in enumerate(recipe["inputs"]):
+        if name not in firstload:
+            continue  # unused input: no lever
+        x, rz = 2 + idx * 3, firstload[name]
+        blocks.append((x, 1, rz, "minecraft:lever"))
+        solid[(x, rz)] = ("lever", name)
         for dx, dz in DIRS:
-            ring(x + dx, 2 + dz, own(name))
-        wires[(x, 3)] = name
-        pos[name] = (x, 3)
+            ring(x + dx, rz + dz, own(name))
+        wires[(x + 1, rz)] = name
+        pos[name] = (x + 1, rz)
     if any(a in ("0", "1") for g in gates for a in g["args"]):
         wires[(0, 3)] = "0"
         pos["0"] = (0, 3)
@@ -225,45 +239,60 @@ def layout(recipe, seed=None):
         solid[(x, z)] = ("torch", o)
 
     def stamp_and(ox, gz, A, B, O):
+        # compact torch AND (textbook): NOT-A top, NOT-B bottom, NOR middle-right.
         na, nb = f"{O}~a", f"{O}~b"
         fam = own(A, B, O, na, nb)
-        stamp_cobble(ox, gz + 1, O)
-        stamp_torch(ox + 1, gz + 1, O)
-        stamp_cobble(ox, gz + 5, O)
-        stamp_torch(ox + 1, gz + 5, O)
-        stamp_cobble(ox + 5, gz + 3, O)
-        stamp_torch(ox + 6, gz + 3, O)
-        for rx, rz in ((ox - 1, gz + 1), (ox + 1, gz + 1), (ox, gz), (ox, gz + 2),
-                       (ox + 2, gz + 1), (ox + 1, gz), (ox + 1, gz + 2),
-                       (ox - 1, gz + 5), (ox + 1, gz + 5), (ox, gz + 4), (ox, gz + 6),
-                       (ox + 2, gz + 5), (ox + 1, gz + 4), (ox + 1, gz + 6),
-                       (ox + 4, gz + 3), (ox + 6, gz + 3), (ox + 5, gz + 2),
-                       (ox + 7, gz + 3), (ox + 6, gz + 2), (ox + 6, gz + 4)):
+        stamp_cobble(ox, gz, O)
+        stamp_torch(ox + 1, gz, O)
+        stamp_cobble(ox, gz + 3, O)
+        stamp_torch(ox + 1, gz + 3, O)
+        stamp_cobble(ox + 3, gz + 1, O)
+        stamp_torch(ox + 4, gz + 1, O)
+        for rx, rz in ((ox - 1, gz), (ox + 1, gz), (ox, gz - 1), (ox, gz + 1),
+                       (ox + 2, gz), (ox + 1, gz - 1), (ox + 1, gz + 1),
+                       (ox - 1, gz + 3), (ox + 1, gz + 3), (ox, gz + 2), (ox, gz + 4),
+                       (ox + 2, gz + 3), (ox + 1, gz + 2), (ox + 1, gz + 4),
+                       (ox + 2, gz + 1), (ox + 4, gz + 1), (ox + 3, gz),
+                       (ox + 5, gz + 1), (ox + 4, gz), (ox + 4, gz + 2)):
             ring(rx, rz, fam)
-        stamp_wire([(ox - 2, gz + 1), (ox - 1, gz + 1)], A)
-        stamp_wire([(ox - 2, gz + 5), (ox - 1, gz + 5)], B)
-        stamp_wire([(ox + 2, gz + 1), (ox + 3, gz + 1), (ox + 3, gz + 2),
-                    (ox + 3, gz + 3), (ox + 4, gz + 3)], na)
-        stamp_wire([(ox + 2, gz + 5), (ox + 2, gz + 6), (ox + 3, gz + 6),
-                    (ox + 4, gz + 6), (ox + 5, gz + 6), (ox + 5, gz + 5),
-                    (ox + 5, gz + 4)], nb)
-        stamp_wire([(ox + 7, gz + 3), (ox + 8, gz + 3)], O)
-        return (ox - 2, gz + 1), (ox - 2, gz + 5), (ox + 8, gz + 3)
+        stamp_wire([(ox - 2, gz), (ox - 1, gz)], A)
+        stamp_wire([(ox - 2, gz + 3), (ox - 1, gz + 3)], B)
+        stamp_wire([(ox + 2, gz), (ox + 2, gz + 1)], na)
+        stamp_wire([(ox + 2, gz + 3), (ox + 3, gz + 3), (ox + 4, gz + 3),
+                    (ox + 4, gz + 2), (ox + 3, gz + 2)], nb)
+        stamp_wire([(ox + 5, gz + 1), (ox + 6, gz + 1)], O)
+        return (ox - 2, gz), (ox - 2, gz + 3), (ox + 6, gz + 1)
 
     recs = []
+    outrow = {}
     for i, g in enumerate(gates):
-        gz = 12 + i * 14
+        gz = rows[i]
         ox = cx
         op, o, a = g["op"], g["out"], g["args"]
         if op == "OR":
-            j = (ox, gz)
+            # junction taps driver-A in place (zero wire); only driver-B routes.
+            ax, az = pos[a[0]]
+            j = None
+            for dx, dz in ((1, 0), (0, 1), (0, -1), (-1, 0)):
+                c = (ax + dx, az + dz)
+                if c in solid or c in wires or c in rings:
+                    continue
+                j = c
+                break
+            if j is None:
+                j = (ox, gz)
+                route(pos[a[0]], j, a[0])
+            else:
+                wires[j] = a[0]
             junctions[j] = {a[0], a[1], o}
             pos[o] = j
-            recs.append((op, o, a, j))
+            outrow[o] = gz
+            recs.append((op, o, a, (j, j != (ox, gz))))
             continue
         if op == "AND":
             pa, pb, po = stamp_and(ox, gz, a[0], a[1], o)
             pos[o] = po
+            outrow[o] = gz + 1
             recs.append((op, o, a, (pa, pb, po)))
             continue
         if op != "NOT":
@@ -279,23 +308,26 @@ def layout(recipe, seed=None):
             raise RuntimeError(f"out cell blocked at {(bx + 2, bz)}")
         wires[(bx + 2, bz)] = o
         pos[o] = (bx + 2, bz)
+        outrow[o] = gz
         recs.append((op, o, a, (bx, bz)))
 
-    for j, name in enumerate(recipe["outputs"]):
-        lx = 2 + j * 3
-        oz = D - 2
-        blocks.append((lx, 1, oz, "minecraft:redstone_lamp"))
-        solid[(lx, oz)] = ("lamp", name)
+    for name in recipe["outputs"]:
+        dr = outrow[name]
+        blocks.append((W - 2, 1, dr, "minecraft:redstone_lamp"))
+        solid[(W - 2, dr)] = ("lamp", name)
         for dx, dz in DIRS:
-            ring(lx + dx, oz + dz, own(name))
-        recs.append(("OUT", name, [name], (lx, oz - 1)))
+            ring(W - 2 + dx, dr + dz, own(name))
+        recs.append(("OUT", name, [name], (W - 3, dr)))
 
     # phase 2: route every net through the finished field, shortest hops first
     # so long runs maze around settled locals instead of fencing them in.
     tasks = []
     for op, o, a, cell in recs:
         if op == "OR":
-            tasks += [(pos[a[0]], cell, a[0]), (pos[a[1]], cell, a[1])]
+            j, tapped = cell
+            if not tapped:
+                tasks.append((pos[a[0]], j, a[0]))
+            tasks.append((pos[a[1]], j, a[1]))
         elif op == "AND":
             pa, pb, po = cell
             tasks += [(pos[a[0]], pa, a[0]), (pos[a[1]], pb, a[1])]
