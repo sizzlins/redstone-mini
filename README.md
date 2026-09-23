@@ -32,6 +32,7 @@ rejects any layout where two nets touch — bad builds fail loudly, never silent
 python redstone_mini.py --alu8
 # opens: build_alu8.html + build_alu8.mcfunction (datapack only — first run:
 # gamerule maxCommandChainLength 200000)
+# The adder is ~75k setblocks of real torch gates (preview stays fast).
 ```
 
 Preview `build.html` streams real textures from the upstream
