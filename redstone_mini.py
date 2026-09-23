@@ -429,6 +429,19 @@ def layout_retry(recipe, tries=12):
 def base(bid):
     return bid.split("[")[0]
 
+def build_stamp(label, nblocks):
+    import datetime
+    import subprocess
+    try:
+        rev = subprocess.check_output(["git", "rev-parse", "--short", "HEAD"],
+                                      cwd="D:\\redstone-mini",
+                                      stderr=subprocess.DEVNULL,
+                                      timeout=10).decode().strip()
+    except Exception:
+        rev = "nogit"
+    ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+    return f"{label} @ {rev} {ts} ({nblocks} blocks)"
+
 def export_mcfunction(blocks, path, oy=64):
     order = {"minecraft:cobblestone": 0, "minecraft:stone": 0, "minecraft:redstone_block": 1,
              "minecraft:lever": 2, "minecraft:redstone_lamp": 2}
@@ -440,7 +453,7 @@ def export_mcfunction(blocks, path, oy=64):
         for x, y, z, bid in sorted(blocks, key=key):
             f.write(f"setblock {x} {oy + y} {z} {bid}\n")
 
-def export_html(blocks, size, path):
+def export_html(blocks, size, path, label="build"):
     W, D = size
     # ponytail: floor renders as one plane, not W*D cubes. Keeps big previews fast.
     data = [{"p": [x, y, z], "c": COLORS.get(base(b), 0xffffff), "b": base(b),
@@ -449,7 +462,7 @@ def export_html(blocks, size, path):
     html = """<!doctype html><html><head><meta charset=utf-8><title>redstone build</title>
 <style>body{margin:0;font-family:sans-serif}#t{position:fixed;top:8px;left:8px;background:#111;color:#fff;padding:8px 12px;border-radius:8px}</style>
 <script type="importmap">{"imports":{"three":"https://unpkg.com/three@0.160.0/build/three.module.js","three/addons/":"https://unpkg.com/three@0.160.0/examples/jsm/"}}</script>
-</head><body><div id=t>drag to orbit, scroll to zoom — real torch gates, textures from upstream minecraft-assets</div>
+</head><body><div id=t>STAMP — drag to orbit, scroll to zoom. Real torch gates.</div>
 <script type="module">import * as T from 'three';import {OrbitControls} from 'three/addons/controls/OrbitControls.js';
 const B=DATA;const s=new T.Scene();s.background=new T.Color(0x1a2028);
 const SZ=MAXD;const cam=new T.PerspectiveCamera(50,innerWidth/innerHeight,.1,5000);cam.position.set(SZ*.7,SZ*.7,SZ*.9);
@@ -490,6 +503,7 @@ for(const k in groups){const arr=groups[k];const b0=arr[0];
 (function a(){requestAnimationFrame(a);c.update();r.render(s,cam);})();</script></body></html>"""
     html = (html.replace("DATA", json.dumps(data)).replace("CX", str(W / 2)).replace("CZ", str(D / 2))
             .replace("TEXSTONE", json.dumps(TEXBASE + "stone.png"))
+            .replace("STAMP", build_stamp(label, len(blocks)))
             .replace("MAXD", str(max(W, D))).replace("FW", str(W)).replace("FD", str(D)))
     open(path, "w").write(html)
 
@@ -525,7 +539,7 @@ def demo():
     assert any(base(b) == "minecraft:cobblestone" for *_, b in blocks), "gate block missing"
     assert any(base(b) == "minecraft:redstone_wall_torch" for *_, b in blocks), "torch missing"
     export_mcfunction(blocks, "build.mcfunction")
-    export_html(blocks, size, "build.html")
+    export_html(blocks, size, "build.html", "2-gate demo")
     print(f"ok: {len(blocks)} blocks -> build.html + build.mcfunction")
 
 def demo_alu8():
@@ -538,7 +552,7 @@ def demo_alu8():
         assert (s, got["C8"]) == ((a + b) & 255, (a + b) >> 8), (a, b, s)
     blocks, size = layout_retry(r)
     export_mcfunction(blocks, "build_alu8.mcfunction")
-    export_html(blocks, size, "build_alu8.html")
+    export_html(blocks, size, "build_alu8.html", "8-bit adder")
     print(f"alu8 ok: {len(blocks)} blocks -> build_alu8.html + build_alu8.mcfunction")
 
 if __name__ == "__main__":
@@ -550,5 +564,5 @@ if __name__ == "__main__":
         r = parse_recipe(text)
         blocks, size = layout_retry(r)
         export_mcfunction(blocks, "build.mcfunction")
-        export_html(blocks, size, "build.html")
+        export_html(blocks, size, "build.html", sys.argv[1])
         print(f"custom ok: {len(blocks)} blocks -> build.html + build.mcfunction")
