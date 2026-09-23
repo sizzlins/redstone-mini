@@ -75,9 +75,10 @@ def layout(recipe):
         blocks.append((x, 1, 1, "minecraft:lever"))
         blocks.append((x, 1, 2, "minecraft:redstone_wire"))
         pos[name] = (x, 2)
-    for lit in ("0", "1"):  # tie-offs for constants, visual stub only
-        blocks.append((0, 1, 2, "minecraft:redstone_wire"))
+    for lit in ("0", "1"):  # tie-offs for constants, only if recipe uses them
         pos[lit] = (0, 2)
+    if any(a in ("0", "1") for g in recipe["gates"] for a in g["args"]):
+        blocks.append((0, 1, 2, "minecraft:redstone_wire"))
     def wire(x0, z0, x1, z1):
         for x in range(min(x0, x1), max(x0, x1) + 1):
             if not any(b[0] == x and b[2] == z0 and b[3] != "minecraft:stone" and b[1] == 1 for b in blocks if b[3] in GATE_BLOCK.values()):
@@ -156,8 +157,13 @@ stoneTex.wrapS=stoneTex.wrapT=T.RepeatWrapping;stoneTex.repeat.set(FW,FD);
 const floor=new T.Mesh(new T.PlaneGeometry(FW,FD),new T.MeshLambertMaterial({map:stoneTex}));
 floor.rotation.x=-Math.PI/2;floor.position.set(FW/2-0.5,-0.5,FD/2-0.5);s.add(floor);
 const flatG=new T.BoxGeometry(.92,.18,.92);
-for(const b of B){const isWire=b.b==='minecraft:redstone_wire';
- const m=new T.Mesh(isWire?flatG:g,matFor(b));m.position.set(b.p[0],b.p[1]+(isWire?-0.37:0),b.p[2]);s.add(m);}
+const leverG=new T.BoxGeometry(.45,.7,.45);
+// ponytail: wires + levers read better as clean shapes than stretched textures. Only solid blocks get maps.
+for(const b of B){let m;
+ if(b.b==='minecraft:redstone_wire'){m=new T.Mesh(flatG,new T.MeshLambertMaterial({color:b.c}));m.position.set(b.p[0],b.p[1]-0.37,b.p[2]);}
+ else if(b.b==='minecraft:lever'){m=new T.Mesh(leverG,new T.MeshLambertMaterial({color:b.c}));m.position.set(b.p[0],b.p[1]-0.1,b.p[2]);}
+ else{m=new T.Mesh(g,matFor(b));m.position.set(b.p[0],b.p[1],b.p[2]);}
+ s.add(m);}
 (function a(){requestAnimationFrame(a);c.update();r.render(s,cam);})();</script></body></html>"""
     html = (html.replace("DATA", json.dumps(data)).replace("CX", str(W / 2)).replace("CZ", str(D / 2))
             .replace("TEXSTONE", json.dumps(TEXBASE + "stone.png"))
