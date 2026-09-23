@@ -26,6 +26,7 @@ def layout_retry(recipe, tries=12, verify=False, grows=3):
             st = sim_verify(recipe, out[0], out[2], quiet=True, collect=True)
             return out + (st,)
         except RuntimeError as e:
+            e.blocks, e.size, e.io = out[:3]
             last = e
     raise last
 
@@ -33,7 +34,7 @@ def layout_retry(recipe, tries=12, verify=False, grows=3):
 
 def sim_verify(recipe, blocks, io, seed=7, quiet=False, collect=False):
     """Independent redstone simulation of the PLACED build (ignores layout nets).
-    Plays input vectors through torch/dust physics to a fixed point, compares
+    Plays input vectors through tick-stepped torch/dust physics, compares
     lamps against eval_net. Catches opens/shorts the static guards can't see.
     # ponytail: flat single-level physics only (all our builds are); vanilla
     # tick delays (torch +1, repeater +its delay stage).
@@ -56,7 +57,7 @@ def sim_verify(recipe, blocks, io, seed=7, quiet=False, collect=False):
         elif b == "minecraft:repeater":
             face = bid.split("facing=")[1].split(",")[0] if "facing=" in bid else "east"
             rep[c] = {"east": (1, 0), "west": (-1, 0), "south": (0, 1), "north": (0, -1)}[face]
-            dly = bid.split("delay=")[1].rstrip("]") if "delay=" in bid else "1"
+            dly = bid.split("delay=")[1].split(",")[0].rstrip("]") if "delay=" in bid else "1"
             repdelay[c] = max(1, min(4, int(dly)))
         elif b == "minecraft:redstone_block":
             rblk.add(c)
