@@ -183,7 +183,21 @@ def layout(recipe, seed=None):
             wires.setdefault(cell, net)
 
     def route(a, b, net):
-        starts = [a] + [c for c, n in wires.items() if n == net and c != a]
+        # multi-source, but only through LIVE net: cells already conducting from
+        # the driver. (A pre-wired but unconnected island is not a start.)
+        comp, seen, stack = [], {a}, [a]
+        while stack:
+            c = stack.pop()
+            if wires.get(c, net) == net:
+                comp.append(c)
+            for dx, dz in DIRS:
+                m = (c[0] + dx, c[1] + dz)
+                if m in seen:
+                    continue
+                if wires.get(m) == net or (m in junctions and net in junctions[m]):
+                    seen.add(m)
+                    stack.append(m)
+        starts = [a] + [c for c in comp if c != a]
         for margin in (12, 40, None):
             path = astar(starts, b, net, W, D, solid, rings, wires, junctions, margin)
             if path:
@@ -336,7 +350,7 @@ def layout(recipe, seed=None):
             tasks.append((pos[a[0]], (bx - 1, bz), a[0]))
         elif op == "OUT":
             tasks.append((pos[a[0]], cell, a[0]))
-    tasks.sort(key=lambda t: abs(t[0][0] - t[1][0]) + abs(t[0][1] - t[1][1]))
+    tasks.sort(key=lambda t: -(abs(t[0][0] - t[1][0]) + abs(t[0][1] - t[1][1])))
     if seed is not None:
         random.Random(seed).shuffle(tasks)
     placed = set(wires)  # feeds/outs/ties stay; routed paths may be ripped up
@@ -396,6 +410,38 @@ def layout(recipe, seed=None):
                 ok = ok or ((x, z) in junctions and wires[m] in junctions[(x, z)])
                 if not ok:
                     raise RuntimeError(f"SHORT: {net} touches {wires[m]} at {(x, z)}->{m}")
+    # checker 2 (opens): every wire must trace to a driver (lever feed, tie,
+    # or torch-adjacent dust). Same-net steps, junctions merge, repeaters pass.
+    # A routed-looking but unconnected net fails loudly instead of building dead.
+    seed_states = []
+    for name, p in pos.items():
+        if p in wires and wires[p] == name:
+            seed_states.append((p, name))
+    for (x, z), net in wires.items():
+        for dx, dz in DIRS:
+            if solid.get((x + dx, z + dz), (None,))[0] == "torch":
+                seed_states.append(((x, z), net))
+                break
+    reached, seen_states = set(), set()
+    stack = seed_states
+    while stack:
+        c, n = stack.pop()
+        if (c, n) in seen_states:
+            continue
+        seen_states.add((c, n))
+        reached.add(c)
+        for dx, dz in DIRS:
+            m = (c[0] + dx, c[1] + dz)
+            if m in wires:
+                nm = wires[m]
+                if nm == n or (c in junctions and nm in junctions[c]) or \
+                   (m in junctions and n in junctions[m]):
+                    stack.append((m, nm if nm == n or m not in junctions else n))
+            elif m in repeaters and repeaters[m][0] == n:
+                stack.append((m, n))
+    dead = [(x, z) for (x, z) in wires if (x, z) not in reached]
+    if dead:
+        raise RuntimeError(f"OPEN (unconnected dust, nothing drives it): {dead[:6]}")
     out = list(blocks)
     for (x, z), net in wires.items():
         out.append((x, 1, z, "minecraft:redstone_wire"))
