@@ -59,24 +59,34 @@ def eval_net(recipe, values):
             sig[g["out"]] = a[0] != a[1]
         elif g["op"] == "NOT":
             sig[g["out"]] = not a[0]
+        elif g["op"] == "NOR":
+            sig[g["out"]] = not (a[0] or a[1])
     return sig
 
 def expand_gates(gates):
-    """XOR->OR,AND,NOT,AND. AND stays a compound, OR a junction, NOT a tile."""
+    """XOR->OR,AND,NOT,AND. AND stays a compound, OR a junction, NOT a tile.
+    Banded OR (dense datapath) expands to NOR+NOT (proven tiles, spread ports,
+    no junction funnel); unbanded keeps the compact repeater junction."""
     gates = [dict(g, args=list(g["args"])) for g in gates]
     c = [0]
     def T(p):
         c[0] += 1
         return f"_{p}{c[0]}"
+    banded = any(g.get("band") is not None for g in gates)
     changed = True
     while changed:
         changed = False
         nxt = []
         for g in gates:
             op, o, a = g["op"], g["out"], g["args"]
-            if op == "XOR":
+            bd = g.get("band")
+            if op == "OR" and banded:
+                n = T("no")
+                nxt += [{"out": n, "op": "NOR", "args": [a[0], a[1]], "band": bd},
+                        {"out": o, "op": "NOT", "args": [n], "band": bd}]
+                changed = True
+            elif op == "XOR":
                 t1, t2, t3 = T("xo"), T("xa"), T("xn")
-                bd = g.get("band")
                 nxt += [{"out": t1, "op": "OR", "args": [a[0], a[1]], "band": bd},
                         {"out": t2, "op": "AND", "args": [a[0], a[1]], "band": bd},
                         {"out": t3, "op": "NOT", "args": [t2], "band": bd},
@@ -295,7 +305,7 @@ def layout(recipe, seed=None):
     def footprint(op, ox, gz):
         if op == "AND":
             return {(x, z) for x in range(ox - 2, ox + 9) for z in range(gz - 1, gz + 8)}
-        if op == "NOT":
+        if op in ("NOT", "NOR"):
             return {(x, z) for x in range(ox - 3, ox + 4) for z in range(gz - 1, gz + 2)}
         return {(x, z) for x in range(ox - 3, ox + 4) for z in range(gz - 3, gz + 4)}
 
@@ -410,6 +420,42 @@ def layout(recipe, seed=None):
             if not placed:
                 raise RuntimeError(f"AND blocked for {o}")
             continue
+        if op == "NOR":
+            # torch NOR (wiki): inputs into block sides. West chained, north mazed.
+            dv = pos.get(a[0])
+            cands = []
+            if dv is not None and dv not in junctions:
+                cands.append((dv[0] + 3, dv[1]))
+            cands.append((ox, gz))
+            placed = False
+            for bx, bz in cands:
+                if not (0 <= bx - 2 and bx + 2 < W and 0 <= bz - 1 and bz + 1 < D):
+                    continue
+                if abs(bx - ox) > 16 or abs(bz - gz) > 7:
+                    continue
+                if not footprint("NOT", bx, bz).isdisjoint(others_reserved[i]):
+                    continue
+                s = _snap()
+                try:
+                    nets = own(o, *a)
+                    stamp_cobble(bx, bz, o)
+                    stamp_torch(bx + 1, bz, o)
+                    for rx, rz in ((bx - 1, bz), (bx + 1, bz), (bx, bz - 1), (bx, bz + 1),
+                                   (bx + 2, bz), (bx + 1, bz - 1), (bx + 1, bz + 1)):
+                        ring(rx, rz, nets)
+                    if (bx + 2, bz) in wires:
+                        raise RuntimeError(f"out cell blocked at {(bx + 2, bz)}")
+                    wires[(bx + 2, bz)] = o
+                    pos[o] = (bx + 2, bz)
+                    firstport.setdefault(a[0], (bx - 1, bz))
+                    recs.append((op, o, a, (bx, bz)))
+                    placed = True
+                    break
+                except RuntimeError:
+                    _restore(s)
+            if not placed:
+                raise RuntimeError(f"NOR blocked for {o}")
+            continue
         if op != "NOT":
             raise ValueError(f"bad primitive {op}")
         dv = pos.get(a[0])
@@ -493,6 +539,9 @@ def layout(recipe, seed=None):
         elif op == "NOT":
             bx, bz = cell
             tasks.append((pos[a[0]], (bx - 1, bz), a[0]))
+        elif op == "NOR":
+            bx, bz = cell
+            tasks += [(pos[a[0]], (bx - 1, bz), a[0]), (pos[a[1]], (bx, bz - 1), a[1])]
         elif op == "OUT":
             tasks.append((pos[a[0]], cell, a[0]))
     tasks.sort(key=lambda t: -(abs(t[0][0] - t[1][0]) + abs(t[0][1] - t[1][1])))
@@ -610,9 +659,10 @@ def layout(recipe, seed=None):
         out.append((x, 1, z, "minecraft:redstone_wire"))
     for (x, z), (net, facing) in repeaters.items():
         out.append((x, 1, z, f"minecraft:repeater[facing={facing},delay=1]"))
-    for x in range(W):
-        for z in range(D):
-            out.append((x, 0, z, "minecraft:stone"))
+    # ponytail: stone only where a component sits on it (flat worlds have
+    # ground already); a full pad was 98% of the file.
+    for x, z in sorted({(x, z) for x, y, z, bid in out if y == 1}):
+        out.append((x, 0, z, "minecraft:stone"))
     io = {"levers": {c: n for c, (k, n) in solid.items() if k == "lever"},
           "lamps": {c: n for c, (k, n) in solid.items() if k == "lamp"},
           "nets": dict(wires)}
@@ -706,23 +756,40 @@ const floor=new T.Mesh(new T.PlaneGeometry(FW,FD),new T.MeshLambertMaterial({map
 floor.rotation.x=-Math.PI/2;floor.position.set(FW/2-0.5,-0.5,FD/2-0.5);s.add(floor);
 const cubeG=new T.BoxGeometry(.92,.92,.92);
 const flatG=new T.BoxGeometry(.92,.18,.92);
-const smallG=new T.BoxGeometry(.45,.7,.45);
+const dustG=new T.BoxGeometry(.9,.1,.9);
+const leverBaseG=new T.BoxGeometry(.5,.22,.5);
+const leverStickG=new T.BoxGeometry(.14,.55,.14);
+const torchStickG=new T.BoxGeometry(.14,.6,.14);
+const torchHeadG=new T.BoxGeometry(.26,.26,.26);
+const brownM=new T.MeshLambertMaterial({color:0x7a5a2e});
+const darkM=new T.MeshLambertMaterial({color:0x4a2f16});
+const redM=new T.MeshLambertMaterial({color:0xc02020});
+const glowM=new T.MeshLambertMaterial({color:0xffd23e});
 const groups={};
-for(const b of B){const k=b.b;((groups[k] ??= []).push(b));}
+for(const b of B){const k=b.b;if(k==='minecraft:lever'||k==='minecraft:redstone_wall_torch')continue;((groups[k] ??= []).push(b));}
 const dummy=new T.Object3D();
 for(const k in groups){const arr=groups[k];const b0=arr[0];
  let geo, mat;
- if(k==='minecraft:redstone_wire'){geo=flatG;mat=flatMat(b0);}
- else if(k==='minecraft:lever'||k==='minecraft:redstone_wall_torch'){geo=smallG;mat=flatMat(b0);}
+ if(k==='minecraft:redstone_wire'){geo=dustG;mat=redM;}
  else if(k==='minecraft:repeater'){geo=flatG;mat=flatMat(b0);}
  else{geo=cubeG;mat=texMat(b0);}
  const im=new T.InstancedMesh(geo,mat,arr.length);
  arr.forEach((b,idx)=>{let y=b.p[1];
-  if(k==='minecraft:redstone_wire')y-=0.37;
-  if(k==='minecraft:lever'||k==='minecraft:redstone_wall_torch')y-=0.1;
+  if(k==='minecraft:redstone_wire')y-=0.41;
   if(k==='minecraft:repeater')y-=0.3;
   dummy.position.set(b.p[0],y,b.p[2]);dummy.updateMatrix();im.setMatrixAt(idx,dummy.matrix);});
  s.add(im);}
+// ponytail: levers/torches are 2 boxes each (base+stick, stick+head),
+// not cubes. All our wall torches face east, hence the +x offset.
+for(const b of B){
+ if(b.b==='minecraft:lever'){
+  const m1=new T.Mesh(leverBaseG,brownM);m1.position.set(b.p[0],b.p[1]-0.35,b.p[2]);s.add(m1);
+  const m2=new T.Mesh(leverStickG,darkM);m2.position.set(b.p[0],b.p[1]+0.02,b.p[2]);s.add(m2);
+ }else if(b.b==='minecraft:redstone_wall_torch'){
+  const m1=new T.Mesh(torchStickG,darkM);m1.position.set(b.p[0]+0.28,b.p[1]-0.15,b.p[2]);s.add(m1);
+  const m2=new T.Mesh(torchHeadG,glowM);m2.position.set(b.p[0]+0.28,b.p[1]+0.22,b.p[2]);s.add(m2);
+ }
+}
 (function a(){requestAnimationFrame(a);c.update();r.render(s,cam);})();</script></body></html>"""
     html = (html.replace("DATA", json.dumps(data)).replace("CX", str(W / 2)).replace("CZ", str(D / 2))
             .replace("TEXSTONE", json.dumps(TEXBASE + "stone.png"))
