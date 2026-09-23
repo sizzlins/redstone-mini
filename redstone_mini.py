@@ -39,9 +39,15 @@ def parse_recipe(text):
     return {"inputs": inputs, "outputs": outputs, "gates": gates}
 
 def eval_net(recipe, values):
+    def val(x):
+        if x == "0":
+            return False
+        if x == "1":
+            return True
+        return bool(sig[x])
     sig = dict(values)
     for g in recipe["gates"]:
-        a = [bool(sig[x]) for x in g["args"]]
+        a = [val(x) for x in g["args"]]
         if g["op"] == "AND":
             sig[g["out"]] = a[0] and a[1]
         elif g["op"] == "OR":
@@ -69,6 +75,9 @@ def layout(recipe):
         blocks.append((x, 1, 1, "minecraft:lever"))
         blocks.append((x, 1, 2, "minecraft:redstone_wire"))
         pos[name] = (x, 2)
+    for lit in ("0", "1"):  # tie-offs for constants, visual stub only
+        blocks.append((0, 1, 2, "minecraft:redstone_wire"))
+        pos[lit] = (0, 2)
     def wire(x0, z0, x1, z1):
         for x in range(min(x0, x1), max(x0, x1) + 1):
             if not any(b[0] == x and b[2] == z0 and b[3] != "minecraft:stone" and b[1] == 1 for b in blocks if b[3] in GATE_BLOCK.values()):
@@ -120,12 +129,14 @@ def export_mcfunction(blocks, path, oy=64):
 
 def export_html(blocks, size, path):
     W, D = size
+    # ponytail: floor renders as one plane, not W*D cubes. Keeps 8-bit previews fast.
     data = [{"p": [x, y, z], "c": COLORS.get(b, 0xffffff), "b": b,
-             "t": TEXBASE + TEXMAP.get(b, "stone.png")} for x, y, z, b in blocks]
+             "t": TEXBASE + TEXMAP.get(b, "stone.png")}
+            for x, y, z, b in blocks if not (b == "minecraft:stone" and y == 0)]
     html = """<!doctype html><html><head><meta charset=utf-8><title>redstone build</title>
 <style>body{margin:0;font-family:sans-serif}#t{position:fixed;top:8px;left:8px;background:#111;color:#fff;padding:8px 12px;border-radius:8px}</style>
 <script type="importmap">{"imports":{"three":"https://unpkg.com/three@0.160.0/build/three.module.js","three/addons/":"https://unpkg.com/three@0.160.0/examples/jsm/"}}</script>
-</head><body><div id=t>drag to orbit, scroll to zoom — textures from your minecraft-assets fork</div>
+</head><body><div id=t>drag to orbit, scroll to zoom — textures from upstream minecraft-assets</div>
 <script type="module">import * as T from 'three';import {OrbitControls} from 'three/addons/controls/OrbitControls.js';
 const B=DATA;const s=new T.Scene();s.background=new T.Color(0x1a2028);
 const cam=new T.PerspectiveCamera(50,innerWidth/innerHeight,.1,1000);cam.position.set(12,12,16);
@@ -140,11 +151,17 @@ function matFor(b){if(matCache[b.b])return matCache[b.b];
  tex.magFilter=T.NearestFilter;tex.colorSpace=T.SRGBColorSpace;
  const m=new T.MeshLambertMaterial({color:0xffffff,map:tex});
  matCache[b.b]=m;return m;}
+const stoneTex=loader.load(TEXSTONE,(t)=>{t.wrapS=t.wrapT=T.RepeatWrapping;t.repeat.set(FW,FD);t.magFilter=T.NearestFilter;t.colorSpace=T.SRGBColorSpace;});
+stoneTex.wrapS=stoneTex.wrapT=T.RepeatWrapping;stoneTex.repeat.set(FW,FD);
+const floor=new T.Mesh(new T.PlaneGeometry(FW,FD),new T.MeshLambertMaterial({map:stoneTex}));
+floor.rotation.x=-Math.PI/2;floor.position.set(FW/2-0.5,-0.5,FD/2-0.5);s.add(floor);
 const flatG=new T.BoxGeometry(.92,.18,.92);
 for(const b of B){const isWire=b.b==='minecraft:redstone_wire';
  const m=new T.Mesh(isWire?flatG:g,matFor(b));m.position.set(b.p[0],b.p[1]+(isWire?-0.37:0),b.p[2]);s.add(m);}
 (function a(){requestAnimationFrame(a);c.update();r.render(s,cam);})();</script></body></html>"""
-    html = html.replace("DATA", json.dumps(data)).replace("CX", str(W / 2)).replace("CZ", str(D / 2))
+    html = (html.replace("DATA", json.dumps(data)).replace("CX", str(W / 2)).replace("CZ", str(D / 2))
+            .replace("TEXSTONE", json.dumps(TEXBASE + "stone.png"))
+            .replace("FW", str(W)).replace("FD", str(D)))
     open(path, "w").write(html)
 
 DEMO = """IN a, b, c
@@ -167,9 +184,39 @@ def demo():
     export_html(blocks, size, "build.html")
     print(f"ok: {len(blocks)} blocks, {len(r['gates'])} gates -> build.html + build.mcfunction")
 
+def build_adder8():
+    """8-bit ripple-carry adder. 5 two-input gates per bit, no new gate types."""
+    ins = [f"A{i}" for i in range(8)] + [f"B{i}" for i in range(8)]
+    gates = []
+    for i in range(8):
+        a, b, cin, cout = f"A{i}", f"B{i}", f"C{i}", f"C{i+1}"
+        if i == 0:
+            cin = "0"
+        gates += [{"out": f"X{i}", "op": "XOR", "args": [a, b]},
+                  {"out": f"S{i}", "op": "XOR", "args": [f"X{i}", cin]},
+                  {"out": f"T{i}", "op": "AND", "args": [a, b]},
+                  {"out": f"U{i}", "op": "AND", "args": [f"X{i}", cin]},
+                  {"out": cout, "op": "OR", "args": [f"T{i}", f"U{i}"]}]
+    return {"inputs": ins, "outputs": [f"S{i}" for i in range(8)] + ["C8"], "gates": gates}
+
+def demo_alu8():
+    r = build_adder8()
+    for a, b in ((13, 29), (200, 100), (255, 1), (0, 0)):
+        v = {f"A{i}": (a >> i) & 1 for i in range(8)}
+        v.update({f"B{i}": (b >> i) & 1 for i in range(8)})
+        got = eval_net(r, v)
+        s = sum(got[f"S{i}"] << i for i in range(8))
+        assert (s, got["C8"]) == ((a + b) & 255, (a + b) >> 8), (a, b, s)
+    blocks, size = layout(r)
+    export_mcfunction(blocks, "build_alu8.mcfunction")
+    export_html(blocks, size, "build_alu8.html")
+    print(f"alu8 ok: {len(blocks)} blocks, {len(r['gates'])} gates -> build_alu8.html + build_alu8.mcfunction")
+
 if __name__ == "__main__":
     demo()
-    if len(sys.argv) > 1:  # custom recipe file
+    if "--alu8" in sys.argv:
+        demo_alu8()
+    elif len(sys.argv) > 1:  # custom recipe file
         text = open(sys.argv[1]).read()
         r = parse_recipe(text)
         blocks, size = layout(r)
