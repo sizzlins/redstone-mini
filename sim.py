@@ -257,4 +257,26 @@ if __name__ == "__main__":
     assert _st["vectors"]["1"]["ticks"] == 4, _st["vectors"]["1"]["ticks"]
     assert _st["vectors"]["0"]["lamps"] == {"3,0": 0}, _st["vectors"]["0"]
     print("tick ok: delay-4 settles at tick 4")
+    from export import export_html
+    _blocks = [(0, 1, 0, "minecraft:lever"),
+               (1, 1, 0, "minecraft:repeater[facing=east,delay=4]"),
+               (2, 1, 0, "minecraft:redstone_wire"),
+               (3, 1, 0, "minecraft:redstone_wall_torch[facing=east]"),
+               (4, 1, 0, "minecraft:redstone_lamp")]
+    _io = {"levers": {(0, 0): "a"}, "lamps": {(4, 0): "y"}, "nets": {}}
+    _st = {"inputs": ["a"], "levers": {"0,0": "a"}, "lamps": {"4,0": "y"},
+           "vectors": {"0": {"w": {}, "t": {"3,0": 0}, "lamps": {"4,0": 0},
+                             "ticks": 0, "r": {"1,0": 0}}}}
+    export_html(_blocks, (6, 1), r"C:\Users\LOQ\AppData\Local\Temp\opencode\stages.html",
+                "s", _st)
+    import json as _json
+    _h = open(r"C:\Users\LOQ\AppData\Local\Temp\opencode\stages.html").read()
+    _i = _h.find("const B=")
+    _data = _json.loads(_h[_i + len("const B="):_h.find(";const s=", _i)])
+    _reps = [d for d in _data if d["b"] == "minecraft:repeater"]
+    assert _reps and _reps[0]["dl"] == 4 and _reps[0]["f"] == [1, 0], _reps
+    _to = [d for d in _data if d["b"] == "minecraft:redstone_wall_torch"]
+    assert _to and _to[0]["f"] == [1, 0] and _to[0]["m"] == 0, _to
+    assert "applyState(INPUTS.map(n=>'0').join(''))" in _h, "no initial applyState"
+    print("stages ok: delay-4 stamped, torch facing pinned, initial paint")
 
