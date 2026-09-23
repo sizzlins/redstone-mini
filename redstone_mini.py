@@ -193,23 +193,10 @@ def layout(recipe, seed=None):
             wires.setdefault(cell, net)
 
     def route(a, b, net):
-        # multi-source, but only through LIVE net: cells already conducting from
-        # the driver. (A pre-wired but unconnected island is not a start.)
-        comp, seen, stack = [], {a}, [a]
-        while stack:
-            c = stack.pop()
-            if wires.get(c, net) == net:
-                comp.append(c)
-            for dx, dz in DIRS:
-                m = (c[0] + dx, c[1] + dz)
-                if m in seen:
-                    continue
-                if wires.get(m) == net or (m in junctions and net in junctions[m]):
-                    seen.add(m)
-                    stack.append(m)
-        starts = [a] + [c for c in comp if c != a]
+        # single source: every branch traces full-length to its driver.
+        # (Tapping live-looking mid-wire cells caused decayed weak taps.)
         for margin in (12, 40, None):
-            path = astar(starts, b, net, W, D, solid, rings, wires, junctions, margin)
+            path = astar([a], b, net, W, D, solid, rings, wires, junctions, margin)
             if path:
                 break
         if not path:
@@ -304,21 +291,45 @@ def layout(recipe, seed=None):
             ox = 6 + b * 16
         op, o, a = g["op"], g["out"], g["args"]
         if op == "OR":
-            # repeater-isolated OR (wiki): each input passes a diode into the
-            # junction, so a live input can never back-drive the other net.
+            # repeater-isolated OR (wiki): diodes sit on their drivers' side,
+            # facing the junction, so entries stay short instead of marathoning.
             j = (ox, gz)
-            ra, rb = (ox - 1, gz), (ox, gz - 1)
-            for c in (j, ra, rb):
-                if c in solid or c in wires:
-                    raise RuntimeError(f"OR cell blocked at {c}")
-            blocks.append((ra[0], 1, ra[1], "minecraft:repeater[facing=east,delay=1]"))
-            solid[ra] = ("repeater", o)
-            blocks.append((rb[0], 1, rb[1], "minecraft:repeater[facing=south,delay=1]"))
-            solid[rb] = ("repeater", o)
+            if j in solid or j in wires:
+                raise RuntimeError(f"OR cell blocked at {j}")
+            reps = []
+            seen = {j}
+            for sig in a:
+                sx, sz = pos[sig]
+                if abs(sx - ox) >= abs(sz - gz):
+                    order = [(1 if sx >= ox else -1, 0)]
+                else:
+                    order = [(0, 1 if sz >= gz else -1)]
+                order += [(1, 0), (-1, 0), (0, 1), (0, -1)]
+                done = False
+                for dx, dz in order:
+                    for step in (1, 2, 3):
+                        r = (j[0] + dx * step, j[1] + dz * step)
+                        b = (j[0] + dx * (step + 1), j[1] + dz * (step + 1))
+                        if r in solid or r in wires or b in solid or b in wires \
+                           or r in seen or b in seen:
+                            continue
+                        facing = {(1, 0): "west", (-1, 0): "east",
+                                  (0, 1): "north", (0, -1): "south"}[(dx, dz)]
+                        blocks.append((r[0], 1, r[1], f"minecraft:repeater[facing={facing},delay=1]"))
+                        solid[r] = ("repeater", o)
+                        reps.append((r, b))
+                        seen.add(r)
+                        seen.add(b)
+                        done = True
+                        break
+                    if done:
+                        break
+                if not done:
+                    raise RuntimeError(f"OR cell blocked around {j} for {sig}")
             wires[j] = o
             junctions[j] = {o}
             pos[o] = j
-            recs.append((op, o, a, (j, ra, rb)))
+            recs.append((op, o, a, (j, reps)))
             continue
         if op == "AND":
             pa, pb, po = stamp_and(ox, gz, a[0], a[1], o)
@@ -374,9 +385,8 @@ def layout(recipe, seed=None):
     tasks = []
     for op, o, a, cell in recs:
         if op == "OR":
-            j, ra, rb = cell
-            tasks += [(pos[a[0]], (ra[0] - 1, ra[1]), a[0]),
-                      (pos[a[1]], (rb[0], rb[1] - 1), a[1])]
+            j, reps = cell
+            tasks += [(pos[sig], b, sig) for sig, (r, b) in zip(a, reps)]
         elif op == "AND":
             pa, pb, po = cell
             tasks += [(pos[a[0]], pa, a[0]), (pos[a[1]], pb, a[1])]
@@ -435,6 +445,10 @@ def layout(recipe, seed=None):
             w = wires.get(f)
             if w is not None and w != net:
                 raise RuntimeError(f"repeater guard {net} vs {w} at {f}")
+        if wires.get((x1, z1)) != net:
+            raise RuntimeError(
+                f"repeater spot {net} at {(x1, z1)} holds {wires.get((x1, z1), 'EMPTY')} "
+                f"(solid {solid.get((x1, z1), '-')})")
         del wires[(x1, z1)]
         repeaters[(x1, z1)] = (net, facing)
 
@@ -531,6 +545,7 @@ def layout_retry(recipe, tries=12, verify=False):
             sim_verify(recipe, out[0], out[2], quiet=True)
             return out
         except RuntimeError as e:
+            e.blocks, e.size, e.io = out
             last = e
     raise last
 
@@ -737,7 +752,14 @@ def sim_verify(recipe, blocks, io, seed=7, quiet=False):
                 return True
             if b in lever and vec.get(lever[b], False):
                 return True
-            return b in rblk
+            if b in rblk:
+                return True
+            # ponytail: repeaters chain back-to-back (standard); read upstream ron.
+            if b in rep:
+                d2 = rep[b]
+                if (b[0] + d2[0], b[1] + d2[1]) == c and ron.get(b, False):
+                    return True
+            return False
 
         n = 0
         from collections import Counter as _Counter
