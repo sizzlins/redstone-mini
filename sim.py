@@ -21,26 +21,25 @@ def layout_retry(recipe, tries=12, verify=False, grows=3):
                 last = e
                 continue
             if not verify:
-                return out
+                return out + (None,)
         try:
-            sim_verify(recipe, out[0], out[2], quiet=True)
-            return out
+            st = sim_verify(recipe, out[0], out[2], quiet=True, collect=True)
+            return out + (st,)
         except RuntimeError as e:
-            e.blocks, e.size, e.io = out
             last = e
     raise last
 
 
 
-def sim_verify(recipe, blocks, io, seed=7, quiet=False):
+def sim_verify(recipe, blocks, io, seed=7, quiet=False, collect=False):
     """Independent redstone simulation of the PLACED build (ignores layout nets).
     Plays input vectors through torch/dust physics to a fixed point, compares
     lamps against eval_net. Catches opens/shorts the static guards can't see.
     # ponytail: flat single-level physics only (all our builds are); delay unmodeled.
     """
     import random as _r
-    from collections import deque
     dust, torch, lampat, rep, rblk, cob = set(), {}, set(), {}, set(), set()
+    repdelay = {}
     for x, y, z, bid in blocks:
         if y != 1:
             continue
@@ -56,6 +55,8 @@ def sim_verify(recipe, blocks, io, seed=7, quiet=False):
         elif b == "minecraft:repeater":
             face = bid.split("facing=")[1].split(",")[0] if "facing=" in bid else "east"
             rep[c] = {"east": (1, 0), "west": (-1, 0), "south": (0, 1), "north": (0, -1)}[face]
+            dly = bid.split("delay=")[1].rstrip("]") if "delay=" in bid else "1"
+            repdelay[c] = max(1, min(4, int(dly)))
         elif b == "minecraft:redstone_block":
             rblk.add(c)
         elif b == "minecraft:cobblestone":
@@ -67,28 +68,33 @@ def sim_verify(recipe, blocks, io, seed=7, quiet=False):
         attach_rev.setdefault(a, []).append(t)
 
     def run(vec):
-        # signal levels 0-15 (dust loses 1 per block). Levels drain phantom
-        # latches that boolean models can't: no source => decays to 0.
-        pw, pb, pbs, tl, ron = {}, {}, {}, {}, {}
-        for c in torch:
-            tl[c] = False
-        q = deque()
-        q.extend(("d", c) for c in dust)
-        q.extend(("c", c) for c in cob)
-        q.extend(("t", c) for c in torch)
-        q.extend(("r", c) for c in rep)
+        # tick-accurate vanilla timing: dust/cobble settle instantly each tick,
+        # torch outputs flip 1 tick after their block changes, repeaters flip
+        # after their delay=1..4 stage. Levels still drain phantom latches.
+        import heapq as _hq
+        pw, pb, pbs = {}, {}, {}
+        tl = {c: False for c in torch}
+        ron = {c: False for c in rep}
+        pending, tsched, rsched, seq, ticks, steps = [], set(), set(), [0], [0], [0]
 
-        def push_dependents(kind, c):
+        def sched(tick, kind, cell):
+            seq[0] += 1
+            _hq.heappush(pending, (tick, seq[0], kind, cell))
+
+        def wake(now, c):
+            # cell c changed output at tick now: re-eval everything it feeds.
             for dx, dz in DIRS:
                 m = (c[0] + dx, c[1] + dz)
                 if m in dust:
-                    q.append(("d", m))
+                    sched(now, "d", m)
                 elif m in cob:
-                    q.append(("c", m))
+                    sched(now, "c", m)
                 elif m in rep:
                     d = rep[m]
                     if (m[0] - d[0], m[1] - d[1]) == c:
-                        q.append(("r", m))
+                        sched(now, "r", m)
+            for t in attach_rev.get(c, []):
+                sched(now, "t", t)
 
         def dust_lvl(c):
             lv = 0
@@ -142,43 +148,58 @@ def sim_verify(recipe, blocks, io, seed=7, quiet=False):
                     return True
             return False
 
-        n = 0
-        from collections import Counter as _Counter
-        hot = _Counter()
-        while q:
-            n += 1
-            if n > 20000:
-                live = {c: v for c, v in pw.items() if v}
+        for c in dust:
+            sched(0, "d", c)
+        for c in cob:
+            sched(0, "c", c)
+        for c in torch:
+            sched(0, "t", c)
+        for c in rep:
+            sched(0, "r", c)
+
+        while pending:
+            now, _, kind, c = _hq.heappop(pending)
+            steps[0] += 1
+            if now > 500 or steps[0] > 20000:
+                live = {x: v for x, v in pw.items() if v}
                 raise RuntimeError(f"sim not settling on {vec}. live: {sorted(live.items())} torches: {tl} ron: {ron}")
-            kind, c = q.popleft()
-            hot[(kind, c)] += 1
+            ticks[0] = max(ticks[0], now)
             if kind == "d":
                 v = dust_lvl(c)
                 if pw.get(c, 0) != v:
                     pw[c] = v
-                    push_dependents(kind, c)
+                    wake(now, c)
             elif kind == "c":
                 v, s = cob_state(c)
                 if pb.get(c, False) != v or pbs.get(c, False) != s:
                     pb[c], pbs[c] = v, s
-                    push_dependents(kind, c)
-                    for t in attach_rev.get(c, []):
-                        q.append(("t", t))
+                    wake(now, c)
             elif kind == "t":
+                if (not pb.get(torch[c], False)) != tl.get(c, False) and c not in tsched:
+                    tsched.add(c)
+                    sched(now + 1, "T", c)
+            elif kind == "T":
+                tsched.discard(c)
                 v = not pb.get(torch[c], False)
                 if tl.get(c, False) != v:
                     tl[c] = v
-                    push_dependents(kind, c)
+                    wake(now, c)
             elif kind == "r":
+                if rep_on(c) != ron.get(c, False) and c not in rsched:
+                    rsched.add(c)
+                    sched(now + repdelay.get(c, 1), "R", c)
+            elif kind == "R":
+                rsched.discard(c)
                 v = rep_on(c)
                 if ron.get(c, False) != v:
                     ron[c] = v
-                    push_dependents(kind, c)
+                    wake(now, c)
         return ({net: any(pw.get((cell[0] + dx, cell[1] + dz), 0) >= 1
                          for dx, dz in DIRS)
                 for cell, net in lampnet.items()},
                 {c: v for c, v in pw.items() if v},
-                {c: 1 if tl.get(c, False) else 0 for c in torch})
+                {c: 1 if tl.get(c, False) else 0 for c in torch},
+                ticks[0])
 
     ins = recipe["inputs"]
     if 2 ** len(ins) <= 4096:
@@ -191,15 +212,30 @@ def sim_verify(recipe, blocks, io, seed=7, quiet=False):
         combos += [{n: rr.randint(0, 1) for n in ins} for _ in range(60)]
     bad = []
     lastlive = {}
+    states = None
+    if collect and len(combos) <= 16:
+        states = {"inputs": list(ins),
+                  "levers": {f"{x},{z}": n for (x, z), n in io["levers"].items()},
+                  "lamps": {f"{x},{z}": n for (x, z), n in io["lamps"].items()},
+                  "vectors": {}}
     for vec in combos:
-        got, live, _tl = run(vec)
+        got, live, tlive, nticks = run(vec)
         exp = eval_net(recipe, vec)
         for net in recipe["outputs"]:
             if bool(got.get(net, False)) != bool(exp[net]):
                 bad.append((vec, net, got.get(net), bool(exp[net])))
                 lastlive = live
+        if states is not None:
+            vkey = "".join(str(vec[n]) for n in ins)
+            states["vectors"][vkey] = {
+                "w": {f"{x},{z}": v for (x, z), v in live.items()},
+                "t": {f"{x},{z}": v for (x, z), v in tlive.items()},
+                "lamps": {f"{x},{z}": 1 if got.get(net, False) else 0
+                          for (x, z), net in io["lamps"].items()},
+                "ticks": nticks}
     if bad:
         raise RuntimeError(f"SIM MISMATCH x{len(bad)}: {bad[:4]} live: {sorted(lastlive.items())}")
     if not quiet:
         print(f"sim ok: {len(combos)} vectors, lamps match logic")
+    return states
 
