@@ -20,16 +20,20 @@ y = t OR c
 python redstone_mini.py my.txt
 ```
 
-Supports: AND OR XOR NOT. `build.mcfunction` = list of `setblock` to paste in a flat world.
+Supports: AND OR XOR NOT. `build.mcfunction` = list of `setblock` (includes stone
+floor, so paste anywhere flat or install as datapack and run `/function`).
 
-8-bit adder (first ALU slice, ripple-carry from the same 2-input gates):
+Gates are real torch builds (wiki textbook: NOT/NOR = dust into block + torch,
+AND = inverted inputs into NOR, OR = joined wires). A built-in short checker
+rejects any layout where two nets touch — bad builds fail loudly, never silently.
+
+8-bit adder (first ALU slice, ripple-carry from the same gates):
 ```bash
 python redstone_mini.py --alu8
-# opens: build_alu8.html + build_alu8.mcfunction (386 setblocks — install as datapack, run /function)
+# opens: build_alu8.html + build_alu8.mcfunction (datapack only — first run:
+# gamerule maxCommandChainLength 200000)
 ```
 
 Preview `build.html` streams real textures from the upstream
 `PrismarineJS/minecraft-assets` pack (needs internet, falls back to flat colors offline).
-
-## Note
-Visual model only for now, not tick-accurate redstone.
+Torches add a tick of delay each; the compiler doesn't model timing yet.
