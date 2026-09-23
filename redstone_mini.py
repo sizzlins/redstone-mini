@@ -654,6 +654,21 @@ def layout(recipe, seed=None):
     dead = [(x, z) for (x, z) in wires if (x, z) not in reached]
     if dead:
         raise RuntimeError(f"OPEN (unconnected dust, nothing drives it): {dead[:6]}")
+    # ponytail: shrink-wrap grid to content (+3 margin). A 13x4 gate on a
+    # 30x38 pad photographs as sprawl even when every wire is minimal.
+    OCC = [c for c in list(solid) + list(wires)]
+    minx = min(c[0] for c in OCC) - 3
+    minz = min(c[1] for c in OCC) - 3
+    maxx = max(c[0] for c in OCC) + 3
+    maxz = max(c[1] for c in OCC) + 3
+    blocks = [(x - minx, y, z - minz, b) for x, y, z, b in blocks]
+    solid = {(x - minx, z - minz): v for (x, z), v in solid.items()}
+    wires = {(x - minx, z - minz): v for (x, z), v in wires.items()}
+    rings = {(x - minx, z - minz): v for (x, z), v in rings.items()}
+    junctions = {(x - minx, z - minz): v for (x, z), v in junctions.items()}
+    pos = {n: (x - minx, z - minz) for n, (x, z) in pos.items()}
+    repeaters = {(x - minx, z - minz): v for (x, z), v in repeaters.items()}
+    W, D = maxx - minx + 1, maxz - minz + 1
     out = list(blocks)
     for (x, z), net in wires.items():
         out.append((x, 1, z, "minecraft:redstone_wire"))
@@ -715,6 +730,22 @@ def build_stamp(label, nblocks):
     ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
     return f"{label} @ {rev} {ts} ({nblocks} blocks)"
 
+def export_schem(blocks, path, oy=64):
+    """Real .schem via mcschematic (pip install mcschematic). Skips politely
+    without the dep; mcfunction export always works."""
+    try:
+        import mcschematic
+        import os
+    except ImportError:
+        print("mcschematic missing: pip install mcschematic (skipping .schem)")
+        return
+    schem = mcschematic.MCSchematic()
+    for x, y, z, bid in blocks:
+        schem.setBlock((x, oy + y, z), bid)
+    folder, name = os.path.split(path)
+    schem.save(folder or ".", name.replace(".schem", ""), mcschematic.Version.JE_1_21)
+    print(f"schem ok: {path}")
+
 def export_mcfunction(blocks, path, oy=64):
     order = {"minecraft:cobblestone": 0, "minecraft:stone": 0, "minecraft:redstone_block": 1,
              "minecraft:lever": 2, "minecraft:redstone_lamp": 2}
@@ -729,8 +760,16 @@ def export_mcfunction(blocks, path, oy=64):
 def export_html(blocks, size, path, label="build"):
     W, D = size
     # ponytail: floor renders as one plane, not W*D cubes. Keeps big previews fast.
+    solidxy = {(x, z) for x, y, z, b in blocks if y == 1}
+    def arms(x, z):
+        m = 0
+        for k, (dx, dz) in enumerate(((1, 0), (-1, 0), (0, 1), (0, -1))):
+            if (x + dx, z + dz) in solidxy:
+                m |= 1 << k
+        return m
     data = [{"p": [x, y, z], "c": COLORS.get(base(b), 0xffffff), "b": base(b),
-             "t": TEXBASE + TEXMAP.get(base(b), "stone.png")}
+             "t": TEXBASE + TEXMAP.get(base(b), "stone.png"),
+             "a": arms(x, z) if base(b) == "minecraft:redstone_wire" else 0}
             for x, y, z, b in blocks if not (b == "minecraft:stone" and y == 0)]
     html = """<!doctype html><html><head><meta charset=utf-8><title>redstone build</title>
 <style>body{margin:0;font-family:sans-serif}#t{position:fixed;top:8px;left:8px;background:#111;color:#fff;padding:8px 12px;border-radius:8px}</style>
@@ -756,7 +795,9 @@ const floor=new T.Mesh(new T.PlaneGeometry(FW,FD),new T.MeshLambertMaterial({map
 floor.rotation.x=-Math.PI/2;floor.position.set(FW/2-0.5,-0.5,FD/2-0.5);s.add(floor);
 const cubeG=new T.BoxGeometry(.92,.92,.92);
 const flatG=new T.BoxGeometry(.92,.18,.92);
-const dustG=new T.BoxGeometry(.9,.1,.9);
+const dotG=new T.BoxGeometry(.3,.12,.3);
+const armEG=new T.BoxGeometry(.62,.1,.3);
+const armNG=new T.BoxGeometry(.3,.1,.62);
 const leverBaseG=new T.BoxGeometry(.5,.22,.5);
 const leverStickG=new T.BoxGeometry(.14,.55,.14);
 const torchStickG=new T.BoxGeometry(.14,.6,.14);
@@ -770,15 +811,23 @@ for(const b of B){const k=b.b;if(k==='minecraft:lever'||k==='minecraft:redstone_
 const dummy=new T.Object3D();
 for(const k in groups){const arr=groups[k];const b0=arr[0];
  let geo, mat;
- if(k==='minecraft:redstone_wire'){geo=dustG;mat=redM;}
+ if(k==='minecraft:redstone_wire')continue; // traces below, from arms mask
  else if(k==='minecraft:repeater'){geo=flatG;mat=flatMat(b0);}
  else{geo=cubeG;mat=texMat(b0);}
  const im=new T.InstancedMesh(geo,mat,arr.length);
  arr.forEach((b,idx)=>{let y=b.p[1];
-  if(k==='minecraft:redstone_wire')y-=0.41;
   if(k==='minecraft:repeater')y-=0.3;
   dummy.position.set(b.p[0],y,b.p[2]);dummy.updateMatrix();im.setMatrixAt(idx,dummy.matrix);});
  s.add(im);}
+// ponytail: dust renders as center dot + arms toward connections (like the
+// game), from the arms bitmask computed trackside. No custom models.
+const wireBs=B.filter(b=>b.b==='minecraft:redstone_wire');
+if(wireBs.length){const dotI=new T.InstancedMesh(dotG,redM,wireBs.length);
+const armE=[],armN=[];
+wireBs.forEach((b,idx)=>{dummy.position.set(b.p[0],b.p[1]-0.41,b.p[2]);dummy.updateMatrix();dotI.setMatrixAt(idx,dummy.matrix);if(b.a&1)armE.push([b,1,0]);if(b.a&2)armE.push([b,-1,0]);if(b.a&4)armN.push([b,0,1]);if(b.a&8)armN.push([b,0,-1]);});
+s.add(dotI);
+for(const [lst,geo] of [[armE,armEG],[armN,armNG]]){if(!lst.length)continue;const im=new T.InstancedMesh(geo,redM,lst.length);lst.forEach(([b,dx,dz],idx)=>{dummy.position.set(b.p[0]+dx*0.31,b.p[1]-0.41,b.p[2]+dz*0.31);dummy.updateMatrix();im.setMatrixAt(idx,dummy.matrix);});s.add(im);}
+}
 // ponytail: levers/torches are 2 boxes each (base+stick, stick+head),
 // not cubes. All our wall torches face east, hence the +x offset.
 for(const b of B){
@@ -999,6 +1048,7 @@ def demo():
     assert any(base(b) == "minecraft:cobblestone" for *_, b in blocks), "gate block missing"
     assert any(base(b) == "minecraft:redstone_wall_torch" for *_, b in blocks), "torch missing"
     export_mcfunction(blocks, "build.mcfunction")
+    export_schem(blocks, "build.schem")
     export_html(blocks, size, "build.html", "2-gate demo")
     print(f"ok: {len(blocks)} blocks -> build.html + build.mcfunction")
 
@@ -1012,6 +1062,7 @@ def demo_alu8():
         assert (s, got["C8"]) == ((a + b) & 255, (a + b) >> 8), (a, b, s)
     blocks, size, io = layout_retry(r, verify=True)
     export_mcfunction(blocks, "build_alu8.mcfunction")
+    export_schem(blocks, "build_alu8.schem")
     export_html(blocks, size, "build_alu8.html", "8-bit adder")
     print(f"alu8 ok: {len(blocks)} blocks -> build_alu8.html + build_alu8.mcfunction")
 
@@ -1024,5 +1075,6 @@ if __name__ == "__main__":
         r = parse_recipe(text)
         blocks, size, io = layout_retry(r, verify=True)
         export_mcfunction(blocks, "build.mcfunction")
+        export_schem(blocks, "build.schem")
         export_html(blocks, size, "build.html", sys.argv[1])
         print(f"custom ok: {len(blocks)} blocks -> build.html + build.mcfunction")
