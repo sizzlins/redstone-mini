@@ -1,0 +1,4 @@
+IN a, b, c
+OUT y
+t = a AND b
+y = t OR c
