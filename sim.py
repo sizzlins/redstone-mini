@@ -484,6 +484,11 @@ if __name__ == "__main__":
     _h2 = open(r"C:\Users\LOQ\AppData\Local\Temp\opencode\xcross.html").read()
     _d2 = _json2.loads(_h2[_h2.find("const B=") + len("const B="):_h2.find(";const s=", _h2.find("const B="))])
     assert any(d["p"] == [7, 3, 5] and d["b"] == "minecraft:redstone_wire" for d in _d2), "no elevated dust rendered"
+    # facing=west puts the rear input west, so the rendered arrow points east
+    export_html([(0, 1, 0, "minecraft:comparator[facing=west,mode=compare]")], (4, 4), r"C:\Users\LOQ\AppData\Local\Temp\opencode\cmp.html", "c", None)
+    _hc = open(r"C:\Users\LOQ\AppData\Local\Temp\opencode\cmp.html").read()
+    _dc = _json2.loads(_hc[_hc.find("const B=") + len("const B="):_hc.find(";const s=", _hc.find("const B="))])
+    assert any(d["b"] == "minecraft:comparator" and d.get("f") == [1, 0] for d in _dc), _dc
     CMP = "minecraft:comparator"
     # compare passthrough: rear 15, no sides -> 15
     _cb = [(2, 1, 0, "minecraft:lever"), (1, 1, 0, "minecraft:redstone_wire"),

@@ -8,7 +8,8 @@ from core import base
 COLORS = {"minecraft:stone": 0x8a8a8a, "minecraft:redstone_wire": 0xe02020,
           "minecraft:cobblestone": 0x7a7a7a, "minecraft:redstone_wall_torch": 0xd83a00,
           "minecraft:lever": 0x7a5a2e, "minecraft:redstone_lamp": 0xffa726,
-          "minecraft:redstone_block": 0xb01010, "minecraft:repeater": 0xc7a17a}
+          "minecraft:redstone_block": 0xb01010, "minecraft:repeater": 0xc7a17a,
+          "minecraft:comparator": 0x9a8a7a}
 # ponytail: textures stream from the upstream asset pack at runtime, no PNGs in this repo.
 
 
@@ -17,7 +18,8 @@ TEXBASE = "https://raw.githubusercontent.com/PrismarineJS/minecraft-assets/maste
 
 TEXMAP = {"minecraft:stone": "stone.png", "minecraft:cobblestone": "cobblestone.png",
           "minecraft:redstone_lamp": "redstone_lamp_on.png",
-          "minecraft:redstone_block": "redstone_block.png", "minecraft:repeater": "repeater.png"}
+          "minecraft:redstone_block": "redstone_block.png", "minecraft:repeater": "repeater.png",
+          "minecraft:comparator": "comparator.png"}
 
 
 
@@ -99,10 +101,19 @@ def export_html(blocks, size, path, label="build", extra=None):
             f = bid.split("facing=")[1].split(",")[0] if "facing=" in bid else "east"
             dl = bid.split("delay=")[1].split(",")[0].rstrip("]") if "delay=" in bid else "1"
             repinfo[(x, z)] = {"f": list(fdir[f]), "dl": max(1, min(4, int(dl)))}
+    cmpinfo = {}
+    for x, y, z, bid in blocks:
+        if base(bid) == "minecraft:comparator":
+            f = bid.split("facing=")[1].split(",")[0] if "facing=" in bid else "east"
+            v = fdir[f]
+            # render arrow points output-ward = negative of facing (which points output->input)
+            cmpinfo[(x, y, z)] = {"f": [-v[0], -v[1]]}
     for d in data:
         if d["b"] == "minecraft:repeater":
             r = repinfo[(d["p"][0], d["p"][2])]
             d["f"], d["dl"] = r["f"], r["dl"]
+        if d["b"] == "minecraft:comparator":
+            d["f"] = cmpinfo[(d["p"][0], d["p"][1], d["p"][2])]["f"]
     html = """<!doctype html><html><head><meta charset=utf-8><title>redstone build</title>
 <style>body{margin:0;font-family:sans-serif}#t{position:fixed;top:8px;left:8px;background:#111;color:#fff;padding:8px 12px;border-radius:8px}</style>
 <script type="importmap">{"imports":{"three":"https://unpkg.com/three@0.160.0/build/three.module.js","three/addons/":"https://unpkg.com/three@0.160.0/examples/jsm/"}}</script>
@@ -193,6 +204,22 @@ repBs.forEach((b,idx)=>{const f=b.f||[1,0],ang=Math.atan2(-f[1],f[0]);
  const nx=(b.dl-2.5)*0.12;dummy.position.set(b.p[0]+nx*cs,b.p[1]-0.12,b.p[2]-nx*sn);dummy.updateMatrix();nubIM.setMatrixAt(idx,dummy.matrix);
  dummy.rotation.set(0,0,0);repOrder.push(b.p[0]+','+b.p[1]+','+b.p[2]);});
  s.add(repSlabIM);s.add(dotFIM);s.add(dotBIM);s.add(nubIM);}
+const cmpBs=B.filter(b=>b.b==='minecraft:comparator');
+const cmpOrder=[];
+const cmpDotG=new T.BoxGeometry(.2,.14,.2);
+if(cmpBs.length){
+ const slab=new T.InstancedMesh(flatG,flatMat({c:0x9a8a7a}),cmpBs.length);
+ const df=new T.InstancedMesh(cmpDotG,redM.clone(),cmpBs.length);
+ const db=new T.InstancedMesh(cmpDotG,redM.clone(),cmpBs.length*2);
+ cmpBs.forEach((b,idx)=>{const f=b.f||[1,0],ang=Math.atan2(-f[1],f[0]);
+  dummy.rotation.set(0,ang,0);dummy.position.set(b.p[0],b.p[1]-0.3,b.p[2]);dummy.updateMatrix();slab.setMatrixAt(idx,dummy.matrix);
+  const cs=Math.cos(ang),sn=Math.sin(ang);
+  dummy.position.set(b.p[0]+0.22*cs,b.p[1]-0.12,b.p[2]-0.22*sn);dummy.updateMatrix();df.setMatrixAt(idx,dummy.matrix);
+  [[0.22,0],[-0.22,0]].forEach(([ox,oz],k)=>{dummy.position.set(b.p[0]+ox*cs-oz*sn,b.p[1]-0.12,b.p[2]-ox*sn-oz*cs);dummy.updateMatrix();db.setMatrixAt(idx*2+k,dummy.matrix);});
+  dummy.rotation.set(0,0,0);cmpOrder.push(b.p[0]+','+b.p[1]+','+b.p[2]);});
+ s.add(slab);s.add(df);s.add(db);
+ window.__cmp={slab,df,db};
+}
 // ponytail: interactivity is state-switching, not physics. Python simulated
 // every combo; the page just flips lever meshes and recolors. No timing.
 const STATES=STATESJSON,INPUTS=INPUTJSON,LEVERNET=LEVERJSON,LAMPNET=LAMPJSON;
@@ -219,7 +246,8 @@ function applyState(key){
  armE.forEach(([b,dx,dz],i)=>{const k=b.p[0]+','+b.p[1]+','+b.p[2];const lvl=v&&v.w[k]?v.w[k]:0;paint(armEIM,i,lvl);});
  armN.forEach(([b,dx,dz],i)=>{const k=b.p[0]+','+b.p[1]+','+b.p[2];const lvl=v&&v.w[k]?v.w[k]:0;paint(armNIM,i,lvl);});
   for(const k in torchHeads){torchHeads[k].material.color.set(v&&v.t[k]?0xff2a1a:0x4a1408);}
-  if(dotFIM){repOrder.forEach((k,i)=>{const on=v&&v.r&&v.r[k]?1:0;const col=on?new T.Color(0xff2a1a):new T.Color(0x4a1408);dotFIM.setColorAt(i,col);dotBIM.setColorAt(i,col);});dotFIM.instanceColor.needsUpdate=true;dotBIM.instanceColor.needsUpdate=true;}
+   if(dotFIM){repOrder.forEach((k,i)=>{const on=v&&v.r&&v.r[k]?1:0;const col=on?new T.Color(0xff2a1a):new T.Color(0x4a1408);dotFIM.setColorAt(i,col);dotBIM.setColorAt(i,col);});dotFIM.instanceColor.needsUpdate=true;dotBIM.instanceColor.needsUpdate=true;}
+   if(window.__cmp){cmpOrder.forEach((k,i)=>{const on=v&&v.o&&v.o[k]?1:0;const col=on?new T.Color(0xff2a1a):new T.Color(0x4a1408);window.__cmp.df.setColorAt(i,col);window.__cmp.db.setColorAt(i*2,col);window.__cmp.db.setColorAt(i*2+1,col);});window.__cmp.df.instanceColor.needsUpdate=true;window.__cmp.db.instanceColor.needsUpdate=true;}
  if(lampMesh.mesh){const arr=lampMesh.order;arr.forEach((k,i)=>{lampMesh.mesh.setColorAt(i,new T.Color(v&&v.lamps&&v.lamps[k]?0xffffff:0x353535));});lampMesh.mesh.instanceColor.needsUpdate=true;}
  for(const k in leverMeshes){const n=LEVERNET[k];leverMeshes[k].stick.rotation.x=leverState[n]?-0.5:0.25;}
   readout(v);
