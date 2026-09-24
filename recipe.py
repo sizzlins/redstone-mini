@@ -22,6 +22,8 @@ def parse_recipe(text):
             parts = expr.strip().split()
             if len(parts) == 3 and parts[1].upper() in ("AND", "OR", "XOR"):
                 gates.append({"out": out, "op": parts[1].upper(), "args": [parts[0], parts[2]]})
+            elif len(parts) == 3 and parts[0].upper() == "LATCH":
+                gates.append({"out": out, "op": "LATCH", "args": [parts[1], parts[2]]})
             elif len(parts) == 2 and parts[0].upper() == "NOT":
                 gates.append({"out": out, "op": "NOT", "args": [parts[1]]})
             else:
@@ -40,18 +42,30 @@ def eval_net(recipe, values):
             return True
         return bool(sig[x])
     sig = dict(values)
-    for g in recipe["gates"]:
-        a = [val(x) for x in g["args"]]
-        if g["op"] == "AND":
-            sig[g["out"]] = a[0] and a[1]
-        elif g["op"] == "OR":
-            sig[g["out"]] = a[0] or a[1]
-        elif g["op"] == "XOR":
-            sig[g["out"]] = a[0] != a[1]
-        elif g["op"] == "NOT":
-            sig[g["out"]] = not a[0]
-        elif g["op"] == "NOR":
-            sig[g["out"]] = not (a[0] or a[1])
+    for _ in range(20):
+        before = dict(sig)
+        for g in recipe["gates"]:
+            a = [val(x) for x in g["args"]]
+            if g["op"] == "AND":
+                sig[g["out"]] = a[0] and a[1]
+            elif g["op"] == "OR":
+                sig[g["out"]] = a[0] or a[1]
+            elif g["op"] == "XOR":
+                sig[g["out"]] = a[0] != a[1]
+            elif g["op"] == "NOT":
+                sig[g["out"]] = not a[0]
+            elif g["op"] == "NOR":
+                sig[g["out"]] = not (a[0] or a[1])
+            elif g["op"] == "LATCH":
+                o = g["out"]
+                # garbage-in: S=R=1 settles at 0 (matches settled hardware)
+                q, qb = bool(sig.get(o, False)), bool(sig.get(o + "~qb", False))
+                sig[o + "~qb"] = not (a[0] or q)
+                sig[o] = not (a[1] or qb)
+        if sig == before:
+            break
+    else:
+        raise ValueError("no stable state (oscillating loop?)")
     return sig
 
 
@@ -99,6 +113,8 @@ def minimize_recipe(recipe):
     # banded datapaths pass through (band tags are load-bearing)."""
     if any(g.get("band") is not None for g in recipe["gates"]):
         return recipe
+    if any(g["op"] == "LATCH" for g in recipe["gates"]):
+        return recipe  # stateful: no combinational truth table to minimize
     ins = recipe["inputs"]
     if not ins or len(ins) > 10:
         return recipe
@@ -235,4 +251,11 @@ if __name__ == "__main__":
                 [{"out": "y", "op": "XOR", "args": ["a", "b"]}])]}
     assert len(minimize_recipe(_xor)["gates"]) == 4
     print("minimize ok: clumsy->1 gate, xor keeps factored form")
+    _lat = {"inputs": ["S", "R"], "outputs": ["Q"],
+            "gates": [{"out": "Q", "op": "LATCH", "args": ["S", "R"]}]}
+    assert eval_net(_lat, {"S": 1, "R": 0})["Q"] is True
+    assert eval_net(_lat, {"S": 0, "R": 1})["Q"] is False
+    assert eval_net(_lat, {"S": 1, "R": 1})["Q"] is False
+    _lp = parse_recipe("IN S, R\nOUT Q\nQ = LATCH S R\n")
+    assert _lp["gates"] == [{"out": "Q", "op": "LATCH", "args": ["S", "R"]}], _lp
 
