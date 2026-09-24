@@ -1,6 +1,6 @@
 # Flat SR latch — design
 
-Approved: 2026-09-24. Status: spec, not yet implemented.
+Approved: 2026-09-24. Status: implemented 2026-09-24.
 
 ## Goal
 
@@ -11,7 +11,10 @@ deliberately not compact (vertical stacking stays a later project).
 ## 1. Language and evaluator
 
 - New primitive in `recipe.py`: `Q = LATCH S R` (two args, like AND).
-  `OPS` extended; single output Q, no Qbar.
+  `parse_recipe` gains a `LATCH` branch (`OPS` is defined but unused);
+  single output Q, no Qbar.
+- `minimize_recipe` returns LATCH recipes untouched — a latch has no
+  combinational truth table (QM would collapse it to constant).
 - `eval_net` iterates the whole net to a fixed point (at most 20 passes)
   instead of assuming feedforward order. Acyclic recipes evaluate
   identically to today; cyclic (latch) nets settle or raise
@@ -35,8 +38,8 @@ deliberately not compact (vertical stacking stays a later project).
 
 - Truth tables cannot express "still on after input goes quiet", so add a
   small sequence driver: it runs the existing tick engine through input
-  phases within one settled run (S pulse → Q=1 → release → Q stays 1 →
-  R pulse → Q=0 → release → Q stays 0).
+  phases, carrying settled state across phases (S pulse → Q=1 → release →
+  Q stays 1 → R pulse → Q=0 → release → Q stays 0).
 - New test code in `sim.py` (`__main__` assert block, repo convention);
   not a simulator rewrite.
 - Green gate unchanged: demo/and/xor/2gates counts, `sim.py` self-checks,
