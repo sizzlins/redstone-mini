@@ -70,16 +70,16 @@ def export_mcfunction(blocks, path, oy=64):
 def export_html(blocks, size, path, label="build", extra=None):
     W, D = size
     # ponytail: floor renders as one plane, not W*D cubes. Keeps big previews fast.
-    solidxy = {(x, z) for x, y, z, b in blocks if y == 1}
-    def arms(x, z):
+    solidxyz = {(x, y, z) for x, y, z, b in blocks}
+    def arms(x, y, z):
         m = 0
         for k, (dx, dz) in enumerate(((1, 0), (-1, 0), (0, 1), (0, -1))):
-            if (x + dx, z + dz) in solidxy:
+            if (x + dx, y, z + dz) in solidxyz:
                 m |= 1 << k
         return m
     data = [{"p": [x, y, z], "c": COLORS.get(base(b), 0xffffff), "b": base(b),
              "t": TEXBASE + TEXMAP.get(base(b), "stone.png"),
-             "a": arms(x, z) if base(b) == "minecraft:redstone_wire" else 0}
+              "a": arms(x, y, z) if base(b) == "minecraft:redstone_wire" else 0}
             for x, y, z, b in blocks if not (b == "minecraft:stone" and y == 0)]
     fdir = {"east": (1, 0), "west": (-1, 0), "south": (0, 1), "north": (0, -1)}
     mountxy = {(x, z) for x, y, z, b in blocks if y == 1 and base(b) in ("minecraft:cobblestone", "minecraft:stone")}
@@ -148,7 +148,7 @@ for(const k in groups){const arr=groups[k];const b0=arr[0];
   else{geo=cubeG;mat=texMat(b0);}
  const im=new T.InstancedMesh(geo,mat,arr.length);
   arr.forEach((b,idx)=>{dummy.position.set(b.p[0],b.p[1],b.p[2]);dummy.updateMatrix();im.setMatrixAt(idx,dummy.matrix);});
- if(k==='minecraft:redstone_lamp'){lampMesh.mesh=im;lampMesh.order=arr.map(b=>b.p[0]+','+b.p[2]);}
+ if(k==='minecraft:redstone_lamp'){lampMesh.mesh=im;lampMesh.order=arr.map(b=>b.p[0]+','+b.p[1]+','+b.p[2]);}
  s.add(im);}
 // ponytail: dust renders as center dot + arms toward connections (like the
 // game), from the arms bitmask computed trackside. No custom models.
@@ -165,7 +165,7 @@ for(const b of B){
  if(b.b==='minecraft:lever'){
   const m1=new T.Mesh(leverBaseG,brownM);m1.position.set(b.p[0],b.p[1]-0.35,b.p[2]);s.add(m1);
   const m2=new T.Mesh(leverStickG,darkM);m2.position.set(b.p[0],b.p[1]+0.02,b.p[2]);s.add(m2);
-  const key=b.p[0]+','+b.p[2];leverMeshes[key]={base:m1,stick:m2};
+  const key=b.p[0]+','+b.p[1]+','+b.p[2];leverMeshes[key]={base:m1,stick:m2};
   m1.userData.lever=key;m2.userData.lever=key;
   }else if(b.b==='minecraft:redstone_wall_torch'){
    const f=b.f||[1,0],wall=b.m===1;
@@ -174,7 +174,7 @@ for(const b of B){
    if(wall){m1.rotation.z=-f[0]*0.2;m1.rotation.x=f[1]*0.2;}s.add(m1);
    const hm=new T.MeshLambertMaterial({color:0xff2a1a});
    const m2=new T.Mesh(torchHeadG,hm);m2.position.set(px+(wall?f[0]*0.08:0),b.p[1]+0.22,pz+(wall?f[1]*0.08:0));s.add(m2);
-   torchHeads[b.p[0]+','+b.p[2]]=m2;
+   torchHeads[b.p[0]+','+b.p[1]+','+b.p[2]]=m2;
  }
 }
 const repBs=B.filter(b=>b.b==='minecraft:repeater');
@@ -190,15 +190,15 @@ repBs.forEach((b,idx)=>{const f=b.f||[1,0],ang=Math.atan2(-f[1],f[0]);
  const cs=Math.cos(ang),sn=Math.sin(ang),lx=0.22;
  [[dotFIM,lx],[dotBIM,-lx]].forEach(([im,ox])=>{dummy.position.set(b.p[0]+ox*cs,b.p[1]-0.12,b.p[2]-ox*sn);dummy.updateMatrix();im.setMatrixAt(idx,dummy.matrix);im.setColorAt(idx,new T.Color(0x4a1408));});
  const nx=(b.dl-2.5)*0.12;dummy.position.set(b.p[0]+nx*cs,b.p[1]-0.12,b.p[2]-nx*sn);dummy.updateMatrix();nubIM.setMatrixAt(idx,dummy.matrix);
- dummy.rotation.set(0,0,0);repOrder.push(b.p[0]+','+b.p[2]);});
+ dummy.rotation.set(0,0,0);repOrder.push(b.p[0]+','+b.p[1]+','+b.p[2]);});
  s.add(repSlabIM);s.add(dotFIM);s.add(dotBIM);s.add(nubIM);}
 // ponytail: interactivity is state-switching, not physics. Python simulated
 // every combo; the page just flips lever meshes and recolors. No timing.
 const STATES=STATESJSON,INPUTS=INPUTJSON,LEVERNET=LEVERJSON,LAMPNET=LAMPJSON;
 const dotIdx={},armEIdx={},armNIdx={};
-wireBs.forEach((b,idx)=>{dotIdx[b.p[0]+','+b.p[2]]=idx;});
-let _ai=0;for(const [b,dx,dz] of armE){armEIdx[b.p[0]+','+b.p[2]+','+dx+','+dz]=_ai++;}
-_ai=0;for(const [b,dx,dz] of armN){armNIdx[b.p[0]+','+b.p[2]+','+dx+','+dz]=_ai++;}
+wireBs.forEach((b,idx)=>{dotIdx[b.p[0]+','+b.p[1]+','+b.p[2]]=idx;});
+let _ai=0;for(const [b,dx,dz] of armE){armEIdx[b.p[0]+','+b.p[1]+','+b.p[2]+','+dx+','+dz]=_ai++;}
+_ai=0;for(const [b,dx,dz] of armN){armNIdx[b.p[0]+','+b.p[1]+','+b.p[2]+','+dx+','+dz]=_ai++;}
 const wireCol=l=>new T.Color().setHSL(0.0,0.85,0.06+0.5*l/15);
 const leverState={};for(const k in LEVERNET)leverState[LEVERNET[k]]=0;
 function readout(extra){
@@ -210,8 +210,8 @@ function applyState(key){
  const v=STATES?STATES.vectors[key]:null;
  const paint=(mesh,idx,lvl)=>{mesh.setColorAt(idx,wireCol(lvl));mesh.instanceColor.needsUpdate=true;};
  for(const k in dotIdx){const lvl=v&&v.w[k]?v.w[k]:0;paint(dotI,dotIdx[k],lvl);}
- armE.forEach(([b,dx,dz],i)=>{const k=b.p[0]+','+b.p[2];const lvl=v&&v.w[k]?v.w[k]:0;paint(armEIM,i,lvl);});
- armN.forEach(([b,dx,dz],i)=>{const k=b.p[0]+','+b.p[2];const lvl=v&&v.w[k]?v.w[k]:0;paint(armNIM,i,lvl);});
+ armE.forEach(([b,dx,dz],i)=>{const k=b.p[0]+','+b.p[1]+','+b.p[2];const lvl=v&&v.w[k]?v.w[k]:0;paint(armEIM,i,lvl);});
+ armN.forEach(([b,dx,dz],i)=>{const k=b.p[0]+','+b.p[1]+','+b.p[2];const lvl=v&&v.w[k]?v.w[k]:0;paint(armNIM,i,lvl);});
   for(const k in torchHeads){torchHeads[k].material.color.set(v&&v.t[k]?0xff2a1a:0x4a1408);}
   if(dotFIM){repOrder.forEach((k,i)=>{const on=v&&v.r&&v.r[k]?1:0;const col=on?new T.Color(0xff2a1a):new T.Color(0x4a1408);dotFIM.setColorAt(i,col);dotBIM.setColorAt(i,col);});dotFIM.instanceColor.needsUpdate=true;dotBIM.instanceColor.needsUpdate=true;}
  if(lampMesh.mesh){const arr=lampMesh.order;arr.forEach((k,i)=>{lampMesh.mesh.setColorAt(i,new T.Color(v&&v.lamps&&v.lamps[k]?0xffffff:0x353535));});lampMesh.mesh.instanceColor.needsUpdate=true;}

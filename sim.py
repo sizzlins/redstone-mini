@@ -384,4 +384,25 @@ if __name__ == "__main__":
     _g3, _, _, _, _ = _run_vec({"A": 1}, None, _p3)
     assert _g3.get("B", False) is False, _g3
     print("vertical units ok: stacked dark, step-up lit, lid blocks")
+    CB = "minecraft:cobblestone"
+    _xb = [(2, 1, 5, "minecraft:lever")] + [(x, 1, 5, W_) for x in range(3, 10)] + [(10, 1, 5, "minecraft:redstone_lamp")]
+    _xb += [(7, 1, 1, "minecraft:lever"), (7, 1, 2, W_), (7, 1, 3, W_)]
+    _xb += [(7, 1, 4, CB), (7, 1, 6, CB), (7, 2, 5, CB)]
+    _xb += [(7, 2, 4, W_), (7, 3, 5, W_), (7, 2, 6, W_)]
+    _xb += [(7, 1, 7, W_), (7, 1, 8, W_), (7, 1, 9, "minecraft:redstone_lamp")]
+    _xp, _xio = _hand(_xb, {(2, 5): "A", (7, 1): "B"}, {(10, 5): "Aout", (7, 9): "Bout"})
+    _xr = {"inputs": ["A", "B"], "outputs": ["Aout", "Bout"],
+           "gates": [{"out": "Aout", "op": "AND", "args": ["A", "A"]},
+                     {"out": "Bout", "op": "AND", "args": ["B", "B"]}]}
+    sim_sequence(_xr, _xb, _xio, [({"A": 1, "B": 0}, {"Aout": 1, "Bout": 0}),
+                                  ({"A": 0, "B": 1}, {"Aout": 0, "Bout": 1}),
+                                  ({"A": 1, "B": 1}, {"Aout": 1, "Bout": 1}),
+                                  ({"A": 0, "B": 0}, {"Aout": 0, "Bout": 0})])
+    print("crossover ok: wires cross overhead, independent both ways")
+    from export import export_html
+    export_html(_xb, (14, 14), r"C:\Users\LOQ\AppData\Local\Temp\opencode\xcross.html", "x", None)
+    import json as _json2
+    _h2 = open(r"C:\Users\LOQ\AppData\Local\Temp\opencode\xcross.html").read()
+    _d2 = _json2.loads(_h2[_h2.find("const B=") + len("const B="):_h2.find(";const s=", _h2.find("const B="))])
+    assert any(d["p"] == [7, 3, 5] and d["b"] == "minecraft:redstone_wire" for d in _d2), "no elevated dust rendered"
 
