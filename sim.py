@@ -71,22 +71,31 @@ def _run_vec(vec, init, ctx):
     def wake(now, c):
         # cell c changed output at tick now: re-eval everything it feeds.
         for dx, dz in DIRS:
-            m = (c[0] + dx, c[1] + dz)
+            m = (c[0] + dx, c[1], c[2] + dz)
             if m in dust:
                 sched(now, "d", m)
             elif m in cob:
                 sched(now, "c", m)
             elif m in rep:
                 d = rep[m]
-                if (m[0] - d[0], m[1] - d[1]) == c:
+                if (m[0] - d[0], m[1], m[2] - d[1]) == c:
                     sched(now, "r", m)
+        for vx, vy, vz in ((c[0], c[1] + 1, c[2]), (c[0], c[1] - 1, c[2])):
+            if (vx, vy, vz) in dust:
+                sched(now, "d", (vx, vy, vz))
+            elif (vx, vy, vz) in cob:
+                sched(now, "c", (vx, vy, vz))
+        for dx, dz in DIRS:
+            for vx, vy, vz in ((c[0] + dx, c[1] + 1, c[2] + dz), (c[0] + dx, c[1] - 1, c[2] + dz)):
+                if (vx, vy, vz) in dust:
+                    sched(now, "d", (vx, vy, vz))
         for t in attach_rev.get(c, []):
             sched(now, "t", t)
 
     def dust_lvl(c):
         lv = 0
         for dx, dz in DIRS:
-            m = (c[0] + dx, c[1] + dz)
+            m = (c[0] + dx, c[1], c[2] + dz)
             if m in torch and tl.get(m, False):
                 return 15
             if m in lever and vec.get(lever[m], False):
@@ -99,27 +108,41 @@ def _run_vec(vec, init, ctx):
                 lv = max(lv, pw.get(m, 0) - 1)
             if m in rep:
                 d = rep[m]
-                if (m[0] + d[0], m[1] + d[1]) == c and ron.get(m, False):
+                if (m[0] + d[0], m[1], m[2] + d[1]) == c and ron.get(m, False):
                     return 15
+            # ponytail: chip layers. Dust links ±1 level iff the upper dust
+            # sits on a conductive block and no lid covers the lower wire.
+            # Direct stacks never link (no support, no link).
+            up = (c[0] + dx, c[1] + 1, c[2] + dz)
+            if up in dust and (c[0] + dx, c[1], c[2] + dz) in cob \
+                    and (c[0], c[1] + 1, c[2]) not in cob:
+                lv = max(lv, pw.get(up, 0) - 1)
+            dn = (c[0] + dx, c[1] - 1, c[2] + dz)
+            if dn in dust and (c[0], c[1] - 1, c[2]) in cob \
+                    and (c[0] + dx, c[1], c[2] + dz) not in cob:
+                lv = max(lv, pw.get(dn, 0) - 1)
         return max(lv, 0)
 
     def cob_state(c):
         pwrd, strong = False, False
         for dx, dz in DIRS:
-            m = (c[0] + dx, c[1] + dz)
+            m = (c[0] + dx, c[1], c[2] + dz)
             if m in dust and pw.get(m, 0) >= 1:
                 pwrd = True
             if m in rblk:
                 pwrd, strong = True, True
             if m in rep:
                 d = rep[m]
-                if (m[0] + d[0], m[1] + d[1]) == c and ron.get(m, False):
+                if (m[0] + d[0], m[1], m[2] + d[1]) == c and ron.get(m, False):
                     pwrd, strong = True, True
+        up = (c[0], c[1] + 1, c[2])
+        if up in dust and pw.get(up, 0) >= 1:
+            pwrd = True
         return pwrd, strong
 
     def rep_on(c):
         d = rep[c]
-        b = (c[0] - d[0], c[1] - d[1])
+        b = (c[0] - d[0], c[1], c[2] - d[1])
         if b in dust and pw.get(b, 0) >= 1:
             return True
         if b in cob and pb.get(b, False):
@@ -131,7 +154,7 @@ def _run_vec(vec, init, ctx):
         # ponytail: repeaters chain back-to-back (standard); read upstream ron.
         if b in rep:
             d2 = rep[b]
-            if (b[0] + d2[0], b[1] + d2[1]) == c and ron.get(b, False):
+            if (b[0] + d2[0], b[1], b[2] + d2[1]) == c and ron.get(b, False):
                 return True
         return False
 
@@ -181,7 +204,7 @@ def _run_vec(vec, init, ctx):
             if ron.get(c, False) != v:
                 ron[c] = v
                 wake(now, c)
-    return ({net: any(pw.get((cell[0] + dx, cell[1] + dz), 0) >= 1
+    return ({net: any(pw.get((cell[0] + dx, cell[1], cell[2] + dz), 0) >= 1
                      for dx, dz in DIRS)
             for cell, net in lampnet.items()},
             {c: v for c, v in pw.items() if v},
@@ -195,15 +218,13 @@ def _parse_build(blocks, io):
     dust, torch, lampat, rep, rblk, cob = set(), {}, set(), {}, set(), set()
     repdelay = {}
     for x, y, z, bid in blocks:
-        if y != 1:
-            continue
-        b, c = base(bid), (x, z)
+        b, c = base(bid), (x, y, z)
         if b == "minecraft:redstone_wire":
             dust.add(c)
         elif b == "minecraft:redstone_wall_torch":
             face = bid.split("facing=")[1].rstrip("]") if "facing=" in bid else "east"
             back = {"east": (-1, 0), "west": (1, 0), "south": (0, -1), "north": (0, 1)}[face]
-            torch[c] = (c[0] + back[0], c[1] + back[1])
+            torch[c] = (c[0] + back[0], c[1], c[2] + back[1])
         elif b == "minecraft:redstone_lamp":
             lampat.add(c)
         elif b == "minecraft:repeater":
@@ -215,8 +236,10 @@ def _parse_build(blocks, io):
             rblk.add(c)
         elif b == "minecraft:cobblestone":
             cob.add(c)
-    lever = dict(io["levers"])
-    lampnet = dict(io["lamps"])
+    def _y(k):
+        return (k[0], 1, k[1]) if len(k) == 2 else k
+    lever = {_y(k): n for k, n in io["levers"].items()}
+    lampnet = {_y(k): n for k, n in io["lamps"].items()}
     attach_rev = {}
     for t, a in torch.items():
         attach_rev.setdefault(a, []).append(t)
@@ -227,8 +250,8 @@ def sim_verify(recipe, blocks, io, seed=7, quiet=False, collect=False):
     """Independent redstone simulation of the PLACED build (ignores layout nets).
     Plays input vectors through tick-stepped torch/dust physics, compares
     lamps against eval_net. Catches opens/shorts the static guards can't see.
-    # ponytail: flat single-level physics only (all our builds are); vanilla
-    # tick delays (torch +1, repeater +its delay stage).
+    # ponytail: flat builds plus chip-layer verticals (dust slopes, lid rule);
+    # vanilla tick delays (torch +1, repeater +its delay stage).
     """
     import random as _r
     P = _parse_build(blocks, io)
@@ -250,8 +273,8 @@ def sim_verify(recipe, blocks, io, seed=7, quiet=False, collect=False):
     states = None
     if collect and len(combos) <= 16:
         states = {"inputs": list(ins),
-                  "levers": {f"{x},{z}": n for (x, z), n in io["levers"].items()},
-                  "lamps": {f"{x},{z}": n for (x, z), n in io["lamps"].items()},
+                  "levers": {f"{x},1,{z}": n for (x, z), n in io["levers"].items()},
+                  "lamps": {f"{x},1,{z}": n for (x, z), n in io["lamps"].items()},
                   "vectors": {}}
     for vec in combos:
         exp = eval_net(recipe, vec)
@@ -267,12 +290,12 @@ def sim_verify(recipe, blocks, io, seed=7, quiet=False, collect=False):
         if states is not None:
             vkey = "".join(str(vec[n]) for n in ins)
             states["vectors"][vkey] = {
-                "w": {f"{x},{z}": v for (x, z), v in live.items()},
-                "t": {f"{x},{z}": v for (x, z), v in tlive.items()},
-                "lamps": {f"{x},{z}": 1 if got.get(net, False) else 0
+                "w": {f"{x},{y},{z}": v for (x, y, z), v in live.items()},
+                "t": {f"{x},{y},{z}": v for (x, y, z), v in tlive.items()},
+                "lamps": {f"{x},1,{z}": 1 if got.get(net, False) else 0
                           for (x, z), net in io["lamps"].items()},
                 "ticks": nticks,
-                "r": {f"{x},{z}": v for (x, z), v in rlive.items()}}
+                "r": {f"{x},{y},{z}": v for (x, y, z), v in rlive.items()}}
     if bad:
         raise RuntimeError(f"SIM MISMATCH x{len(bad)}: {bad[:4]} live: {sorted(lastlive.items())}")
     if not quiet:
@@ -303,11 +326,11 @@ if __name__ == "__main__":
     _recipe = {"inputs": ["a"], "outputs": ["y"],
                "gates": [{"out": "y", "op": "OR", "args": ["a", "a"]}]}
     _st, _ = sim_verify(_recipe, _blocks, _io, quiet=True, collect=True)
-    assert _st["vectors"]["1"]["lamps"] == {"3,0": 1}, _st["vectors"]["1"]
+    assert _st["vectors"]["1"]["lamps"] == {"3,1,0": 1}, _st["vectors"]["1"]
     assert _st["vectors"]["1"]["ticks"] == 4, _st["vectors"]["1"]["ticks"]
     _st2, _tk = sim_verify(_recipe, _blocks, _io, quiet=True, collect=True)
     assert _tk == 4, _tk
-    assert _st["vectors"]["0"]["lamps"] == {"3,0": 0}, _st["vectors"]["0"]
+    assert _st["vectors"]["0"]["lamps"] == {"3,1,0": 0}, _st["vectors"]["0"]
     print("tick ok: delay-4 settles at tick 4")
     from export import export_html
     _blocks = [(0, 1, 0, "minecraft:lever"),
@@ -316,9 +339,9 @@ if __name__ == "__main__":
                (3, 1, 0, "minecraft:redstone_wall_torch[facing=east]"),
                (4, 1, 0, "minecraft:redstone_lamp")]
     _io = {"levers": {(0, 0): "a"}, "lamps": {(4, 0): "y"}, "nets": {}}
-    _st = {"inputs": ["a"], "levers": {"0,0": "a"}, "lamps": {"4,0": "y"},
-           "vectors": {"0": {"w": {}, "t": {"3,0": 0}, "lamps": {"4,0": 0},
-                             "ticks": 0, "r": {"1,0": 0}}}}
+    _st = {"inputs": ["a"], "levers": {"0,1,0": "a"}, "lamps": {"4,1,0": "y"},
+           "vectors": {"0": {"w": {}, "t": {"3,1,0": 0}, "lamps": {"4,1,0": 0},
+                             "ticks": 0, "r": {"1,1,0": 0}}}}
     export_html(_blocks, (6, 1), r"C:\Users\LOQ\AppData\Local\Temp\opencode\stages.html",
                 "s", _st)
     import json as _json
@@ -339,4 +362,26 @@ if __name__ == "__main__":
                                   ({"S": 0, "R": 1}, {"Q": 0}),
                                   ({"S": 0, "R": 0}, {"Q": 0})])
     print("latch ok: set/hold/reset/hold")
+    def _hand(blocks, levers, lamps):
+        io = {"levers": levers, "lamps": lamps, "nets": {}}
+        return _parse_build(blocks, io), io
+    W_ = "minecraft:redstone_wire"
+    # case1: stacked dust-block-dust has NO link
+    _b1 = [(0, 1, 0, "minecraft:lever"), (0, 1, 1, W_),
+           (0, 2, 1, "minecraft:cobblestone"), (0, 3, 1, W_), (1, 3, 1, "minecraft:redstone_lamp")]
+    _p1, _io1 = _hand(_b1, {(0, 0): "A"}, {(1, 3, 1): "B"})
+    _g1, _, _, _, _ = _run_vec({"A": 1}, None, _p1)
+    assert _g1.get("B", False) is False, _g1
+    # case2: step-up links
+    _b2 = [(0, 1, -1, "minecraft:lever"), (0, 1, 0, W_),
+           (1, 1, 0, "minecraft:cobblestone"), (1, 2, 0, W_), (2, 2, 0, "minecraft:redstone_lamp")]
+    _p2, _io2 = _hand(_b2, {(0, -1): "A"}, {(2, 2, 0): "B"})
+    _g2, _, _, _, _ = _run_vec({"A": 1}, None, _p2)
+    assert _g2.get("B", False) is True, _g2
+    # case3: lid on the lower wire blocks the up-link
+    _b3 = _b2 + [(0, 2, 0, "minecraft:cobblestone")]
+    _p3, _io3 = _hand(_b3, {(0, -1): "A"}, {(2, 2): "B"})
+    _g3, _, _, _, _ = _run_vec({"A": 1}, None, _p3)
+    assert _g3.get("B", False) is False, _g3
+    print("vertical units ok: stacked dark, step-up lit, lid blocks")
 
