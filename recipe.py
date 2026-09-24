@@ -92,6 +92,11 @@ def expand_gates(gates):
                 nxt += [{"out": n, "op": "NOR", "args": [a[0], a[1]], "band": bd},
                         {"out": o, "op": "NOT", "args": [n], "band": bd}]
                 changed = True
+            elif op == "LATCH":
+                qb = T("lq")
+                nxt += [{"out": o, "op": "NOR", "args": [a[1], qb], "band": bd},
+                        {"out": qb, "op": "NOR", "args": [a[0], o], "band": bd}]
+                changed = True
             elif op == "XOR":
                 t1, t2, t3 = T("xo"), T("xa"), T("xn")
                 nxt += [{"out": t1, "op": "OR", "args": [a[0], a[1]], "band": bd},
@@ -258,4 +263,7 @@ if __name__ == "__main__":
     assert eval_net(_lat, {"S": 1, "R": 1})["Q"] is False
     _lp = parse_recipe("IN S, R\nOUT Q\nQ = LATCH S R\n")
     assert _lp["gates"] == [{"out": "Q", "op": "LATCH", "args": ["S", "R"]}], _lp
+    _le = expand_gates(_lp["gates"])
+    assert _le == [{"out": "Q", "op": "NOR", "args": ["R", "_lq1"], "band": None},
+                   {"out": "_lq1", "op": "NOR", "args": ["S", "Q"], "band": None}], _le
 
