@@ -97,8 +97,8 @@ def layout(recipe, seed=None, grow=0):
         D = 12 + len(gates) * 14 + 12
     # ponytail: infinite room = grow on demand. Each grow doubles the field;
     # placement is deterministic so extra space only ever helps detours.
-    W = min(int(W * (1.5 ** grow)), 2000)
-    D = min(int(D * (1.5 ** grow)), 2000)
+    W = min(int(W * (1.5 ** grow)), 4000)
+    D = min(int(D * (1.5 ** grow)), 4000)
     cx = W // 2
     blocks = []  # (x, y, z, block-id [+state])
     solid, rings, wires, junctions, repeaters, paths = {}, {}, {}, {}, {}, []
@@ -127,7 +127,8 @@ def layout(recipe, seed=None, grow=0):
 
     def route(a, b, net):
         # single source: every branch traces full-length to its driver.
-        # (Tapping live-looking mid-wire cells caused decayed weak taps.)
+        # (Tapping live-looking mid-wire cells caused decayed weak taps;
+        #  connected-tap + shortest-first retries in 2026-09 also broke xor.)
         for margin in (12, 40, None):
             path = astar([a], b, net, W, D, solid, rings, wires, junctions, margin)
             if path:
@@ -271,7 +272,7 @@ def layout(recipe, seed=None, grow=0):
             # touch would short); diodes face drivers. Grid fallback inside.
             jx, jz = ox, gz
             if not (0 <= jx - 3 and jx + 3 < W and 0 <= jz - 3 and jz + 3 < D):
-                raise RuntimeError(f"OR out of bounds for {o}")
+                raise RuntimeError(f"OR out of bounds for {o} at {(jx, jz)} field {W}x{D}")
             s = _snap()
             try:
                     j = (jx, jz)

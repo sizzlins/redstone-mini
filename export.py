@@ -107,6 +107,7 @@ def export_html(blocks, size, path, label="build", extra=None):
 <style>body{margin:0;font-family:sans-serif}#t{position:fixed;top:8px;left:8px;background:#111;color:#fff;padding:8px 12px;border-radius:8px}</style>
 <script type="importmap">{"imports":{"three":"https://unpkg.com/three@0.160.0/build/three.module.js","three/addons/":"https://unpkg.com/three@0.160.0/examples/jsm/"}}</script>
 </head><body><div id=t>STAMP — drag to orbit, scroll to zoom. Real torch gates.</div>
+<div id=io style="position:fixed;left:8px;bottom:8px;background:#111;color:#eee;padding:8px 12px;border-radius:8px;font-family:ui-monospace,Consolas,monospace;font-size:14px"></div>
 <script type="module">import * as T from 'three';import {OrbitControls} from 'three/addons/controls/OrbitControls.js';
 const B=DATA;const s=new T.Scene();s.background=new T.Color(0x1a2028);
 const SZ=MAXD;const cam=new T.PerspectiveCamera(50,innerWidth/innerHeight,.1,5000);cam.position.set(SZ*.7,SZ*.7,SZ*.9);
@@ -195,6 +196,11 @@ repBs.forEach((b,idx)=>{const f=b.f||[1,0],ang=Math.atan2(-f[1],f[0]);
 // ponytail: interactivity is state-switching, not physics. Python simulated
 // every combo; the page just flips lever meshes and recolors. No timing.
 const STATES=STATESJSON,INPUTS=INPUTJSON,LEVERNET=LEVERJSON,LAMPNET=LAMPJSON;
+function makeLabel(text){const cv=document.createElement('canvas');cv.width=256;cv.height=64;const g=cv.getContext('2d');g.fillStyle='rgba(10,10,12,0.78)';g.fillRect(0,0,256,64);g.font='bold 34px Consolas,monospace';g.textAlign='center';g.textBaseline='middle';g.fillStyle='#ffd75e';g.fillText(text,128,34);const tx=new T.CanvasTexture(cv);tx.colorSpace=T.SRGBColorSpace;const sp=new T.Sprite(new T.SpriteMaterial({map:tx,depthTest:false}));sp.scale.set(1.7,0.42,1);return sp;}
+for(const b of B){if(b.b==='minecraft:lever'){const lb=makeLabel('in '+(LEVERNET[b.p[0]+','+b.p[1]+','+b.p[2]]||'?'));lb.position.set(b.p[0],b.p[1]+0.85,b.p[2]);s.add(lb);}else if(b.b==='minecraft:redstone_lamp'){const lb=makeLabel('out '+(LAMPNET[b.p[0]+','+b.p[1]+','+b.p[2]]||'?'));lb.position.set(b.p[0],b.p[1]+0.95,b.p[2]);s.add(lb);}}
+const ioDiv=document.getElementById('io');
+function renderIO(extra){let h='IN ';for(const n of INPUTS)h+=`<button data-n="${n}" style="margin:0 2px;font:inherit;background:${leverState[n]?'#7a2a12':'#333'};color:#fff;border:1px solid #666;border-radius:4px;cursor:pointer">${n}=${leverState[n]?'1':'0'}</button>`;h+=' OUT ';for(const [c,n] of Object.entries(LAMPNET))h+=`<span style="margin:0 4px;padding:1px 6px;background:#222;border:1px solid #666;border-radius:4px">${n}=${extra&&extra.lamps&&extra.lamps[c]?'1':'0'}</span>`;ioDiv.innerHTML=h;ioDiv.querySelectorAll('button').forEach(x=>x.onclick=()=>flip(x.dataset.n));}
+function flip(n){leverState[n]^=1;click(leverState[n]);applyState(INPUTS.map(x=>leverState[x]?'1':'0').join(''));}
 const dotIdx={},armEIdx={},armNIdx={};
 wireBs.forEach((b,idx)=>{dotIdx[b.p[0]+','+b.p[1]+','+b.p[2]]=idx;});
 let _ai=0;for(const [b,dx,dz] of armE){armEIdx[b.p[0]+','+b.p[1]+','+b.p[2]+','+dx+','+dz]=_ai++;}
@@ -216,7 +222,8 @@ function applyState(key){
   if(dotFIM){repOrder.forEach((k,i)=>{const on=v&&v.r&&v.r[k]?1:0;const col=on?new T.Color(0xff2a1a):new T.Color(0x4a1408);dotFIM.setColorAt(i,col);dotBIM.setColorAt(i,col);});dotFIM.instanceColor.needsUpdate=true;dotBIM.instanceColor.needsUpdate=true;}
  if(lampMesh.mesh){const arr=lampMesh.order;arr.forEach((k,i)=>{lampMesh.mesh.setColorAt(i,new T.Color(v&&v.lamps&&v.lamps[k]?0xffffff:0x353535));});lampMesh.mesh.instanceColor.needsUpdate=true;}
  for(const k in leverMeshes){const n=LEVERNET[k];leverMeshes[k].stick.rotation.x=leverState[n]?-0.5:0.25;}
- readout(v);
+  readout(v);
+  renderIO(v);
 }
 const _ray=new T.Raycaster(),_ptr=new T.Vector2();let _down=null;
 let AC=null;function click(on){try{AC=AC||new (window.AudioContext||window.webkitAudioContext)();const o=AC.createOscillator(),g=AC.createGain();o.type='square';o.frequency.value=on?2200:1400;g.gain.setValueAtTime(0.08,AC.currentTime);g.gain.exponentialRampToValueAtTime(0.001,AC.currentTime+0.06);o.connect(g);g.connect(AC.destination);o.start();o.stop(AC.currentTime+0.07);}catch(e){}}
@@ -228,8 +235,7 @@ r.domElement.addEventListener('pointerup',e=>{
  _ptr.x=(e.clientX/innerWidth)*2-1;_ptr.y=-(e.clientY/innerHeight)*2+1;
  _ray.setFromCamera(_ptr,cam);
  const hits=_ray.intersectObjects(Object.values(leverMeshes).flatMap(o=>[o.base,o.stick]));
- if(hits.length){const k=hits[0].object.userData.lever;leverState[LEVERNET[k]]^=1;click(leverState[LEVERNET[k]]);
-   applyState(INPUTS.map(n=>leverState[n]?'1':'0').join(''));}});
+  if(hits.length){flip(LEVERNET[hits[0].object.userData.lever]);}});
 applyState(INPUTS.map(n=>'0').join(''));
 (function a(){requestAnimationFrame(a);c.update();r.render(s,cam);})();</script></body></html>"""
     st = extra or None

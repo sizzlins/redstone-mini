@@ -1,0 +1,17 @@
+IN OP2, OP1, OP0
+OUT ALU1, ALU0, REGW, MEMR, MEMW, BRANCH
+n2 = NOT OP2
+n1 = NOT OP1
+n0 = NOT OP0
+r1 = OP2 AND OP1
+rterm = r1 AND OP0
+l1 = n2 AND n1
+lterm = l1 AND n0
+REGW = rterm OR lterm
+m1 = n2 AND n1
+MEMR = m1 AND n0
+MEMW = m1 AND OP0
+b1 = n2 AND OP1
+BRANCH = b1 AND n0
+ALU1 = OP1 AND OP1
+ALU0 = OP0 AND OP0
