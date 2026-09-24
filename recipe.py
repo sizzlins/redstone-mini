@@ -103,6 +103,35 @@ def expand_gates(gates):
             else:
                 nxt.append(g)
         gates = nxt
+    # ponytail: fanout chains. A net feeding 3+ loads spans farther than
+    # routes survive, so relay it: each load consumes a buffer AND(x,x) that
+    # ALAP parks adjacent, chained to the previous buffer. Star-fed buffers
+    # would just move the marathon; chains end it. Constants never chain.
+    fan = {}
+    for idx, g in enumerate(gates):
+        for a in g["args"]:
+            if a not in ("0", "1"):
+                if not fan.get(a) or fan[a][-1] != idx:
+                    fan.setdefault(a, []).append(idx)
+    big = {n: ids for n, ids in fan.items() if len(ids) >= 3}
+    if big:
+        buf_of = {}
+        for n, ids in big.items():
+            prev = n
+            for j in ids:
+                b = T("bf")
+                buf_of[(n, j)] = (b, prev)
+                prev = b
+        out = []
+        for idx, g in enumerate(gates):
+            for a in dict.fromkeys(g["args"]):
+                if (a, idx) in buf_of:
+                    b, prev = buf_of[(a, idx)]
+                    out.append({"out": b, "op": "AND", "args": [prev, prev],
+                                "band": g.get("band")})
+            out.append(dict(g, args=[buf_of[(a, idx)][0] if (a, idx) in buf_of else a
+                                     for a in g["args"]]))
+        gates = out
     return gates
 
 
@@ -252,6 +281,28 @@ if __name__ == "__main__":
     assert expand_gates(_xor["gates"]) == _xor["gates"]  # unbanded: tile, no explosion
     assert len(minimize_recipe(_xor)["gates"]) == 1  # SOP-5 loses to factored 1
     print("minimize ok: clumsy->1 gate, xor keeps factored form")
+    # ponytail: fanout chains relay far loads; 2-load nets pass untouched.
+    _fan = [{"out": "o1", "op": "AND", "args": ["s", "x"]},
+            {"out": "o2", "op": "AND", "args": ["s", "y"]},
+            {"out": "o3", "op": "AND", "args": ["s", "z"]}]
+    _fx = expand_gates(_fan)
+    _bufs = [g for g in _fx if g["out"].startswith("_bf")]
+    assert len(_bufs) == 3, _fx
+    assert _bufs[0]["args"] == ["s", "s"], _bufs
+    assert _bufs[1]["args"] == [_bufs[0]["out"], _bufs[0]["out"]], _bufs
+    _got = {g["out"]: g for g in _fx}
+    assert _got["o1"]["args"][0] == _bufs[0]["out"], _fx
+    assert _got["o3"]["args"][0] == _bufs[2]["out"], _fx
+    _r2 = {"inputs": ["s", "x", "y", "z"], "outputs": ["o1", "o2", "o3"],
+           "gates": _fan}
+    _r2m = {"inputs": ["s", "x", "y", "z"], "outputs": ["o1", "o2", "o3"],
+            "gates": _fx}
+    from itertools import product as _prod
+    for _vals in _prod([0, 1], repeat=4):
+        _v = dict(zip(["s", "x", "y", "z"], _vals))
+        _a, _b = eval_net(_r2m, _v), eval_net(_r2, _v)
+        assert all(_a[o] == _b[o] for o in ["o1", "o2", "o3"]), _v
+    print("fanout ok: 3-load net chained, equivalent on all vectors")
     _lat = {"inputs": ["S", "R"], "outputs": ["Q"],
             "gates": [{"out": "Q", "op": "LATCH", "args": ["S", "R"]}]}
     assert eval_net(_lat, {"S": 1, "R": 0})["Q"] is True
