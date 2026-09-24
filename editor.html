@@ -39,7 +39,7 @@ function compile(){
 }
 ta.addEventListener('input',()=>{dirty=true;if(paused)return;
  clearTimeout(timer);timer=setTimeout(compile,400);});
-toggle.addEventListener('click',()=>{paused=!paused;
+toggle.addEventListener('click',()=>{paused=!paused;clearTimeout(timer);
  toggle.textContent=paused?'Resume':'Pause';
  if(!paused&&dirty)compile();});
 compile();
