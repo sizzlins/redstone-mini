@@ -1,0 +1,46 @@
+<!doctype html><html><head><meta charset=utf-8>
+<title>redstone-mini editor</title>
+<style>
+html,body{margin:0;height:100%;font-family:sans-serif}
+#wrap{display:flex;height:100%}
+#left{width:42%;display:flex;flex-direction:column;border-right:2px solid #222}
+#bar{padding:6px 10px;background:#111;color:#eee;font-size:13px;display:flex;gap:10px;align-items:center}
+#bar button{cursor:pointer}
+#status{font-family:monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#recipe{flex:1;font-family:ui-monospace,Consolas,monospace;font-size:14px;padding:10px;border:0;outline:0;resize:none;background:#fafafa}
+#right{flex:1}
+#view{width:100%;height:100%;border:0;background:#1a2028}
+</style></head><body>
+<div id=wrap>
+ <div id=left>
+  <div id=bar><b>recipe</b><button id=toggle>Pause</button><span id=status>...</span></div>
+  <textarea id=recipe spellcheck=false>IN a, b, c
+OUT y
+t = a AND b
+y = t OR c</textarea>
+ </div>
+ <div id=right><iframe id=view></iframe></div>
+</div>
+<script>
+const ta=document.getElementById('recipe'),view=document.getElementById('view'),
+      status=document.getElementById('status'),toggle=document.getElementById('toggle');
+let timer=null,paused=false,dirty=false,seq=0;
+function compile(){
+ const my=++seq;dirty=false;status.textContent='compiling...';
+ fetch('/compile',{method:'POST',body:ta.value})
+ .then(r=>r.text().then(t=>({ok:r.ok,t})))
+ .then(({ok,t})=>{
+  if(my!==seq)return;
+  if(ok){view.srcdoc=t;const m=t.match(/\((\d+) blocks\)/);
+   status.textContent='ok: '+(m?m[1]+' blocks':'built');}
+  else status.textContent='err: '+t;
+ })
+ .catch(e=>{if(my!==seq)return;status.textContent='err: '+e;});
+}
+ta.addEventListener('input',()=>{dirty=true;if(paused)return;
+ clearTimeout(timer);timer=setTimeout(compile,400);});
+toggle.addEventListener('click',()=>{paused=!paused;
+ toggle.textContent=paused?'Resume':'Pause';
+ if(!paused&&dirty)compile();});
+compile();
+</script></body></html>
