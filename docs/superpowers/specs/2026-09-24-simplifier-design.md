@@ -46,8 +46,7 @@ section-1 score and return it after all tries, instead of returning the first
 verified build. Non-verify path unchanged (first success returns immediately).
 Error behavior unchanged: last error raised when nothing verifies; grow loop
 unchanged. Cost: all tries run their sim check instead of stopping at the
-first pass — measured negligible on small builds (demo ≈0.3s total);
-re-measure at implementation time and note the number here.
+first pass — measured 0.3s for the demo build on 2026-09-24, negligible.
 
 ## 4. Testing
 
