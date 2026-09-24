@@ -25,7 +25,7 @@ def compile_recipe(text):
     """Recipe text -> (preview html, block count). Raises on bad recipe."""
     r = parse_recipe(text)
     blocks, size, io, st = layout_retry(r, verify=True)
-    fd, path = tempfile.mkstemp(suffix=".html", dir=str(HERE))
+    fd, path = tempfile.mkstemp(suffix=".html")
     os.close(fd)
     try:
         export_html(blocks, size, path, "live editor", st)
@@ -44,9 +44,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if self.path != "/":
             self.send_error(404)
             return
-        # ponytail: editor.html arrives in Task 2; placeholder keeps GET alive.
-        page = HERE / "editor.html"
-        body = page.read_bytes() if page.exists() else b"editor pending"
+        body = (HERE / "editor.html").read_bytes()
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
@@ -57,7 +55,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if self.path != "/compile":
             self.send_error(404)
             return
-        n = int(self.headers.get("Content-Length", 0))
+        try:
+            n = int(self.headers.get("Content-Length", 0))
+        except ValueError:
+            n = None
+        if n is None or n < 0:
+            self.send_error(400, "bad Content-Length")
+            return
         text = self.rfile.read(n).decode("utf-8", "replace")
         try:
             html, nblocks = compile_recipe(text)
@@ -104,6 +108,25 @@ if __name__ == "__main__":
             pass
         else:
             raise SystemExit("bad recipe must raise")
-        print(f"serve ok: compiles demo ({n} blocks), rejects bad recipe")
+        import threading
+        import urllib.request
+        with Server(("127.0.0.1", 0), Handler) as httpd:
+            port = httpd.server_address[1]
+            threading.Thread(target=httpd.serve_forever, daemon=True).start()
+            page = urllib.request.urlopen(f"http://127.0.0.1:{port}/").read().decode()
+            assert "id=recipe" in page and "Pause" in page, "editor page not served"
+            import urllib.error
+            good = urllib.request.urlopen(urllib.request.Request(
+                f"http://127.0.0.1:{port}/compile", data=DEMO.encode())).read().decode()
+            assert "redstone_wall_torch" in good, "compile route broken"
+            try:
+                urllib.request.urlopen(urllib.request.Request(
+                    f"http://127.0.0.1:{port}/compile", data=b"IN a\ny = a AND"))
+            except urllib.error.HTTPError as e:
+                assert e.code == 400 and e.read().decode().strip(), "bad recipe must 400"
+            else:
+                raise SystemExit("bad recipe must 400")
+            httpd.shutdown()
+        print(f"serve ok: compiles demo ({n} blocks), routes + bad-recipe 400 verified")
     else:
         serve(int(sys.argv[1]) if len(sys.argv) > 1 else 8000)
