@@ -5,6 +5,7 @@ from core import base
 from recipe import eval_net, parse_recipe, build_adder8
 from sim import layout_retry
 from export import export_mcfunction, export_schem, export_html
+from serve import serve
 
 
 DEMO = """IN a, b, c
@@ -47,6 +48,10 @@ def demo_alu8():
     print(f"alu8 ok: {len(blocks)} blocks -> build_alu8.html + build_alu8.mcfunction")
 
 if __name__ == "__main__":
+    if "--serve" in sys.argv:
+        i = sys.argv.index("--serve")
+        serve(int(sys.argv[i + 1]) if i + 1 < len(sys.argv) else 8000)
+        sys.exit(0)
     demo()
     if "--alu8" in sys.argv:
         demo_alu8()
