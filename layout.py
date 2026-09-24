@@ -75,6 +75,15 @@ def astar(starts, goal, net, W, D, solid, rings, wires, junctions, margin=None):
 def layout(recipe, seed=None, grow=0):
     gates = expand_gates(recipe["gates"])
     banded = any(g.get("band") is not None for g in gates)
+    if not banded:
+        # ALAP: latest-first, each gate just before its earliest consumer,
+        # so producer runs are short hops, not full-stack marathons.
+        # Pop+insert keeps producers earlier and consumers later.
+        for i in range(len(gates) - 1, -1, -1):
+            outs = [j for j, h in enumerate(gates)
+                    if j > i and gates[i]["out"] in h["args"]]
+            if outs:
+                gates.insert(min(outs) - 1, gates.pop(i))
     if banded:
         maxband = max(g.get("band", -1) for g in gates)
         W = 6 + (maxband + 1) * 24 + 10
@@ -129,21 +138,22 @@ def layout(recipe, seed=None, grow=0):
         paths.append((path, net))
         return path
 
-    # levers batch 1: inputs whose first load is an OR junction. Unbanded sit
-    # top-left; banded sit by their band (short hops, no marathons). The
-    # junction taps their feed in place. Others get levers by their load
-    # ports after placement (zero-wire taps, no maze).
+    # levers batch 1: inputs feeding an OR junction (its placement reads
+    # their feed up front). Unbanded sit top-left; banded sit by their band
+    # (short hops, no marathons). The junction taps their feed in place.
+    # Others get levers by their load ports after placement (zero-wire taps).
     firstuse = {}
     for g in gates:
         for k, a in enumerate(g["args"]):
             if a not in firstuse:
                 firstuse[a] = (g["op"], k, g.get("band"))
+    orfeed = {a for g in gates if g["op"] == "OR" for a in g["args"]}
     pos = {}
     for idx, name in enumerate(recipe["inputs"]):
         if name not in firstuse:
             continue  # unused input: no lever
         op, role, band = firstuse[name]
-        if op != "OR":
+        if op != "OR" and (banded or name not in orfeed):
             continue  # placed by load port later
         x = 16 * band + (2 if role == 0 else 5) if band is not None else 2 + idx * 3
         if (x, 6) in solid or (x, 6) in wires or (x + 1, 6) in solid or (x + 1, 6) in wires:

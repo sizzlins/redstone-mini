@@ -9,11 +9,14 @@ from recipe import eval_net
 
 def layout_retry(recipe, tries=12, verify=False, grows=3):
     """Randomized-restart maze routing: reshuffle net order until the field fits.
-    With verify, keep going until the placed build also passes redstone sim
-    (generate-and-test: the sim is the selector, not just the guard).
+    With verify, keep the smallest build that also passes redstone sim
+    (generate-and-test: the sim is the selector, not just the guard; restarts
+    are free search, so ship the cheapest verified one).
     Field grows on failure (effectively infinite room, capped at 2000)."""
     last = None
     for grow in range(grows):
+        out = None
+        best = None
         for t in range(tries):
             try:
                 out = layout(recipe, seed=None if t == 0 else t, grow=grow)
@@ -22,12 +25,17 @@ def layout_retry(recipe, tries=12, verify=False, grows=3):
                 continue
             if not verify:
                 return out + (None,)
-        try:
-            st = sim_verify(recipe, out[0], out[2], quiet=True, collect=True)
-            return out + (st,)
-        except RuntimeError as e:
-            e.blocks, e.size, e.io = out[:3]
-            last = e
+            try:
+                st = sim_verify(recipe, out[0], out[2], quiet=True, collect=True)
+            except RuntimeError as e:
+                e.blocks, e.size, e.io = out[:3]
+                last = e
+                continue
+            if best is None or len(out[0]) < len(best[0]):
+                best = out + (st,)
+        if best is not None:
+            return best
+        # nothing verified this grow: keep last error, grow the field
     raise last
 
 
