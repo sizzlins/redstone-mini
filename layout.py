@@ -239,6 +239,8 @@ def layout(recipe, seed=None, grow=0):
             return {(x, z) for x in range(ox - 3, ox + 4) for z in range(gz - 1, gz + 2)}
         if op == "LATCH":
             return {(x, z) for x in range(ox - 6, ox + 8) for z in range(gz - 5, gz + 6)}
+        if op == "XOR":
+            return {(x, z) for x in range(ox - 3, ox + 8) for z in range(gz - 2, gz + 8)}
         return {(x, z) for x in range(ox - 3, ox + 4) for z in range(gz - 3, gz + 4)}
 
     reserved = [footprint(g["op"], *gridpos[i]) for i, g in enumerate(gates)]
@@ -433,6 +435,45 @@ def layout(recipe, seed=None, grow=0):
                 _restore(s)
                 raise
             continue
+        if op == "XOR":
+            # comparator XOR (dual subtract, sim-verified): C1 = A-B,
+            # C2 = B-A, outputs merged west. Side inputs are tile-stamped
+            # levers (dust side-feeds don't count as comparator input).
+            fam = own(a[0], a[1], o)
+            Adust = [(ox + 2, gz), (ox + 1, gz), (ox + 3, gz)]
+            Bdust = [(ox + 2, gz + 4), (ox + 1, gz + 4), (ox + 3, gz + 4)]
+            Odust = [(ox - 1, gz), (ox - 2, gz), (ox - 2, gz + 1),
+                     (ox - 2, gz + 2), (ox - 2, gz + 3), (ox - 2, gz + 4),
+                     (ox - 1, gz + 4), (ox - 2, gz + 5)]
+            if not (0 <= ox - 3 and ox + 7 < W and 0 <= gz - 2 and gz + 7 < D):
+                raise RuntimeError(f"XOR out of bounds for {o}")
+            if not footprint("XOR", ox, gz).isdisjoint(others_reserved[i]):
+                raise RuntimeError(f"XOR blocked for {o}")
+            s = _snap()
+            try:
+                blocks.append((ox, 1, gz, "minecraft:comparator[facing=east,mode=subtract]"))
+                solid[(ox, gz)] = ("comp", o)
+                blocks.append((ox, 1, gz + 4, "minecraft:comparator[facing=east,mode=subtract]"))
+                solid[(ox, gz + 4)] = ("comp", o)
+                for cells, net in ((Adust, a[0]), (Bdust, a[1]), (Odust, o)):
+                    stamp_wire(cells, net)
+                for lx, lz, ln in ((ox, gz + 3, a[0]), (ox, gz + 1, a[1])):
+                    blocks.append((lx, 1, lz, "minecraft:lever"))
+                    solid[(lx, lz)] = ("lever", ln)
+                    for dx, dz in DIRS:
+                        ring(lx + dx, lz + dz, own(ln))
+                for cx_, cz_ in set([(ox, gz), (ox, gz + 4)] + Adust + Bdust + Odust):
+                    for dx, dz in DIRS:
+                        ring(cx_ + dx, cz_ + dz, fam)
+                pa, pb, po = (ox + 3, gz), (ox + 3, gz + 4), (ox - 2, gz + 5)
+                pos[o] = po
+                firstport.setdefault(a[0], pa)
+                firstport.setdefault(a[1], pb)
+                recs.append((op, o, a, (pa, pb, po)))
+            except RuntimeError:
+                _restore(s)
+                raise
+            continue
         if op != "NOT":
             raise ValueError(f"bad primitive {op}")
         dv = pos.get(a[0])
@@ -520,6 +561,9 @@ def layout(recipe, seed=None, grow=0):
             bx, bz = cell
             tasks += [(pos[a[0]], (bx - 1, bz), a[0]), (pos[a[1]], (bx, bz - 1), a[1])]
         elif op == "LATCH":
+            pa, pb, po = cell
+            tasks += [(pos[a[0]], pa, a[0]), (pos[a[1]], pb, a[1])]
+        elif op == "XOR":
             pa, pb, po = cell
             tasks += [(pos[a[0]], pa, a[0]), (pos[a[1]], pb, a[1])]
         elif op == "OUT":

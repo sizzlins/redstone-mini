@@ -93,7 +93,7 @@ def expand_gates(gates):
                 nxt += [{"out": n, "op": "NOR", "args": [a[0], a[1]], "band": bd},
                         {"out": o, "op": "NOT", "args": [n], "band": bd}]
                 changed = True
-            elif op == "XOR":
+            elif op == "XOR" and banded:
                 t1, t2, t3 = T("xo"), T("xa"), T("xn")
                 nxt += [{"out": t1, "op": "OR", "args": [a[0], a[1]], "band": bd},
                         {"out": t2, "op": "AND", "args": [a[0], a[1]], "band": bd},
@@ -248,9 +248,9 @@ if __name__ == "__main__":
         _v = {"a": (_k >> 0) & 1, "b": (_k >> 1) & 1}
         assert eval_net(_min, _v)["y"] == eval_net(_clumsy, _v)["y"], _v
     _xor = {"inputs": ["a", "b"], "outputs": ["y"],
-            "gates": [dict(g) for g in expand_gates(
-                [{"out": "y", "op": "XOR", "args": ["a", "b"]}])]}
-    assert len(minimize_recipe(_xor)["gates"]) == 4
+            "gates": [{"out": "y", "op": "XOR", "args": ["a", "b"]}]}
+    assert expand_gates(_xor["gates"]) == _xor["gates"]  # unbanded: tile, no explosion
+    assert len(minimize_recipe(_xor)["gates"]) == 1  # SOP-5 loses to factored 1
     print("minimize ok: clumsy->1 gate, xor keeps factored form")
     _lat = {"inputs": ["S", "R"], "outputs": ["Q"],
             "gates": [{"out": "Q", "op": "LATCH", "args": ["S", "R"]}]}
