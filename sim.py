@@ -42,14 +42,156 @@ def layout_retry(recipe, tries=12, verify=False, grows=3):
 
 
 
-def sim_verify(recipe, blocks, io, seed=7, quiet=False, collect=False):
-    """Independent redstone simulation of the PLACED build (ignores layout nets).
-    Plays input vectors through tick-stepped torch/dust physics, compares
-    lamps against eval_net. Catches opens/shorts the static guards can't see.
-    # ponytail: flat single-level physics only (all our builds are); vanilla
-    # tick delays (torch +1, repeater +its delay stage).
-    """
-    import random as _r
+def _run_vec(vec, init, ctx):
+    """Tick-settled physics for one input vector (shared by verify/sequence).
+    init carries live/torch/repeater state across phases (memory!); None
+    starts blank. Returns (lamps, live, torches, ticks, repeaters)."""
+    dust, torch, lampat, rep, rblk, cob, repdelay, lever, lampnet, attach_rev = ctx
+    # tick-accurate vanilla timing: dust/cobble settle instantly each tick,
+    # torch outputs flip 1 tick after their block changes, repeaters flip
+    # after their delay=1..4 stage. Levels still drain phantom latches.
+    import heapq as _hq
+    pw, pb, pbs = {}, {}, {}
+    tl = {c: False for c in torch}
+    ron = {c: False for c in rep}
+    if init:
+        for c, v in init.get("w", {}).items():
+            if v:
+                pw[c] = v
+        for c, v in init.get("t", {}).items():
+            tl[c] = bool(v)
+        for c, v in init.get("r", {}).items():
+            ron[c] = bool(v)
+    pending, tsched, rsched, seq, ticks, steps = [], set(), set(), [0], [0], [0]
+
+    def sched(tick, kind, cell):
+        seq[0] += 1
+        _hq.heappush(pending, (tick, seq[0], kind, cell))
+
+    def wake(now, c):
+        # cell c changed output at tick now: re-eval everything it feeds.
+        for dx, dz in DIRS:
+            m = (c[0] + dx, c[1] + dz)
+            if m in dust:
+                sched(now, "d", m)
+            elif m in cob:
+                sched(now, "c", m)
+            elif m in rep:
+                d = rep[m]
+                if (m[0] - d[0], m[1] - d[1]) == c:
+                    sched(now, "r", m)
+        for t in attach_rev.get(c, []):
+            sched(now, "t", t)
+
+    def dust_lvl(c):
+        lv = 0
+        for dx, dz in DIRS:
+            m = (c[0] + dx, c[1] + dz)
+            if m in torch and tl.get(m, False):
+                return 15
+            if m in lever and vec.get(lever[m], False):
+                return 15
+            if m in rblk:
+                return 15
+            if m in cob and pbs.get(m, False):
+                return 15
+            if m in dust:
+                lv = max(lv, pw.get(m, 0) - 1)
+            if m in rep:
+                d = rep[m]
+                if (m[0] + d[0], m[1] + d[1]) == c and ron.get(m, False):
+                    return 15
+        return max(lv, 0)
+
+    def cob_state(c):
+        pwrd, strong = False, False
+        for dx, dz in DIRS:
+            m = (c[0] + dx, c[1] + dz)
+            if m in dust and pw.get(m, 0) >= 1:
+                pwrd = True
+            if m in rblk:
+                pwrd, strong = True, True
+            if m in rep:
+                d = rep[m]
+                if (m[0] + d[0], m[1] + d[1]) == c and ron.get(m, False):
+                    pwrd, strong = True, True
+        return pwrd, strong
+
+    def rep_on(c):
+        d = rep[c]
+        b = (c[0] - d[0], c[1] - d[1])
+        if b in dust and pw.get(b, 0) >= 1:
+            return True
+        if b in cob and pb.get(b, False):
+            return True
+        if b in lever and vec.get(lever[b], False):
+            return True
+        if b in rblk:
+            return True
+        # ponytail: repeaters chain back-to-back (standard); read upstream ron.
+        if b in rep:
+            d2 = rep[b]
+            if (b[0] + d2[0], b[1] + d2[1]) == c and ron.get(b, False):
+                return True
+        return False
+
+    for c in dust:
+        sched(0, "d", c)
+    for c in cob:
+        sched(0, "c", c)
+    for c in torch:
+        sched(0, "t", c)
+    for c in rep:
+        sched(0, "r", c)
+
+    while pending:
+        now, _, kind, c = _hq.heappop(pending)
+        steps[0] += 1
+        if now > 500 or steps[0] > 20000:
+            live = {x: v for x, v in pw.items() if v}
+            raise RuntimeError(f"sim not settling on {vec}. live: {sorted(live.items())} torches: {tl} ron: {ron}")
+        ticks[0] = max(ticks[0], now)
+        if kind == "d":
+            v = dust_lvl(c)
+            if pw.get(c, 0) != v:
+                pw[c] = v
+                wake(now, c)
+        elif kind == "c":
+            v, s = cob_state(c)
+            if pb.get(c, False) != v or pbs.get(c, False) != s:
+                pb[c], pbs[c] = v, s
+                wake(now, c)
+        elif kind == "t":
+            if (not pb.get(torch[c], False)) != tl.get(c, False) and c not in tsched:
+                tsched.add(c)
+                sched(now + 1, "T", c)
+        elif kind == "T":
+            tsched.discard(c)
+            v = not pb.get(torch[c], False)
+            if tl.get(c, False) != v:
+                tl[c] = v
+                wake(now, c)
+        elif kind == "r":
+            if rep_on(c) != ron.get(c, False) and c not in rsched:
+                rsched.add(c)
+                sched(now + repdelay.get(c, 1), "R", c)
+        elif kind == "R":
+            rsched.discard(c)
+            v = rep_on(c)
+            if ron.get(c, False) != v:
+                ron[c] = v
+                wake(now, c)
+    return ({net: any(pw.get((cell[0] + dx, cell[1] + dz), 0) >= 1
+                     for dx, dz in DIRS)
+            for cell, net in lampnet.items()},
+            {c: v for c, v in pw.items() if v},
+            {c: 1 if tl.get(c, False) else 0 for c in torch},
+            ticks[0],
+            {c: 1 if ron.get(c, False) else 0 for c in rep})
+
+
+def _parse_build(blocks, io):
+    """Placed blocks/io -> physics structures shared by sim_verify/sequence."""
     dust, torch, lampat, rep, rblk, cob = set(), {}, set(), {}, set(), set()
     repdelay = {}
     for x, y, z, bid in blocks:
@@ -78,141 +220,18 @@ def sim_verify(recipe, blocks, io, seed=7, quiet=False, collect=False):
     attach_rev = {}
     for t, a in torch.items():
         attach_rev.setdefault(a, []).append(t)
+    return dust, torch, lampat, rep, rblk, cob, repdelay, lever, lampnet, attach_rev
 
-    def run(vec):
-        # tick-accurate vanilla timing: dust/cobble settle instantly each tick,
-        # torch outputs flip 1 tick after their block changes, repeaters flip
-        # after their delay=1..4 stage. Levels still drain phantom latches.
-        import heapq as _hq
-        pw, pb, pbs = {}, {}, {}
-        tl = {c: False for c in torch}
-        ron = {c: False for c in rep}
-        pending, tsched, rsched, seq, ticks, steps = [], set(), set(), [0], [0], [0]
 
-        def sched(tick, kind, cell):
-            seq[0] += 1
-            _hq.heappush(pending, (tick, seq[0], kind, cell))
-
-        def wake(now, c):
-            # cell c changed output at tick now: re-eval everything it feeds.
-            for dx, dz in DIRS:
-                m = (c[0] + dx, c[1] + dz)
-                if m in dust:
-                    sched(now, "d", m)
-                elif m in cob:
-                    sched(now, "c", m)
-                elif m in rep:
-                    d = rep[m]
-                    if (m[0] - d[0], m[1] - d[1]) == c:
-                        sched(now, "r", m)
-            for t in attach_rev.get(c, []):
-                sched(now, "t", t)
-
-        def dust_lvl(c):
-            lv = 0
-            for dx, dz in DIRS:
-                m = (c[0] + dx, c[1] + dz)
-                if m in torch and tl.get(m, False):
-                    return 15
-                if m in lever and vec.get(lever[m], False):
-                    return 15
-                if m in rblk:
-                    return 15
-                if m in cob and pbs.get(m, False):
-                    return 15
-                if m in dust:
-                    lv = max(lv, pw.get(m, 0) - 1)
-                if m in rep:
-                    d = rep[m]
-                    if (m[0] + d[0], m[1] + d[1]) == c and ron.get(m, False):
-                        return 15
-            return max(lv, 0)
-
-        def cob_state(c):
-            pwrd, strong = False, False
-            for dx, dz in DIRS:
-                m = (c[0] + dx, c[1] + dz)
-                if m in dust and pw.get(m, 0) >= 1:
-                    pwrd = True
-                if m in rblk:
-                    pwrd, strong = True, True
-                if m in rep:
-                    d = rep[m]
-                    if (m[0] + d[0], m[1] + d[1]) == c and ron.get(m, False):
-                        pwrd, strong = True, True
-            return pwrd, strong
-
-        def rep_on(c):
-            d = rep[c]
-            b = (c[0] - d[0], c[1] - d[1])
-            if b in dust and pw.get(b, 0) >= 1:
-                return True
-            if b in cob and pb.get(b, False):
-                return True
-            if b in lever and vec.get(lever[b], False):
-                return True
-            if b in rblk:
-                return True
-            # ponytail: repeaters chain back-to-back (standard); read upstream ron.
-            if b in rep:
-                d2 = rep[b]
-                if (b[0] + d2[0], b[1] + d2[1]) == c and ron.get(b, False):
-                    return True
-            return False
-
-        for c in dust:
-            sched(0, "d", c)
-        for c in cob:
-            sched(0, "c", c)
-        for c in torch:
-            sched(0, "t", c)
-        for c in rep:
-            sched(0, "r", c)
-
-        while pending:
-            now, _, kind, c = _hq.heappop(pending)
-            steps[0] += 1
-            if now > 500 or steps[0] > 20000:
-                live = {x: v for x, v in pw.items() if v}
-                raise RuntimeError(f"sim not settling on {vec}. live: {sorted(live.items())} torches: {tl} ron: {ron}")
-            ticks[0] = max(ticks[0], now)
-            if kind == "d":
-                v = dust_lvl(c)
-                if pw.get(c, 0) != v:
-                    pw[c] = v
-                    wake(now, c)
-            elif kind == "c":
-                v, s = cob_state(c)
-                if pb.get(c, False) != v or pbs.get(c, False) != s:
-                    pb[c], pbs[c] = v, s
-                    wake(now, c)
-            elif kind == "t":
-                if (not pb.get(torch[c], False)) != tl.get(c, False) and c not in tsched:
-                    tsched.add(c)
-                    sched(now + 1, "T", c)
-            elif kind == "T":
-                tsched.discard(c)
-                v = not pb.get(torch[c], False)
-                if tl.get(c, False) != v:
-                    tl[c] = v
-                    wake(now, c)
-            elif kind == "r":
-                if rep_on(c) != ron.get(c, False) and c not in rsched:
-                    rsched.add(c)
-                    sched(now + repdelay.get(c, 1), "R", c)
-            elif kind == "R":
-                rsched.discard(c)
-                v = rep_on(c)
-                if ron.get(c, False) != v:
-                    ron[c] = v
-                    wake(now, c)
-        return ({net: any(pw.get((cell[0] + dx, cell[1] + dz), 0) >= 1
-                         for dx, dz in DIRS)
-                for cell, net in lampnet.items()},
-                {c: v for c, v in pw.items() if v},
-                {c: 1 if tl.get(c, False) else 0 for c in torch},
-                ticks[0],
-                {c: 1 if ron.get(c, False) else 0 for c in rep})
+def sim_verify(recipe, blocks, io, seed=7, quiet=False, collect=False):
+    """Independent redstone simulation of the PLACED build (ignores layout nets).
+    Plays input vectors through tick-stepped torch/dust physics, compares
+    lamps against eval_net. Catches opens/shorts the static guards can't see.
+    # ponytail: flat single-level physics only (all our builds are); vanilla
+    # tick delays (torch +1, repeater +its delay stage).
+    """
+    import random as _r
+    P = _parse_build(blocks, io)
 
     ins = recipe["inputs"]
     if 2 ** len(ins) <= 4096:
@@ -226,6 +245,8 @@ def sim_verify(recipe, blocks, io, seed=7, quiet=False, collect=False):
     bad = []
     lastlive = {}
     maxticks = 0
+    latchouts = {g["out"] for g in recipe["gates"] if g["op"] == "LATCH"}
+    latchargs = {a for g in recipe["gates"] if g["op"] == "LATCH" for a in g["args"]}
     states = None
     if collect and len(combos) <= 16:
         states = {"inputs": list(ins),
@@ -233,11 +254,14 @@ def sim_verify(recipe, blocks, io, seed=7, quiet=False, collect=False):
                   "lamps": {f"{x},{z}": n for (x, z), n in io["lamps"].items()},
                   "vectors": {}}
     for vec in combos:
-        got, live, tlive, nticks, rlive = run(vec)
-        maxticks = max(maxticks, nticks)
         exp = eval_net(recipe, vec)
+        if latchouts and not any(exp.get(a, False) for a in latchargs):
+            continue  # undefined power-on: hold needs history (real hardware
+            # too — reset first). The sequence proof covers hold properly.
+        got, live, tlive, nticks, rlive = _run_vec(vec, None, P)
+        maxticks = max(maxticks, nticks)
         for net in recipe["outputs"]:
-            if bool(got.get(net, False)) != bool(exp[net]):
+            if net not in latchouts and bool(got.get(net, False)) != bool(exp[net]):
                 bad.append((vec, net, got.get(net), bool(exp[net])))
                 lastlive = live
         if states is not None:
@@ -254,6 +278,20 @@ def sim_verify(recipe, blocks, io, seed=7, quiet=False, collect=False):
     if not quiet:
         print(f"sim ok: {len(combos)} vectors, lamps match logic")
     return states, maxticks
+
+
+def sim_sequence(recipe, blocks, io, phases):
+    """Drive input phases with state carried across (memory!). phases is a
+    list of (vec, expected-lamps); tick counters reset per phase, only lamps
+    are asserted. Raises RuntimeError on mismatch."""
+    P = _parse_build(blocks, io)
+    carry = None
+    for vec, exp in phases:
+        got, live, tlive, _, rlive = _run_vec(vec, carry, P)
+        for net, want in exp.items():
+            if bool(got.get(net, False)) != bool(want):
+                raise RuntimeError(f"SEQ MISMATCH on {vec}: {net} got {got.get(net)} want {want}")
+        carry = {"w": live, "t": tlive, "r": rlive}
 
 
 if __name__ == "__main__":
@@ -293,4 +331,12 @@ if __name__ == "__main__":
     assert _to and _to[0]["f"] == [1, 0] and _to[0]["m"] == 0, _to
     assert "applyState(INPUTS.map(n=>'0').join(''))" in _h, "no initial applyState"
     print("stages ok: delay-4 stamped, torch facing pinned, initial paint")
+    from recipe import parse_recipe
+    _lr = parse_recipe("IN S, R\nOUT Q\nQ = LATCH S R\n")
+    _lb, _lsz, _lio, _ = layout_retry(_lr, verify=True)
+    sim_sequence(_lr, _lb, _lio, [({"S": 1, "R": 0}, {"Q": 1}),
+                                  ({"S": 0, "R": 0}, {"Q": 1}),
+                                  ({"S": 0, "R": 1}, {"Q": 0}),
+                                  ({"S": 0, "R": 0}, {"Q": 0})])
+    print("latch ok: set/hold/reset/hold")
 

@@ -1,0 +1,3 @@
+IN S, R
+OUT Q
+Q = LATCH S R
