@@ -231,6 +231,8 @@ def layout(recipe, seed=None, grow=0):
             return {(x, z) for x in range(ox - 2, ox + 9) for z in range(gz - 1, gz + 8)}
         if op in ("NOT", "NOR"):
             return {(x, z) for x in range(ox - 3, ox + 4) for z in range(gz - 1, gz + 2)}
+        if op == "LATCH":
+            return {(x, z) for x in range(ox - 6, ox + 8) for z in range(gz - 5, gz + 6)}
         return {(x, z) for x in range(ox - 3, ox + 4) for z in range(gz - 3, gz + 4)}
 
     reserved = [footprint(g["op"], *gridpos[i]) for i, g in enumerate(gates)]
@@ -380,6 +382,49 @@ def layout(recipe, seed=None, grow=0):
             if not placed:
                 raise RuntimeError(f"NOR blocked for {o}")
             continue
+        if op == "LATCH":
+            # flat SR latch (textbook NOR latch, adjacent blocks): A-block
+            # reads R+Qb, B-block reads S+Q-west; Q exits west at z+2.
+            # Hand-placed: cross-coupling is delay-critical, the router must
+            # never thread repeaters through it (they sustain power-on race).
+            qb = f"{o}~qb"
+            fam = own(a[0], a[1], o, qb)
+            Sdust = [(ox - 1 + i, gz + 4) for i in range(6)] + \
+                [(ox + 4, gz + 3), (ox + 4, gz + 2), (ox + 4, gz + 1)]
+            Rdust = [(ox - 2, gz), (ox - 1, gz)]
+            Qdust = [(ox + 2, gz), (ox + 3, gz), (ox + 2, gz + 1)] + \
+                [(ox + 2 - i, gz + 2) for i in range(8)]
+            Qbdust = [(ox + 4, gz - 2), (ox + 4, gz - 3), (ox + 4, gz - 4)] + \
+                [(ox + 4 - i, gz - 4) for i in range(5)] + \
+                [(ox, gz - 3), (ox, gz - 2), (ox, gz - 1)]
+            if not (0 <= ox - 6 and ox + 7 < W and 0 <= gz - 5 and gz + 6 < D):
+                raise RuntimeError(f"LATCH out of bounds for {o}")
+            if not footprint("LATCH", ox, gz).isdisjoint(others_reserved[i]):
+                raise RuntimeError(f"LATCH blocked for {o}")
+            s = _snap()
+            try:
+                stamp_cobble(ox, gz, o)
+                blocks.append((ox + 1, 1, gz, "minecraft:redstone_wall_torch[facing=east]"))
+                solid[(ox + 1, gz)] = ("torch", o)
+                stamp_cobble(ox + 4, gz, o)
+                blocks.append((ox + 4, 1, gz - 1, "minecraft:redstone_wall_torch[facing=north]"))
+                solid[(ox + 4, gz - 1)] = ("torch", o)
+                for cells, net in ((Sdust, a[0]), (Rdust, a[1]),
+                                   (Qdust, o), (Qbdust, qb)):
+                    stamp_wire(cells, net)
+                for cx_, cz_ in set([(ox, gz), (ox + 1, gz), (ox + 4, gz),
+                                     (ox + 4, gz - 1)] + Sdust + Rdust + Qdust + Qbdust):
+                    for dx, dz in DIRS:
+                        ring(cx_ + dx, cz_ + dz, fam)
+                pa, pb, po = (ox - 1, gz + 4), (ox - 2, gz), (ox - 5, gz + 2)
+                pos[o] = po
+                firstport.setdefault(a[0], pa)
+                firstport.setdefault(a[1], pb)
+                recs.append((op, o, a, (pa, pb, po)))
+            except RuntimeError:
+                _restore(s)
+                raise
+            continue
         if op != "NOT":
             raise ValueError(f"bad primitive {op}")
         dv = pos.get(a[0])
@@ -466,6 +511,9 @@ def layout(recipe, seed=None, grow=0):
         elif op == "NOR":
             bx, bz = cell
             tasks += [(pos[a[0]], (bx - 1, bz), a[0]), (pos[a[1]], (bx, bz - 1), a[1])]
+        elif op == "LATCH":
+            pa, pb, po = cell
+            tasks += [(pos[a[0]], pa, a[0]), (pos[a[1]], pb, a[1])]
         elif op == "OUT":
             tasks.append((pos[a[0]], cell, a[0]))
     tasks.sort(key=lambda t: -(abs(t[0][0] - t[1][0]) + abs(t[0][1] - t[1][1])))
