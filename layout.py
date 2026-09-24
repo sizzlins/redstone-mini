@@ -77,14 +77,32 @@ def layout(recipe, seed=None, grow=0):
     gates = expand_gates(recipe["gates"])
     banded = any(g.get("band") is not None for g in gates)
     if not banded:
-        # ALAP: latest-first, each gate just before its earliest consumer,
-        # so producer runs are short hops, not full-stack marathons.
-        # Pop+insert keeps producers earlier and consumers later.
-        for i in range(len(gates) - 1, -1, -1):
-            outs = [j for j, h in enumerate(gates)
-                    if j > i and gates[i]["out"] in h["args"]]
-            if outs:
-                gates.insert(min(outs) - 1, gates.pop(i))
+        # Compute topological depth for auto-banding: depth 0 = no consumers,
+        # depth = 1 + max depth of consumers. This groups signals by dependency
+        # level so they route in separate columns, left-to-right, avoiding the
+        # single-column wire clash that forces A* into damaging U-turns.
+        firstuse = {}
+        for g in gates:
+            for k, a in enumerate(g["args"]):
+                if a not in firstuse:
+                    firstuse[a] = g["out"]
+        consumers = {}
+        for g in gates:
+            for a in g["args"]:
+                consumers.setdefault(a, []).append(g["out"])
+        depth = {}
+        def get_depth(sig, memo={}):
+            if sig in memo:
+                return memo[sig]
+            out = firstuse.get(sig)
+            if out is None:
+                memo[sig] = 0
+            else:
+                memo[sig] = 1 + max(get_depth(c) for c in consumers.get(out, [out]))
+            return memo[sig]
+        for g in gates:
+            g["band"] = max(get_depth(a) for a in g["args"])
+        banded = True
     if banded:
         maxband = max(g.get("band", -1) for g in gates)
         W = 6 + (maxband + 1) * 24 + 10
