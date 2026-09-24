@@ -9,9 +9,9 @@ from recipe import eval_net
 
 def layout_retry(recipe, tries=12, verify=False, grows=3):
     """Randomized-restart maze routing: reshuffle net order until the field fits.
-    With verify, keep the smallest build that also passes redstone sim
-    (generate-and-test: the sim is the selector, not just the guard; restarts
-    are free search, so ship the cheapest verified one).
+    With verify, keep the fastest verified build (ticks first, blocks break
+    ties): the sim is the selector, not just the guard; restarts are free
+    search, so ship the cheapest verified one.
     Field grows on failure (effectively infinite room, capped at 2000)."""
     last = None
     for grow in range(grows):
@@ -26,15 +26,16 @@ def layout_retry(recipe, tries=12, verify=False, grows=3):
             if not verify:
                 return out + (None,)
             try:
-                st = sim_verify(recipe, out[0], out[2], quiet=True, collect=True)
+                st, ticks = sim_verify(recipe, out[0], out[2], quiet=True, collect=True)
             except RuntimeError as e:
                 e.blocks, e.size, e.io = out[:3]
                 last = e
                 continue
-            if best is None or len(out[0]) < len(best[0]):
-                best = out + (st,)
+            score = (ticks, len(out[0]))
+            if best is None or score < best[0]:
+                best = (score, out + (st,))
         if best is not None:
-            return best
+            return best[1]
         # nothing verified this grow: keep last error, grow the field
     raise last
 
@@ -223,6 +224,7 @@ def sim_verify(recipe, blocks, io, seed=7, quiet=False, collect=False):
         combos += [{n: rr.randint(0, 1) for n in ins} for _ in range(60)]
     bad = []
     lastlive = {}
+    maxticks = 0
     states = None
     if collect and len(combos) <= 16:
         states = {"inputs": list(ins),
@@ -231,6 +233,7 @@ def sim_verify(recipe, blocks, io, seed=7, quiet=False, collect=False):
                   "vectors": {}}
     for vec in combos:
         got, live, tlive, nticks, rlive = run(vec)
+        maxticks = max(maxticks, nticks)
         exp = eval_net(recipe, vec)
         for net in recipe["outputs"]:
             if bool(got.get(net, False)) != bool(exp[net]):
@@ -249,7 +252,7 @@ def sim_verify(recipe, blocks, io, seed=7, quiet=False, collect=False):
         raise RuntimeError(f"SIM MISMATCH x{len(bad)}: {bad[:4]} live: {sorted(lastlive.items())}")
     if not quiet:
         print(f"sim ok: {len(combos)} vectors, lamps match logic")
-    return states
+    return states, maxticks
 
 
 if __name__ == "__main__":
@@ -260,9 +263,11 @@ if __name__ == "__main__":
     _io = {"levers": {(0, 0): "a"}, "lamps": {(3, 0): "y"}, "nets": {}}
     _recipe = {"inputs": ["a"], "outputs": ["y"],
                "gates": [{"out": "y", "op": "OR", "args": ["a", "a"]}]}
-    _st = sim_verify(_recipe, _blocks, _io, quiet=True, collect=True)
+    _st, _ = sim_verify(_recipe, _blocks, _io, quiet=True, collect=True)
     assert _st["vectors"]["1"]["lamps"] == {"3,0": 1}, _st["vectors"]["1"]
     assert _st["vectors"]["1"]["ticks"] == 4, _st["vectors"]["1"]["ticks"]
+    _st2, _tk = sim_verify(_recipe, _blocks, _io, quiet=True, collect=True)
+    assert _tk == 4, _tk
     assert _st["vectors"]["0"]["lamps"] == {"3,0": 0}, _st["vectors"]["0"]
     print("tick ok: delay-4 settles at tick 4")
     from export import export_html
