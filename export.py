@@ -169,7 +169,7 @@ for(const b of B){
   m1.userData.lever=key;m2.userData.lever=key;
   }else if(b.b==='minecraft:redstone_wall_torch'){
    const f=b.f||[1,0],wall=b.m===1;
-   const px=b.p[0]+(wall?f[0]*0.30:0),pz=b.p[2]+(wall?f[1]*0.30:0);
+   const px=b.p[0]+(wall?-f[0]*0.30:0),pz=b.p[2]+(wall?-f[1]*0.30:0);
    const m1=new T.Mesh(torchStickG,redDarkM);m1.position.set(px,b.p[1]-0.15,pz);
    if(wall){m1.rotation.z=-f[0]*0.2;m1.rotation.x=f[1]*0.2;}s.add(m1);
    const hm=new T.MeshLambertMaterial({color:0xff2a1a});
