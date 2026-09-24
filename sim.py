@@ -46,7 +46,7 @@ def _run_vec(vec, init, ctx):
     """Tick-settled physics for one input vector (shared by verify/sequence).
     init carries live/torch/repeater state across phases (memory!); None
     starts blank. Returns (lamps, live, torches, ticks, repeaters)."""
-    dust, torch, lampat, rep, rblk, cob, repdelay, lever, lampnet, attach_rev = ctx
+    dust, torch, lampat, rep, rblk, cob, repdelay, lever, lampnet, attach_rev, comp = ctx
     # tick-accurate vanilla timing: dust/cobble settle instantly each tick,
     # torch outputs flip 1 tick after their block changes, repeaters flip
     # after their delay=1..4 stage. Levels still drain phantom latches.
@@ -54,6 +54,7 @@ def _run_vec(vec, init, ctx):
     pw, pb, pbs = {}, {}, {}
     tl = {c: False for c in torch}
     ron = {c: False for c in rep}
+    con = {c: 0 for c in comp}
     if init:
         for c, v in init.get("w", {}).items():
             if v:
@@ -62,7 +63,9 @@ def _run_vec(vec, init, ctx):
             tl[c] = bool(v)
         for c, v in init.get("r", {}).items():
             ron[c] = bool(v)
-    pending, tsched, rsched, seq, ticks, steps = [], set(), set(), [0], [0], [0]
+        for c, v in init.get("o", {}).items():
+            con[c] = v
+    pending, tsched, rsched, ksched, seq, ticks, steps = [], set(), set(), set(), [0], [0], [0]
 
     def sched(tick, kind, cell):
         seq[0] += 1
@@ -80,6 +83,8 @@ def _run_vec(vec, init, ctx):
                 d = rep[m]
                 if (m[0] - d[0], m[1], m[2] - d[1]) == c:
                     sched(now, "r", m)
+            elif m in comp:
+                sched(now, "k", m)
         for vx, vy, vz in ((c[0], c[1] + 1, c[2]), (c[0], c[1] - 1, c[2])):
             if (vx, vy, vz) in dust:
                 sched(now, "d", (vx, vy, vz))
@@ -110,6 +115,10 @@ def _run_vec(vec, init, ctx):
                 d = rep[m]
                 if (m[0] + d[0], m[1], m[2] + d[1]) == c and ron.get(m, False):
                     return 15
+            if m in comp:
+                md = comp[m]
+                if (m[0] - md["rear"][0], m[1], m[2] - md["rear"][1]) == c:
+                    return con.get(m, 0)
             # ponytail: chip layers. Dust links ±1 level iff the upper dust
             # sits on a conductive block and no lid covers the lower wire.
             # Direct stacks never link (no support, no link).
@@ -156,7 +165,56 @@ def _run_vec(vec, init, ctx):
             d2 = rep[b]
             if (b[0] + d2[0], b[1], b[2] + d2[1]) == c and ron.get(b, False):
                 return True
+        if b in comp:
+            bd = comp[b]
+            if (b[0] - bd["rear"][0], b[1], b[2] - bd["rear"][1]) == c and con.get(b, 0) >= 1:
+                return True
         return False
+
+    def comp_in(c):
+        d = comp[c]
+        rx, rz = d["rear"]
+        rear = (c[0] + rx, c[1], c[2] + rz)
+        if rear in dust:
+            rl = pw.get(rear, 0)
+        elif rear in lever and vec.get(lever[rear], False):
+            rl = 15
+        elif rear in rblk:
+            rl = 15
+        elif rear in torch and tl.get(rear, False):
+            rl = 15
+        elif rear in rep:
+            rd = rep[rear]
+            rl = 15 if (ron.get(rear, False) and (rear[0] + rd[0], rear[1], rear[2] + rd[1]) == c) else 0
+        elif rear in comp:
+            rd = comp[rear]
+            rl = con.get(rear, 0) if (rear[0] - rd["rear"][0], rear[1], rear[2] - rd["rear"][1]) == c else 0
+        else:
+            rl = 0
+        sl = 0
+        for sx, sz in ((rz, rx), (-rz, -rx)):
+            s = (c[0] + sx, c[1], c[2] + sz)
+            if s in lever and vec.get(lever[s], False):
+                sl = max(sl, 15)
+            elif s in rblk:
+                sl = max(sl, 15)
+            elif s in rep:
+                rd = rep[s]
+                if ron.get(s, False) and (s[0] + rd[0], s[1], s[2] + rd[1]) == c:
+                    sl = max(sl, 15)
+            elif s in comp:
+                sd = comp[s]
+                if (s[0] - sd["rear"][0], s[1], s[2] - sd["rear"][1]) == c:
+                    sl = max(sl, con.get(s, 0))
+            elif s in cob and pbs.get(s, False):
+                sl = max(sl, 15)
+        return rl, sl
+
+    def comp_out(c):
+        rl, sl = comp_in(c)
+        if comp[c]["mode"] == "subtract":
+            return max(rl - sl, 0)
+        return rl if sl <= rl else 0
 
     for c in dust:
         sched(0, "d", c)
@@ -166,6 +224,8 @@ def _run_vec(vec, init, ctx):
         sched(0, "t", c)
     for c in rep:
         sched(0, "r", c)
+    for c in comp:
+        sched(0, "k", c)
 
     while pending:
         now, _, kind, c = _hq.heappop(pending)
@@ -204,18 +264,30 @@ def _run_vec(vec, init, ctx):
             if ron.get(c, False) != v:
                 ron[c] = v
                 wake(now, c)
+        elif kind == "k":
+            if comp_out(c) != con.get(c, 0) and c not in ksched:
+                ksched.add(c)
+                sched(now + 1, "K", c)
+        elif kind == "K":
+            ksched.discard(c)
+            v = comp_out(c)
+            if con.get(c, 0) != v:
+                con[c] = v
+                wake(now, c)
     return ({net: any(pw.get((cell[0] + dx, cell[1], cell[2] + dz), 0) >= 1
                      for dx, dz in DIRS)
             for cell, net in lampnet.items()},
             {c: v for c, v in pw.items() if v},
             {c: 1 if tl.get(c, False) else 0 for c in torch},
             ticks[0],
-            {c: 1 if ron.get(c, False) else 0 for c in rep})
+            {c: 1 if ron.get(c, False) else 0 for c in rep},
+            {c: con.get(c, 0) for c in comp})
 
 
 def _parse_build(blocks, io):
     """Placed blocks/io -> physics structures shared by sim_verify/sequence."""
     dust, torch, lampat, rep, rblk, cob = set(), {}, set(), {}, set(), set()
+    comp = {}
     repdelay = {}
     for x, y, z, bid in blocks:
         b, c = base(bid), (x, y, z)
@@ -232,6 +304,12 @@ def _parse_build(blocks, io):
             rep[c] = {"east": (1, 0), "west": (-1, 0), "south": (0, 1), "north": (0, -1)}[face]
             dly = bid.split("delay=")[1].split(",")[0].rstrip("]") if "delay=" in bid else "1"
             repdelay[c] = max(1, min(4, int(dly)))
+        elif b == "minecraft:comparator":
+            face = bid.split("facing=")[1].split(",")[0] if "facing=" in bid else "east"
+            mode = bid.split("mode=")[1].split(",")[0].rstrip("]") if "mode=" in bid else "compare"
+            # wiki: facing points output->input, so the rear input sits at facing dir.
+            r = {"east": (1, 0), "west": (-1, 0), "south": (0, 1), "north": (0, -1)}[face]
+            comp[c] = {"rear": r, "mode": mode}
         elif b == "minecraft:redstone_block":
             rblk.add(c)
         elif b == "minecraft:cobblestone":
@@ -243,7 +321,7 @@ def _parse_build(blocks, io):
     attach_rev = {}
     for t, a in torch.items():
         attach_rev.setdefault(a, []).append(t)
-    return dust, torch, lampat, rep, rblk, cob, repdelay, lever, lampnet, attach_rev
+    return dust, torch, lampat, rep, rblk, cob, repdelay, lever, lampnet, attach_rev, comp
 
 
 def sim_verify(recipe, blocks, io, seed=7, quiet=False, collect=False):
@@ -281,7 +359,7 @@ def sim_verify(recipe, blocks, io, seed=7, quiet=False, collect=False):
         if latchouts and not any(exp.get(a, False) for a in latchargs):
             continue  # undefined power-on: hold needs history (real hardware
             # too — reset first). The sequence proof covers hold properly.
-        got, live, tlive, nticks, rlive = _run_vec(vec, None, P)
+        got, live, tlive, nticks, rlive, _conc = _run_vec(vec, None, P)
         maxticks = max(maxticks, nticks)
         for net in recipe["outputs"]:
             if net not in latchouts and bool(got.get(net, False)) != bool(exp[net]):
@@ -295,7 +373,8 @@ def sim_verify(recipe, blocks, io, seed=7, quiet=False, collect=False):
                 "lamps": {f"{x},1,{z}": 1 if got.get(net, False) else 0
                           for (x, z), net in io["lamps"].items()},
                 "ticks": nticks,
-                "r": {f"{x},{y},{z}": v for (x, y, z), v in rlive.items()}}
+                "r": {f"{x},{y},{z}": v for (x, y, z), v in rlive.items()},
+                "o": {f"{x},{y},{z}": v for (x, y, z), v in _conc.items()}}
     if bad:
         raise RuntimeError(f"SIM MISMATCH x{len(bad)}: {bad[:4]} live: {sorted(lastlive.items())}")
     if not quiet:
@@ -310,11 +389,11 @@ def sim_sequence(recipe, blocks, io, phases):
     P = _parse_build(blocks, io)
     carry = None
     for vec, exp in phases:
-        got, live, tlive, _, rlive = _run_vec(vec, carry, P)
+        got, live, tlive, _, rlive, _conc = _run_vec(vec, carry, P)
         for net, want in exp.items():
             if bool(got.get(net, False)) != bool(want):
                 raise RuntimeError(f"SEQ MISMATCH on {vec}: {net} got {got.get(net)} want {want}")
-        carry = {"w": live, "t": tlive, "r": rlive}
+        carry = {"w": live, "t": tlive, "r": rlive, "o": _conc}
 
 
 if __name__ == "__main__":
@@ -370,18 +449,18 @@ if __name__ == "__main__":
     _b1 = [(0, 1, 0, "minecraft:lever"), (0, 1, 1, W_),
            (0, 2, 1, "minecraft:cobblestone"), (0, 3, 1, W_), (1, 3, 1, "minecraft:redstone_lamp")]
     _p1, _io1 = _hand(_b1, {(0, 0): "A"}, {(1, 3, 1): "B"})
-    _g1, _, _, _, _ = _run_vec({"A": 1}, None, _p1)
+    _g1, _, _, _, _, _ = _run_vec({"A": 1}, None, _p1)
     assert _g1.get("B", False) is False, _g1
     # case2: step-up links
     _b2 = [(0, 1, -1, "minecraft:lever"), (0, 1, 0, W_),
            (1, 1, 0, "minecraft:cobblestone"), (1, 2, 0, W_), (2, 2, 0, "minecraft:redstone_lamp")]
     _p2, _io2 = _hand(_b2, {(0, -1): "A"}, {(2, 2, 0): "B"})
-    _g2, _, _, _, _ = _run_vec({"A": 1}, None, _p2)
+    _g2, _, _, _, _, _ = _run_vec({"A": 1}, None, _p2)
     assert _g2.get("B", False) is True, _g2
     # case3: lid on the lower wire blocks the up-link
     _b3 = _b2 + [(0, 2, 0, "minecraft:cobblestone")]
     _p3, _io3 = _hand(_b3, {(0, -1): "A"}, {(2, 2): "B"})
-    _g3, _, _, _, _ = _run_vec({"A": 1}, None, _p3)
+    _g3, _, _, _, _, _ = _run_vec({"A": 1}, None, _p3)
     assert _g3.get("B", False) is False, _g3
     print("vertical units ok: stacked dark, step-up lit, lid blocks")
     CB = "minecraft:cobblestone"
@@ -405,4 +484,35 @@ if __name__ == "__main__":
     _h2 = open(r"C:\Users\LOQ\AppData\Local\Temp\opencode\xcross.html").read()
     _d2 = _json2.loads(_h2[_h2.find("const B=") + len("const B="):_h2.find(";const s=", _h2.find("const B="))])
     assert any(d["p"] == [7, 3, 5] and d["b"] == "minecraft:redstone_wire" for d in _d2), "no elevated dust rendered"
+    CMP = "minecraft:comparator"
+    # compare passthrough: rear 15, no sides -> 15
+    _cb = [(2, 1, 0, "minecraft:lever"), (1, 1, 0, "minecraft:redstone_wire"),
+           (0, 1, 0, CMP + "[facing=east,mode=compare]"),
+           (-1, 1, 0, "minecraft:redstone_wire"), (-2, 1, 0, "minecraft:redstone_lamp")]
+    _cp, _cio = _hand(_cb, {(2, 0): "A"}, {(-2, 0): "Y"})
+    _cg, _, _, _, _, _ = _run_vec({"A": 1}, None, _cp)
+    assert _cg.get("Y", False) is True, _cg
+    # compare blocked: repeater-fed side (15) exceeds attenuated rear (14)
+    _cb2 = [(3, 1, 0, "minecraft:lever"), (2, 1, 0, "minecraft:redstone_wire"),
+            (1, 1, 0, "minecraft:redstone_wire"),
+            (0, 1, 0, CMP + "[facing=east,mode=compare]"),
+            (-1, 1, 0, "minecraft:redstone_wire"), (-2, 1, 0, "minecraft:redstone_lamp"),
+            (0, 1, 1, "minecraft:repeater[facing=north,delay=1]"), (0, 1, 2, "minecraft:lever")]
+    _cp2, _cio2 = _hand(_cb2, {(3, 0): "A", (0, 2): "S"}, {(-2, 0): "Y"})
+    _cg2, _, _, _, _, _ = _run_vec({"A": 1, "S": 1}, None, _cp2)
+    assert _cg2.get("Y", False) is False, _cg2
+    # dust side-feed does NOT suppress (researched rule)
+    _cb3 = _cb + [(0, 1, 1, "minecraft:redstone_wire"), (-1, 1, 1, "minecraft:lever")]
+    _cp3, _io3 = _hand(_cb3, {(2, 0): "A", (-1, 1): "S"}, {(-2, 0): "Y"})
+    _cg3, _, _, _, _, _ = _run_vec({"A": 1, "S": 1}, None, _cp3)
+    assert _cg3.get("Y", False) is True, _cg3
+    # subtract: rear 15, repeater side 15 -> 0; rear alone -> 15
+    _cb4 = [(2, 1, 0, "minecraft:lever"), (1, 1, 0, "minecraft:redstone_wire"),
+            (0, 1, 0, CMP + "[facing=east,mode=subtract]"),
+            (-1, 1, 0, "minecraft:redstone_wire"), (-2, 1, 0, "minecraft:redstone_lamp"),
+            (0, 1, 1, "minecraft:repeater[facing=north,delay=1]"), (0, 1, 2, "minecraft:lever")]
+    _cp4, _io4 = _hand(_cb4, {(2, 0): "A", (0, 2): "S"}, {(-2, 0): "Y"})
+    assert _run_vec({"A": 1, "S": 1}, None, _cp4)[0].get("Y", True) is False
+    assert _run_vec({"A": 1, "S": 0}, None, _cp4)[0].get("Y", False) is True
+    print("comparator ok: compare/subtract/strong-side rule")
 
