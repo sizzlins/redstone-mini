@@ -8,11 +8,14 @@
 
 ## Current state
 - **Master:** PR #1 merged (phase-1 tiles). Suite green.
-- **Branch `phase2-design`** (pushed, v2 PR next): maze per-hop routing +
+- **Branch `phase2-design`** (pushed, v2 PR #2 OPEN): maze per-hop routing +
   master boosters + rip-up restore + batch-1 OR levers + multi-lever inputs
   + `debug.py` instrument + or-lever self-check; firstport/NOR/io-bus dead
   code deleted; `recipe.py` == master (relay expansion reverted — sealed
-  pockets). Worktree has scratch experiment copies (untracked there).
+  pockets). Audit cuts applied (minimize, adder8, bridges, `_free`, NOR
+  branch, info loops → `scratch/attic.md`; bus plans → `scratch/attic-plans/`).
+  Debt ledger `PONYTAIL-DEBT.md` (25 markers, 4 real ceilings). Worktree has
+  scratch experiment copies (untracked there).
 - **Green (verified):** suite (recipe/serve/sim/layout incl. new or-lever
   check); `example_and` (42/0), `example_2gates` (110/3), `latch_sr`
   (77/0), demo (110 blocks), 4-gate `0/6` + sequence, micro1 (1960/73).
@@ -21,7 +24,10 @@
 - **Honesty:** micro1 repeaters 73 vs master 46 — no economy won, only 4-gate.
 
 ## What changed (newest last)
-1. v2 PR prep: or-lever self-check, suite + ladder re-verified, PR #1 merged,
+1. Audit cuts to scratch (-190/+17): minimize, adder8, bridges, `_free`,
+   NOR branch, info loops — all attic'd, suite + ladder re-verified green.
+   Debt ledger written. Bus plan docs moved to `scratch/attic-plans/`.
+2. v2 PR prep: or-lever self-check, suite + ladder re-verified, PR #1 merged,
    plan/handoff outcome notes. 4-gate + micro1 green on maze+boosters.
 2. Rip-up loop restore (was the micro1 wall — dropped in v1, never replaced);
    micro1 green 2.1s. Batch-1 OR levers + feed-touch route filter (SHORT +
@@ -53,17 +59,20 @@
 ## Files touched
 - **Tracked, on `phase2-design`:** `layout.py` (maze per-hop + boosters +
   rip-up + batch-1/multi-lever + or-lever check; firstport/NOR/io-bus
-  deleted); `debug.py` (new instrument); `docs/plans/2026-09-25-phase2-bus*.md`
-  (v1 as-built, v2 with outcome banner); `handoff.md` (this file).
-- **Tracked, on master:** `recipe.py` == master (relay episode fully reverted).
+  deleted); `debug.py` (new instrument); `sim.py` (minimize call dropped);
+  `recipe.py` (minimize/adder8/NOR-branch deleted); `export.py` (info loops
+  merged); `redstone_mini.py` (`--alu8` path deleted); `PONYTAIL-DEBT.md`
+  (new ledger); `handoff.md` (this file).
+- **Tracked, on master:** PR #1 (phase-1 tiles) merged in.
 - **Gitignored (never merge):** `scratch/` keepers (`countrep.py`,
-  `check4gate.py`, `exportmicro.py`); `build.*` outputs.
+  `check4gate.py`, `exportmicro.py`) + `scratch/attic.md` (cut code) +
+  `scratch/attic-plans/` (bus plan docs); `build.*` outputs.
 - **Worktree (scratch experiments, not for merge):**
   `C:\Users\LOQ\AppData\Local\Temp\opencode\maze-relay` (master + file copies).
-- **Untouched:** `sim.py`, `export.py`, `serve.py`, `core.py`.
+- **Untouched:** `serve.py`, `core.py`.
 
 ## What next (in order)
-1. **Open v2 PR** (`phase2-design` → `master`, pushed; PR #1 already merged).
+1. **Merge v2 PR #2** (`phase2-design` → `master`, open, green).
 2. **alu1/alu4 routing** — open architectural question (new design talk
    first; no blind patches; trunk+relay+maze avenues exhausted with data).
 3. **Do NOT:** add maze heuristics (~20 reverted); trust mental tile
