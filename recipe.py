@@ -83,30 +83,15 @@ def eval_net(recipe, values):
 
 def expand_gates(gates, inputs=()):
     """XOR stays a comparator tile. AND stays a compound, OR a junction,
-    NOT a tile. Banded OR (dense datapath) expands to NOR+NOT (proven
-    tiles, spread ports, no junction funnel); unbanded keeps the compact
-    repeater junction."""
+    NOT a tile. (Banded OR used to expand to NOR+NOT for spread ports,
+    but junctions route fine dense or not — micro1 proves it — and the
+    expansion doubled tiles per OR, sealing the columns it meant to help.)"""
     gates = [dict(g, args=list(g["args"])) for g in gates]
     c = [0]
+
     def T(p):
         c[0] += 1
         return f"_{p}{c[0]}"
-    banded = any(g.get("band") is not None for g in gates)
-    changed = True
-    while changed:
-        changed = False
-        nxt = []
-        for g in gates:
-            op, o, a = g["op"], g["out"], g["args"]
-            bd = g.get("band")
-            if op == "OR" and banded:
-                n = T("no")
-                nxt += [{"out": n, "op": "NOR", "args": [a[0], a[1]], "band": bd},
-                        {"out": o, "op": "NOT", "args": [n], "band": bd}]
-                changed = True
-            else:
-                nxt.append(g)
-        gates = nxt
     # ponytail: fanout chains. A net feeding 3+ loads spans farther than
     # routes survive, so relay it: each load consumes a buffer AND(x,x) that
     # ALAP parks adjacent, chained to the previous buffer. Star-fed buffers
