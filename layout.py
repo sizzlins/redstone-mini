@@ -569,8 +569,8 @@ def layout(recipe, seed=None, grow=0):
         if not done:
             raise RuntimeError(f"lamp spot taken for {name} at {(ox_, oz)}")
 
-    # phase 2: route every net through the finished field, shortest hops first
-    # so long runs maze around settled locals instead of fencing them in.
+    # phase 2: route every net through the finished field, longest runs
+    # first so they maze around settled locals instead of fencing them in.
     tasks = []
     for op, o, a, cell in recs:
         if op == "OR":
