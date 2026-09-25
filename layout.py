@@ -4,7 +4,7 @@ import heapq
 import os as _os
 import random
 
-from core import DIRS
+from core import DIRS, TORCH_BACK
 from recipe import expand_gates
 
 
@@ -173,17 +173,19 @@ def layout(recipe, seed=None, grow=0):
         # single source: every branch traces full-length to its driver.
         # (Tapping live-looking mid-wire cells caused decayed weak taps;
         #  connected-tap + shortest-first retries in 2026-09 also broke xor.)
-        # Relays made hops short, so local margins hit fast; widen on miss.
+        seen = set()
         best = None
         for margin in (12, 40, None):
-            path = astar([(a[0], 1, a[1])], (b[0], 1, b[1]), net, W, D, solid, rings, wires, junctions, margin)
+            path = astar([(a[0], 1, a[1])], (b[0], 1, b[1]), net, W, D, solid, rings, wires, junctions, margin, blocked=seen, congest=congest, guard=guard)
             if path and (best is None or len(path) < len(best)):
                 best = path
-        if not best:
+        path = best
+        if not path:
+            last_blocked[net] = seen
             raise RuntimeError(f"no route for {net}: {a} -> {b} (grid full, widen W)")
-        stamp_wire(best, net)
-        paths.append((best, net))
-        return best
+        stamp_wire(path, net)
+        paths.append((path, net))
+        return path
 
     # maze: inputs fan out via one lever per load below (zero-wire taps),
     # except OR-feeding inputs: the junction aims at a batch-1 lever, so
@@ -619,7 +621,7 @@ def layout(recipe, seed=None, grow=0):
     # ponytail: input loads already touch their own lever feed need no
     # route; without this every fanout load spans the field (master filter).
     ins = set(recipe["inputs"])
-    tasklist = []
+    tasks = []
     for net, spec in netspec.items():
         if net == "0":
             continue  # dark stubs read 0
@@ -630,12 +632,56 @@ def layout(recipe, seed=None, grow=0):
                      wires.get((cell[0] + dx, 1, cell[1] + dz)) == net)
                     for dx, dz in DIRS)):
                 continue
-            tasklist.append((drv, cell, net))
+            tasks.append((drv, cell, net))
+    tasks.sort(key=lambda t: -(abs(t[0][0] - t[1][0]) + abs(t[0][1] - t[1][1])))
     if seed is not None:
-        random.Random(seed).shuffle(tasklist)  # restarts are free search
+        random.Random(seed).shuffle(tasks)
+    placed = set(wires)  # feeds/outs/ties stay; routed paths may be ripped up
+    last_blocked = {}  # net -> wire cells whose touch sealed its last failure
+    congest = {}  # wire cell -> extra cost after a rip (lanes stay shared)
+    guard = set()  # torch cells + their attach blocks: the only solids a
+    for x, y, z, bid in blocks:  # routed wire must never hug (oscillators).
+        if "wall_torch" in bid:  # lever/lamp coupling settles merely wrong
+            guard.add((x, z))  # (no loop possible); sim catches it instead.
+            face = bid.split("facing=")[1].rstrip("]")
+            dx, dz = TORCH_BACK[face]
+            guard.add((x + dx, z + dz))
+    pending = tasks[:]
+    fails = {}
     try:
-        for (drv, cell, net) in tasklist:
-            route(drv, cell, net)
+        while pending:
+            s, t, net = pending.pop(0)
+            try:
+                route(s, t, net)
+                continue
+            except RuntimeError:
+                pass
+            # targeted ripup: nets physically sealing this goal get re-routed after us.
+            blockers = set()
+            for dx, dz in DIRS:
+                for yy in (1, 2):
+                    A = (t[0] + dx, yy, t[1] + dz)
+                    for c in [A] + [(A[0] + ex, A[1], A[2] + ez) for ex, ez in DIRS]:
+                        w = wires.get(c)
+                        if w is not None and w != net and c not in placed:
+                            blockers.add(w)
+            for c in last_blocked.get(net, ()):
+                w = wires.get(c)
+                if w is not None and w != net and c not in placed:
+                    blockers.add(w)
+            block_tasks = [tk for tk in tasks if tk[2] in blockers]
+            key = (net, tuple(sorted(blockers)))
+            fails[key] = fails.get(key, 0) + 1
+            if not block_tasks or fails[key] > 2:
+                raise RuntimeError(f"no route for {net}: {s} -> {t} (grid full, widen W)")
+            for p, m in paths[:]:
+                if m in blockers:
+                    for c in p:
+                        if wires.get(c) == m and c not in placed:
+                            del wires[c]
+                            congest[c] = congest.get(c, 0) + 5
+                    paths.remove((p, m))
+            pending = [(s, t, net)] + block_tasks + pending
     finally:
         # ponytail: permanent debug tap (debug.py reads it). Costs one env
         # check per layout; replaces every ad-hoc Temp probe.
@@ -844,4 +890,10 @@ if __name__ == "__main__":
     assert _nets.get((_lx - 10, 1, _lz - 1)) == "a", "AND A-port drifted"
     assert _nets.get((_lx - 10, 1, _lz + 2)) == "b", "AND B-port drifted"
     print("ports ok: AND/NOT grid matches spec")
+    # ponytail: OR-feeding inputs keep batch levers (junction aims at them);
+    # verify=True proves the diodes fire (serve-DEMO class: silent dark bb).
+    _r = parse_recipe("IN a, b\nOUT y\ny = a OR b\n")
+    _, _, _io, _ = layout_retry(_r, verify=True)
+    assert set(_io["levers"].values()) >= {"a", "b"}, _io["levers"]
+    print("or-lever ok: OR inputs on batch levers, verify green")
 
