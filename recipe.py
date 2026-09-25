@@ -82,119 +82,91 @@ def eval_net(recipe, values):
 
 
 def expand_gates(gates, inputs=()):
-    """XOR stays a comparator tile. AND stays a compound, OR a junction,
-    NOT a tile. (Banded OR used to expand to NOR+NOT for spread ports,
-    but junctions route fine dense or not — micro1 proves it — and the
-    expansion doubled tiles per OR, sealing the columns it meant to help.)"""
+    """Crossing relays: no net spans more than one band gap (bus v2).
+    Unbanded recipes are topo-columned first (the order layout() used),
+    then every cross-band hop goes through buf = x AND x: one shared
+    buffer per (net, band), chained producer→consumers and parked by the
+    normal band machinery. Inputs chain from a single head (one lever
+    downstream); constants never chain; same-band hops stay direct.
+    (Subsumes fanout chains + per-band replication.)"""
     gates = [dict(g, args=list(g["args"])) for g in gates]
     c = [0]
 
     def T(p):
         c[0] += 1
         return f"_{p}{c[0]}"
-    # ponytail: fanout chains. A net feeding 3+ loads spans farther than
-    # routes survive, so relay it: each load consumes a buffer AND(x,x) that
-    # ALAP parks adjacent, chained to the previous buffer. Star-fed buffers
-    # would just move the marathon; chains end it. Constants never chain.
-    # Inputs never chain either: layout taps every input load with its own
-    # lever (zero-wire), so input relay would only add tiles and chain spans.
-    fan = {}
-    for idx, g in enumerate(gates):
-        for a in g["args"]:
-            if a not in ("0", "1") and a not in inputs:
-                if not fan.get(a) or fan[a][-1] != idx:
-                    fan.setdefault(a, []).append(idx)
-    big = {n: ids for n, ids in fan.items() if len(ids) >= 3}
-    prebanded = any(g.get("band") is not None for g in gates)
-    buf_of, rep_of = {}, {}
-    if prebanded:
-        # ponytail: banded fanout. A shared gate driven purely by inputs
-        # is replicated per load-band (zero-wire in via multi-lever, short
-        # star out); anything else keeps the per-band relay below. Same-band
-        # fanout always routes direct.
-        outidx = {}
+    # ponytail: topo-column unbanded first (layout()'s old order, verbatim).
+    # layout() then sees bands and skips its own sort — same columns either way.
+    if not any(g.get("band") is not None for g in gates):
+        by_out = {}
         for i, g in enumerate(gates):
-            outidx.setdefault(g["out"], i)
-        drop, rep_of, clones = set(), {}, []
-        specs = []
-        for n, ids in big.items():
-            d = {}
-            for j in ids:
-                d.setdefault(gates[j].get("band", 0), []).append(j)
-            if len(d) < 2:
-                continue
-            if any(a not in inputs and a not in ("0", "1")
-                   for a in gates[outidx[n]]["args"]):
-                continue
-            drop.add(outidx[n])
-            for b, jds in sorted(d.items()):
-                specs.append((n, b, jds))
-        for n, b, jds in specs:
-            kept = [j for j in jds if j not in drop]
-            if not kept:
-                continue  # all loads dropped too: clone would orphan
-            cn = T("rc")
-            for j in kept:
-                rep_of[(n, j)] = cn
-            gc = dict(gates[outidx[n]], out=cn,
-                      args=list(gates[outidx[n]]["args"]))
-            gc["band"] = b
-            gc["rep"] = True
-            clones.append((min(kept), gc))
-        out = []
-        pending = sorted(clones)
-        for idx, g in enumerate(gates):
-            if idx in drop:
-                continue
-            while pending and pending[0][0] == idx:
-                out.append(pending.pop(0)[1])
-            out.append(dict(g, args=[rep_of.get((a, idx), a)
-                                     for a in g["args"]]))
-        gates = out
-    # ponytail: relay runs on fresh indices (replication above renumbered).
-    fan = {}
-    for idx, g in enumerate(gates):
+            by_out.setdefault(g["out"], i)
+        deps = {i: {by_out[a] for a in g["args"] if a in by_out and by_out[a] != i}
+                for i, g in enumerate(gates)}
+        ready = sorted(i for i, d in deps.items() if not d)
+        order = []
+        while ready:
+            i = ready.pop(0)
+            order.append(i)
+            for j, d in deps.items():
+                if i in d:
+                    d.discard(i)
+                    if not d and j not in order and j not in ready:
+                        ready.append(j)
+            ready.sort()
+        if len(order) == len(gates):
+            gates = [gates[i] for i in order]
+        for i, g in enumerate(gates):
+            g.setdefault("band", i)
+    by_out = {}
+    for i, g in enumerate(gates):
+        by_out.setdefault(g["out"], i)
+    loads = {}
+    for g in gates:
         for a in g["args"]:
-            if a not in ("0", "1") and a not in inputs:
-                if not fan.get(a) or fan[a][-1] != idx:
-                    fan.setdefault(a, []).append(idx)
-    big = {n: ids for n, ids in fan.items() if len(ids) >= 3}
-    buf_of = {}
-    for n, ids in big.items():
-        if prebanded:
-            # ponytail: banded relay for the rest. Loads sharing a band tap
-            # one buffer parked there; buffers chain band-to-band.
-            # (Replicated nets need nothing: their loads were rewritten.)
-            d = {}
-            for j in ids:
-                d.setdefault(gates[j].get("band", 0), []).append(j)
-            bands_ = sorted(d.items())
-            if len(bands_) < 2:
+            if a in ("0", "1"):
                 continue
-            prev = n
-            for _, jds in bands_:
-                b = T("bf")
-                for j in jds:
-                    buf_of[(n, j)] = (b, prev)
-                prev = b
-        else:
-            prev = n
-            for j in ids:
-                b = T("bf")
-                buf_of[(n, j)] = (b, prev)
-                prev = b
-    if buf_of:
-        out = []
-        for idx, g in enumerate(gates):
-            for a in dict.fromkeys(g["args"]):
-                if (a, idx) in buf_of:
-                    b, prev = buf_of[(a, idx)]
-                    out.append({"out": b, "op": "AND", "args": [prev, prev],
-                                "band": g.get("band")})
-            out.append(dict(g, args=[buf_of[(a, idx)][0] if (a, idx) in buf_of else a
-                                     for a in g["args"]]))
-        gates = out
-    return gates
+            loads.setdefault(a, []).append(g.get("band", 0))
+    buf = {}
+    out = []
+    for g in gates:
+        nargs = []
+        for a in g["args"]:
+            if a in ("0", "1"):
+                nargs.append(a)
+                continue
+            if a in inputs:
+                lbs = sorted(set(loads[a]))
+                if len(lbs) <= 1:
+                    nargs.append(a)
+                    continue
+                prev = a
+                for k in range(min(lbs), max(lbs) + 1):
+                    if (a, k) not in buf:
+                        bn = T("rl")
+                        buf[(a, k)] = bn
+                        out.append({"out": bn, "op": "AND",
+                                    "args": [prev, prev],
+                                    "band": k, "relay": True})
+                    prev = buf[(a, k)]
+                nargs.append(buf[(a, g.get("band", 0))])
+                continue
+            db = gates[by_out[a]].get("band", 0)
+            lb = g.get("band", 0)
+            if lb <= db:
+                nargs.append(a)
+                continue
+            prev = a
+            for k in range(db + 1, lb + 1):
+                if (a, k) not in buf:
+                    bn = T("rl")
+                    buf[(a, k)] = bn
+                    out.append({"out": bn, "op": "AND", "args": [prev, prev],
+                                "band": k, "relay": True})
+                prev = buf[(a, k)]
+            nargs.append(prev)
+        out.append(dict(g, args=nargs))
+    return out
 
 
 def minimize_recipe(recipe):
@@ -340,31 +312,40 @@ if __name__ == "__main__":
         assert eval_net(_min, _v)["y"] == eval_net(_clumsy, _v)["y"], _v
     _xor = {"inputs": ["a", "b"], "outputs": ["y"],
             "gates": [{"out": "y", "op": "XOR", "args": ["a", "b"]}]}
-    assert expand_gates(_xor["gates"]) == _xor["gates"]  # unbanded: tile, no explosion
+    assert all(not g.get("relay") for g in expand_gates(_xor["gates"], _xor["inputs"]))  # unbanded: tile, no explosion
     assert len(minimize_recipe(_xor)["gates"]) == 1  # SOP-5 loses to factored 1
     print("minimize ok: clumsy->1 gate, xor keeps factored form")
-    # ponytail: fanout chains relay far loads; 2-load nets pass untouched.
-    _fan = [{"out": "o1", "op": "AND", "args": ["s", "x"]},
-            {"out": "o2", "op": "AND", "args": ["s", "y"]},
-            {"out": "o3", "op": "AND", "args": ["s", "z"]}]
-    _fx = expand_gates(_fan)
-    _bufs = [g for g in _fx if g["out"].startswith("_bf")]
-    assert len(_bufs) == 3, _fx
-    assert _bufs[0]["args"] == ["s", "s"], _bufs
-    assert _bufs[1]["args"] == [_bufs[0]["out"], _bufs[0]["out"]], _bufs
-    _got = {g["out"]: g for g in _fx}
-    assert _got["o1"]["args"][0] == _bufs[0]["out"], _fx
-    assert _got["o3"]["args"][0] == _bufs[2]["out"], _fx
-    _r2 = {"inputs": ["s", "x", "y", "z"], "outputs": ["o1", "o2", "o3"],
-           "gates": _fan}
-    _r2m = {"inputs": ["s", "x", "y", "z"], "outputs": ["o1", "o2", "o3"],
-            "gates": _fx}
+    # ponytail: crossing relays — every hop spans <=1 band gap, parity kept.
+    _r4 = {"inputs": ["D", "W"], "outputs": ["Q"],
+           "gates": [{"out": "nD", "op": "NOT", "args": ["D"]},
+                     {"out": "S", "op": "AND", "args": ["D", "W"]},
+                     {"out": "R", "op": "AND", "args": ["nD", "W"]},
+                     {"out": "Q", "op": "LATCH", "args": ["S", "R"]}]}
+    _fx = expand_gates(_r4["gates"], _r4["inputs"])
+    _bo = {}
+    for _i, _g in enumerate(_fx):
+        _bo.setdefault(_g["out"], _i)
+    for _g in _fx:
+        for _a in _g["args"]:
+            if _a in ("0", "1") or _a in _r4["inputs"]:
+                continue
+            _db = _fx[_bo[_a]].get("band", 0)
+            _lb = _g.get("band", 0)
+            assert 0 <= _lb - _db <= 1, (_g["out"], _a, _db, _lb)
+    assert any(_g.get("relay") for _g in _fx), _fx
+    _r4m = {"inputs": ["D", "W"], "outputs": ["Q"], "gates": _fx}
     from itertools import product as _prod
-    for _vals in _prod([0, 1], repeat=4):
-        _v = dict(zip(["s", "x", "y", "z"], _vals))
-        _a, _b = eval_net(_r2m, _v), eval_net(_r2, _v)
-        assert all(_a[o] == _b[o] for o in ["o1", "o2", "o3"]), _v
-    print("fanout ok: 3-load net chained, equivalent on all vectors")
+    for _vals in _prod([0, 1], repeat=2):
+        _v = dict(zip(["D", "W"], _vals))
+        _a, _b = eval_net(_r4m, _v), eval_net(_r4, _v)
+        assert _a["Q"] == _b["Q"], _v
+    print("relay ok: hops intra-gap-local, 4-gate parity on all vectors")
+    _fb = [{"out": "s", "op": "AND", "args": ["p", "q"], "band": 0},
+           {"out": "o1", "op": "AND", "args": ["s", "u"], "band": 1},
+           {"out": "o2", "op": "AND", "args": ["s", "v"], "band": 1}]
+    _gx = expand_gates(_fb, ["p", "q", "u", "v"])
+    _bufs = [_g for _g in _gx if _g.get("relay")]
+    assert len(_bufs) == 1 and _bufs[0]["band"] == 1, _gx  # shared per (net, band)
     _lat = {"inputs": ["S", "R"], "outputs": ["Q"],
             "gates": [{"out": "Q", "op": "LATCH", "args": ["S", "R"]}]}
     assert eval_net(_lat, {"S": 1, "R": 0})["Q"] is True
@@ -372,7 +353,7 @@ if __name__ == "__main__":
     assert eval_net(_lat, {"S": 1, "R": 1})["Q"] is False
     _lp = parse_recipe("IN S, R\nOUT Q\nQ = LATCH S R\n")
     assert _lp["gates"] == [{"out": "Q", "op": "LATCH", "args": ["S", "R"]}], _lp
-    _le = expand_gates(_lp["gates"])
-    assert _le == [{"out": "Q", "op": "LATCH", "args": ["S", "R"]}], _le
+    _le = expand_gates(_lp["gates"], _lp["inputs"])
+    assert len(_le) == 1 and _le[0]["out"] == "Q" and not _le[0].get("relay"), _le
     print("latch ok: LATCH passes expansion through for the custom tile")
 
