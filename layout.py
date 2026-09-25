@@ -1,6 +1,7 @@
 """Layout: A* maze router plus block placer (torch tiles, compounds)."""
 
 import heapq
+import os as _os
 import random
 
 from core import DIRS, TORCH_BACK
@@ -576,35 +577,40 @@ def layout(recipe, seed=None, grow=0):
             raise RuntimeError(f"NOT blocked for {o}")
 
     # bus: net spec from tile ports (same mapping the maze tasks used),
-    # one lane per net, one lever per input at its lane head.
+    # one trunk/star per net, one lever per input at its chain head.
     # (XOR tile-stamped side levers stay: tile geometry, and same-net
     # duplicates are wired-OR harmless.)
     netspec = {}
-    def _load(net, cell):
+    outband = {}
+    for g in gates:
+        outband.setdefault(g["out"], g.get("band"))
+    def _load(net, cell, band):
         if net == "0":
             return  # dark stubs read 0; nothing is stamped
-        e = netspec.setdefault(net, {'drv': None, 'loads': []})
+        e = netspec.setdefault(net, {'drv': None, 'loads': [], 'db': None, 'lbs': []})
         e['loads'].append(cell)
+        e['lbs'].append(band)
     for op, o, a, cell in recs:
+        ob = outband.get(o)
         if op == "AND":
             pa, pb, po = cell
-            netspec.setdefault(o, {'drv': po, 'loads': []})
-            _load(a[0], pa); _load(a[1], pb)
+            netspec.setdefault(o, {'drv': po, 'loads': [], 'db': ob, 'lbs': []})
+            _load(a[0], pa, ob); _load(a[1], pb, ob)
         elif op == "NOT":
             bx, bz = cell
-            netspec.setdefault(o, {'drv': (bx + 2, bz), 'loads': []})
-            _load(a[0], (bx - 1, bz))
+            netspec.setdefault(o, {'drv': (bx + 2, bz), 'loads': [], 'db': ob, 'lbs': []})
+            _load(a[0], (bx - 1, bz), ob)
         elif op in ("LATCH", "XOR"):
             pa, pb, po = cell
-            netspec.setdefault(o, {'drv': po, 'loads': []})
-            _load(a[0], pa); _load(a[1], pb)
+            netspec.setdefault(o, {'drv': po, 'loads': [], 'db': ob, 'lbs': []})
+            _load(a[0], pa, ob); _load(a[1], pb, ob)
         elif op == "OR":
             j, reps = cell
-            netspec.setdefault(o, {'drv': j, 'loads': []})
+            netspec.setdefault(o, {'drv': j, 'loads': [], 'db': ob, 'lbs': []})
             for sig, (rr, bb) in zip(a, reps):
-                _load(sig, bb)
+                _load(sig, bb, ob)
         elif op == "OUT":
-            pass  # lamp sits at the lane end; no stub
+            pass  # lamp sits at the trunk end; no stub
         else:
             raise RuntimeError(f"bus: unsupported {op}")
     for name in recipe["inputs"]:
@@ -614,39 +620,55 @@ def layout(recipe, seed=None, grow=0):
     for net in [n for n, s in netspec.items()
                 if not s['loads'] and n not in recipe["outputs"]]:
         del netspec[net]
-    busplan = plan_bus(netspec, solid, wires, rings, W, D, seed)
+    busplan = None
+    try:
+        busplan = plan_bus(netspec, solid, wires, rings, W, D, seed)
+    finally:
+        # ponytail: permanent debug tap (debug.py reads it). Costs one env
+        # check per layout; replaces every ad-hoc Temp probe.
+        if _os.environ.get("REDSTONE_DEBUG"):
+            from debug import dump_state
+            dump_state(_os.environ["REDSTONE_DEBUG"], gates, netspec, busplan,
+                       solid, wires, rings, W, D)
     for name in recipe["inputs"]:
         spec = netspec.get(name)
         if not spec:
             continue  # unused input: no lever
-        lane, x0 = busplan[name]['lane'], busplan[name]['x0']
-        lx = x0 - 1
-        if not (0 <= lx < W and 0 <= lane < D) or (lx, lane) in solid or (lx, 1, lane) in wires:
-            raise RuntimeError(f"bus lever blocked for {name} at {(lx, lane)}")
-        blocks.append((lx, 1, lane, "minecraft:lever"))
-        solid[(lx, lane)] = ("lever", name)
-        for dx, dz in DIRS:
-            ring(lx + dx, lane + dz, own(name))
-        # (lane stamp covers the (x0, lane) feed cell; lever touch powers it)
+        for (lx, lz) in spec['loads']:
+            stamp_wire([(lx, lz)], name)  # port dust (tile input); lever touch powers it
+            for (px, pz) in ((lx - 1, lz), (lx + 1, lz), (lx, lz - 1), (lx, lz + 1)):
+                if not (0 <= px < W and 0 <= pz < D):
+                    continue
+                if (px, pz) in solid or (px, 1, pz) in wires:
+                    continue
+                break
+            else:
+                raise RuntimeError(f"bus lever blocked for {name} at {(lx, lz)}")
+            blocks.append((px, 1, pz, "minecraft:lever"))
+            solid[(px, pz)] = ("lever", name)
+            for dx, dz in DIRS:
+                ring(px + dx, pz + dz, own(name))
+        # (same-net duplicate levers are wired-OR, harmless — XOR precedent)
 
     # phase 2: bus stamp. Lamps stay after it so their collision check
-    # dodges lanes automatically.
+    # dodges trunks automatically.
     for name in recipe["outputs"]:
-        busplan[name]  # KeyError if output is undriven: loud, as before
-        pos[name] = (busplan[name]['x1'], busplan[name]['lane'])
+        p = busplan[name]  # KeyError if output is undriven: loud, as before
+        pos[name] = (p['trunks'][0][0], p['trunks'][0][3]) if p['trunks'] else p['hub']
     for net, p in busplan.items():
-        lane, x0, x1 = p['lane'], p['x0'], p['x1']
-        rep_at = set(p['stations'])
-        for x in range(x0, x1 + 1):
-            if x in rep_at:
-                if (x, lane) in solid or (x, 1, lane) in wires:
-                    raise RuntimeError(f"bus station blocked for {net} at {(x, lane)}")
-                blocks.append((x, 1, lane, "minecraft:repeater[facing=east,delay=1]"))
-                solid[(x, lane)] = ("repeater", net)
-            else:
-                stamp_wire([(x, lane)], net)
-        if p['jog']:
-            stamp_wire([(x, z) for x, z in dict.fromkeys(p['jog'])], net)
+        for (T, z0, z1, feed, stations) in p['trunks']:
+            rep_at = set(stations)
+            for z in range(z0, z1 + 1):
+                if z in rep_at:
+                    if (T, z) in solid or (T, 1, z) in wires:
+                        raise RuntimeError(f"bus station blocked for {net} at {(T, z)}")
+                    facing = "south" if z > feed else "north"
+                    blocks.append((T, 1, z, f"minecraft:repeater[facing={facing},delay=1]"))
+                    solid[(T, z)] = ("repeater", net)
+                else:
+                    stamp_wire([(T, z)], net)
+        for jog in p['jogs']:
+            stamp_wire([(x, z) for x, z in dict.fromkeys(jog)], net)
         for path in p['stubs']:
             stamp_wire([(x, z) for x, z in dict.fromkeys(path)], net)
 
@@ -737,10 +759,16 @@ def layout(recipe, seed=None, grow=0):
     rings = {(x - minx, z - minz): v for (x, z), v in rings.items()}
     junctions = {(x - minx, z - minz): v for (x, z), v in junctions.items()}
     pos = {n: (x - minx, z - minz) for n, (x, z) in pos.items()}
-    bus = {n: {'lane': p['lane'] - minz, 'x0': p['x0'] - minx, 'x1': p['x1'] - minx,
-               'stations': [s - minx for s in p['stations']],
+    bus = {n: {'trunks': [(T - minx, z0 - minz, z1 - minz, feed - minz,
+                            [s - minz for s in stations])
+                           for (T, z0, z1, feed, stations) in p['trunks']],
                'taps': [(x - minx, z - minz) for x, z in p['taps']],
-               'jog': [(x - minx, z - minz) for x, z in p['jog']]} for n, p in busplan.items()}
+               'jogs': [[(x - minx, z - minz) for x, z in j] for j in p['jogs']],
+               'hub': ((p['hub'][0] - minx, p['hub'][1] - minz)
+                       if p['hub'] is not None else None),
+               'lever': ((p['lever'][0] - minx, p['lever'][1] - minz)
+                         if p['lever'] is not None else None)}
+           for n, p in busplan.items()}
     repeaters = {(x - minx, z - minz): v for (x, z), v in repeaters.items()}
     bridges = {(x - minx, z - minz) for (x, z) in bridges}
     W, D = maxx - minx + 1, maxz - minz + 1
@@ -763,10 +791,10 @@ def layout(recipe, seed=None, grow=0):
 
 
 def plan_bus(netspec, solid, wires, rings, W, D, seed=None):
-    """Bus lane geometry (pure: same (netspec, seed) → same plan).
-    Greedy lane choice deadlocks on ordering (whoever claims a
+    """Bus trunk geometry (pure: same (netspec, seed) → same plan).
+    Greedy trunk choice deadlocks on ordering (whoever claims a
     corridor walls the rest), so seeded calls search: several
-    shuffles of net order × row order, first complete plan wins.
+    shuffles of net order × trunk-x order, first complete plan wins.
     Unseeded call does one deterministic pass (driverless nets first).
     '0' nets never appear here (dark stubs read 0 — caller drops
     them). Loud RuntimeError when nothing fits (grow backstop)."""
@@ -782,40 +810,37 @@ def plan_bus(netspec, solid, wires, rings, W, D, seed=None):
 
 
 def _plan_once(netspec, solid, wires, rings, W, D, seed=None):
-    """One greedy pass (see plan_bus). Driverless (input) nets plan
-    first under seed None; seeded passes shuffle all nets. Every
-    lane/lever/jog/stub cell is checked against tile solids, foreign
-    wires and halos, and foreign-wire adjacency (the SHORT rule —
-    the maze's touches_foreign discipline, applied per row). Each
-    jog/stub tries both L-orientations. Own-net wires merge."""
-    plan, taken = {}, []
+    """One greedy pass (see plan_bus). Post-relay every hop spans <=1 band
+    gap: single-band nets star direct from a hub cell; a net reaching one
+    further band serves it from one N-S trunk in the gap west of that band
+    (nets reaching two further bands break the relay contract — loud).
+    Trunk geometry is new; the v1 core is verbatim: legality incl. SHORT
+    adjacency and pitch-2 taken, both-L stubs with decay caps, taps only at
+    full-strength cells, seeded order search."""
+    plan = {}  # no taken: lever halos stamp with their levers; wires see ghost
+    ghost, gsolid = dict(wires), dict(solid)  # planned nets' wires/solids: mutual visibility
     if seed is None:
-        order = [n for n in netspec if netspec[n]['drv'] is None] + \
-                [n for n in netspec if netspec[n]['drv'] is not None]
+        order = list(netspec)
     else:
         order = list(netspec)
         random.Random(seed).shuffle(order)
     for net in order:
         spec = netspec[net]
-        anchor = spec['drv'] or spec['loads'][0]
-        rows = [anchor[1]] + [anchor[1] + d for k in range(1, 26)
-                              for d in (k, -k)]
-        if seed is not None:
-            random.Random(f"{seed}:{net}").shuffle(rows[1:])
-        xs = ([spec['drv'][0]] if spec['drv'] else []) + [c[0] for c in spec['loads']]
-        x0, x1 = min(xs), max(xs)
+        drv, loads, db, lbs = spec['drv'], spec['loads'], spec.get('db'), spec.get('lbs', [])
+        blocked = set()  # own lever + committed station cells (future solids)
         def _bad(x, z):
-            if (x, z) in solid:
+            if (x, z) in blocked:
                 return True
-            if (x, 1, z) in wires and wires[(x, 1, z)] != net:
+            if (x, z) in gsolid:
+                return True
+            if (x, 1, z) in ghost and ghost[(x, 1, z)] != net:
                 return True
             if (x, z) in rings and net not in rings[(x, z)]:
                 return True
-            if any((x + dx, 1, z + dz) in wires and wires[(x + dx, 1, z + dz)] != net
+            if any((x + dx, 1, z + dz) in ghost and ghost[(x + dx, 1, z + dz)] != net
                    for dx, dz in DIRS):
                 return True
-            return any(abs(z - zl) < 2 and xl0 - 1 <= x <= xl1 + 1
-                       for zl, xl0, xl1 in taken)
+            return False
         def _shapes(fx, fz, tx, tz, cap=14):
             vfirst = [(fx, z) for z in range(min(fz, tz), max(fz, tz) + 1)] + \
                      [(x, tz) for x in range(min(fx, tx), max(fx, tx) + 1)]
@@ -825,48 +850,156 @@ def _plan_once(netspec, solid, wires, rings, W, D, seed=None):
                     if len(dict.fromkeys(s)) - 1 <= cap
                     and all(0 <= x < W and 0 <= z < D for x, z in s)
                     and not any(_bad(x, z) for x, z in s)]
-        for lane in rows:
-            if not (0 <= lane < D):
-                continue
-            cells = [(x, lane) for x in range(x0, x1 + 1)]
-            if spec['drv'] is None:
-                cells += [(x0 - 1, lane)]
-            if not all(0 <= x < W and 0 <= z < D for x, z in cells):
-                continue
-            if any(_bad(x, z) for x, z in cells):
-                continue
-            if spec['drv'] is None:
-                jogshape, jog_len = [], 0
-            else:
-                dx, dz = spec['drv']
-                jogs = _shapes(dx, dz, x0, lane)
-                if not jogs:
+        def _star(hubcell, cells):
+            """Direct stubs hub->each cell; None if any misses decay."""
+            paths = []
+            for cell in cells:
+                if cell == hubcell:
                     continue
-                jogshape = jogs[0]
-                jog_len = len(dict.fromkeys(jogshape)) - 1
-            stations = [x for x in range(x0 + 14 - jog_len, x1 + 1, 14)]
-            taps, stubshapes = [], []
-            for lx, lz in spec['loads']:
-                cands = sorted([(x0, 14 - jog_len)] + [(s + 1, 14) for s in stations],
-                               key=lambda c: (abs(c[0] - lx), c[0]))
-                for tx, budget in cands:
-                    shapes = _shapes(tx, lane, lx, lz, cap=budget)
-                    if shapes:
-                        break
-                else:
-                    break
-                taps.append((tx, lane))
-                stubshapes.append(shapes[0])
-            else:
-                break
+                shapes = _shapes(hubcell[0], hubcell[1], cell[0], cell[1])
+                if not shapes:
+                    return None
+                paths.append(shapes[0])
+            return paths
+        def _via_trunk(cands, hubcell, gleloads, tag):
+            """One N-S trunk serving gleloads; None if no x fits."""
+            # ponytail: toward the hub→loads interval first (a trunk parked
+            # mid-corridor walls the jogs behind it); nearest-hub walled nD.
+            lox = min([hubcell[0]] + [x for x, _ in gleloads])
+            hix = max([hubcell[0]] + [x for x, _ in gleloads])
+            c0 = sorted(cands, key=lambda x: (0 if lox <= x <= hix else
+                                              min(abs(x - lox), abs(x - hix)), x))
+            first, rest = c0[:1], c0[1:]
+            if seed is not None:
+                random.Random(f"{seed}:{net}:{tag}").shuffle(rest)
+            why = []
+            why0 = None
+            for T in first + rest:
+                # ponytail: feed rows near the hub row first (a hub facing one
+                # way jogs out sideways, travels, and re-enters — _rl3's fix).
+                feeds = [hubcell[1]] + [hubcell[1] + d for k in range(1, 6)
+                                         for d in (2 * k, -2 * k)
+                                         if 0 <= hubcell[1] + d < D]
+                for feed in feeds:
+                    jogs = _shapes(hubcell[0], hubcell[1], T, feed)
+                    if not jogs:
+                        why.append(f"no jog")
+                        why0 = why0 or f"T={T}/f={feed}: no jog"
+                        continue
+                    jog = jogs[0]
+                    jog_len = len(dict.fromkeys(jog)) - 1
+                    rows = sorted(z for _, z in gleloads)
+                    z0req, z1req = min(feed, rows[0]), max(feed, rows[-1])
+                    # ponytail: first station 14 signal-travel from the driver
+                    # (jog eats part of the budget), then every 14 — v1's rule,
+                    # both directions since loads sit north and south of feed.
+                    d0 = 14 - jog_len if jog_len < 14 else 14
+                    stations = sorted(s for k in range(0, 99)
+                                      for s in (feed + d0 + 14 * k, feed - d0 - 14 * k)
+                                      if z0req - 28 <= s <= z1req + 28)
+                    if any(_bad(x, z) for x, z in
+                           [(T, z) for z in range(z0req, z1req + 1) if z not in stations]):
+                        why.append("cells blocked")
+                        why0 = why0 or f"T={T}/f={feed}: cells blocked"
+                        continue
+                    if any(_bad(T, s) for s in stations):
+                        why.append("station blocked")
+                        why0 = why0 or f"T={T}/f={feed}: station blocked"
+                        continue
+                    blocked.update(added := [(T, s) for s in stations])  # taps dodge them
+                    taps, lstubs = [], []
+                    for lx, lz in gleloads:
+                        tcands = sorted([(feed, 14 - jog_len)] +
+                                        [(s + (1 if s > feed else -1), 14) for s in stations],
+                                        key=lambda c: (abs(c[0] - lz), c[0]))
+                        for tz, budget in tcands:
+                            if budget < 0:
+                                continue
+                            shapes = _shapes(T, tz, lx, lz, cap=budget)
+                            if shapes:
+                                break
+                        else:
+                            break
+                        taps.append((T, tz))
+                        lstubs.append(shapes[0])
+                    if len(taps) != len(gleloads):
+                        blocked.difference_update(added)
+                        why.append("taps fail")
+                        why0 = why0 or f"T={T}/f={feed}: taps fail"
+                        continue  # a load found no tap: try next trunk x
+                    needed = sorted({s for s in stations for (_, tz) in taps
+                                     if min(feed, tz) <= s <= max(feed, tz)})
+                    z0 = min([z0req] + needed)
+                    z1 = max([z1req] + needed)
+                    stations = needed
+                    if any(_bad(x, z) for x, z in
+                           [(T, z) for z in range(z0, z1 + 1) if z not in stations]):
+                        blocked.difference_update(added)
+                        why.append("ext blocked")
+                        why0 = why0 or f"T={T}/f={feed}: ext blocked"
+                        continue  # extension hit something: try next trunk x
+                    return (T, z0, z1, feed, stations, taps, jog, lstubs)
+            counts = {s: why.count(s) for s in dict.fromkeys(why)}
+            raise RuntimeError(f"bus: no trunk for {net} {tag} hub={hubcell} loads={gleloads}: "
+                               + ", ".join(f"{s}x{n}" for s, n in counts.items())
+                               + f" (e.g. {why0})")
+        def _commit(trunklist, taplist, joglist, stublist, hubcell, levercell):
+            # own stations stamp solid after planning: no stub/jog may cross
+            # one (order search retries other seeds on collision).
+            own = {(T, s) for (T, z0, z1, feed, stations) in trunklist for s in stations}
+            for path in stublist + joglist:
+                if any((x, z) in own for x, z in dict.fromkeys(path)):
+                    raise RuntimeError(f"bus: own station collision for {net}")
+            for (T, z0, z1, feed, stations) in trunklist:
+                for z in range(z0, z1 + 1):
+                    if z in stations:
+                        gsolid[(T, z)] = ("repeater", net)
+                    else:
+                        ghost.setdefault((T, 1, z), net)
+            for path in stublist + joglist:
+                for (x, z) in dict.fromkeys(path):
+                    ghost.setdefault((x, 1, z), net)
+            plan[net] = {'trunks': trunklist, 'taps': taplist, 'jogs': joglist,
+                         'stubs': stublist, 'hub': hubcell, 'lever': levercell}
+        groups = {}
+        for cell, lb in zip(loads, lbs):
+            groups.setdefault(lb, []).append(cell)
+        trunks, taps, jogs, stubs = [], [], [], []
+        if drv is None:
+            # inputs fan out via one lever per load at stamp time: nothing
+            # to route (multi-band loads are fine — each gets its own lever).
+            plan[net] = {'trunks': [], 'taps': [], 'jogs': [], 'stubs': [],
+                         'hub': None, 'lever': None}
+            continue
+        cross = sorted(lb for lb in groups if lb != db)
+        if len(cross) > 1:
+            raise RuntimeError(f"bus: net {net} spans {cross} (relay contract broken)")
+        hub = drv
+        paths = _star(hub, groups.get(db, []))
+        if paths is None:
+            # same-band hop past decay (stacked tiles sit a full pitch
+            # apart): serve it from a local trunk like a gap hop.
+            T, z0, z1, feed, stations, ftaps, jog, lstubs = _via_trunk(
+                [x for x in range(hub[0] - 10, hub[0] + 11)
+                 if 0 <= x < W], hub, groups[db], "loc")
+            trunks.append((T, z0, z1, feed, stations))
+            taps.extend(ftaps)
+            jogs.append(jog)
+            stubs = [[hub]] + lstubs
         else:
-            raise RuntimeError(f"bus: no lane row for {net} spec={spec} taken={taken} W={W} D={D}")
-        taken.append((lane, x0, x1))
-        plan[net] = {'lane': lane, 'x0': x0, 'x1': x1,
-                     'stations': stations,
-                     'taps': taps,
-                     'jog': jogshape,
-                     'stubs': stubshapes}
+            stubs = [[hub]] + paths
+        if cross:
+            lb = cross[0]
+            if lb is None or lb <= 0:
+                raise RuntimeError(f"bus: no gap west of band {lb} for {net}")
+            lo, hi = 6 + 24 * (lb - 1) + 9, 6 + 24 * lb - 3
+            T, z0, z1, feed, stations, ftaps, jog, lstubs = _via_trunk(
+                range(lo, hi + 1), hub, groups[lb], f"g{lb}")
+            trunks.append((T, z0, z1, feed, stations))
+            taps.extend(ftaps)
+            jogs.append(jog)
+            stubs.extend(lstubs)
+        _commit(trunks, taps, jogs, stubs, hub, None)
     return plan
 
 

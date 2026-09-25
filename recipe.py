@@ -118,38 +118,21 @@ def expand_gates(gates, inputs=()):
             gates = [gates[i] for i in order]
         for i, g in enumerate(gates):
             g.setdefault("band", i)
+    for g in gates:
+        if g.get("band") is None:
+            g["band"] = 0  # unbanded stragglers (shared head like n1/n0): band 0, chains cover the rest
     by_out = {}
     for i, g in enumerate(gates):
         by_out.setdefault(g["out"], i)
-    loads = {}
-    for g in gates:
-        for a in g["args"]:
-            if a in ("0", "1"):
-                continue
-            loads.setdefault(a, []).append(g.get("band", 0))
     buf = {}
     out = []
     for g in gates:
         nargs = []
         for a in g["args"]:
-            if a in ("0", "1"):
+            if a in ("0", "1") or a in inputs:
+                # constants and inputs never chain: constants tie off,
+                # inputs fan out via one lever per load at stamp time.
                 nargs.append(a)
-                continue
-            if a in inputs:
-                lbs = sorted(set(loads[a]))
-                if len(lbs) <= 1:
-                    nargs.append(a)
-                    continue
-                prev = a
-                for k in range(min(lbs), max(lbs) + 1):
-                    if (a, k) not in buf:
-                        bn = T("rl")
-                        buf[(a, k)] = bn
-                        out.append({"out": bn, "op": "AND",
-                                    "args": [prev, prev],
-                                    "band": k, "relay": True})
-                    prev = buf[(a, k)]
-                nargs.append(buf[(a, g.get("band", 0))])
                 continue
             db = gates[by_out[a]].get("band", 0)
             lb = g.get("band", 0)
