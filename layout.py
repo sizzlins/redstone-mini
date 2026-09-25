@@ -901,6 +901,43 @@ def layout(recipe, seed=None, grow=0):
     return sorted(out), (W, D), io
 
 
+def plan_bus(netspec, solid, wires, W, D, seed=None):
+    """Bus lane geometry (pure: same inputs → same plan; seed only
+    shuffles row-candidate order so retries explore new lanes).
+    '0' nets never appear here (dark stubs read 0 — caller drops them).
+    Raises RuntimeError when no lane row fits (grow backstop)."""
+    plan, taken = {}, []
+    for net, spec in netspec.items():
+        anchor = spec['drv'] or spec['loads'][0]
+        rows = [anchor[1]] + [anchor[1] + d for k in range(1, 26)
+                              for d in (k, -k)]
+        if seed is not None:
+            random.Random((seed, net)).shuffle(rows[1:])
+        xs = ([spec['drv'][0]] if spec['drv'] else []) + [c[0] for c in spec['loads']]
+        x0, x1 = min(xs), max(xs)
+        for lane in rows:
+            if not (0 <= lane < D):
+                continue
+            if any((x, lane) in solid or (x, 1, lane) in wires
+                   for x in range(max(0, x0 - 2), min(W, x1 + 3))):
+                continue
+            if any(z == lane and not (x1 + 1 < ox or x0 - 1 > ox1)
+                   for z, ox, ox1 in taken):
+                continue
+            break
+        else:
+            raise RuntimeError(f"bus: no lane row for {net}")
+        taken.append((lane, x0, x1))
+        stations = [x for x in range(x0 + 14, x1 + 1, 14)]
+        taps = []
+        for lx, _lz in spec['loads']:
+            taps.append((min([x0] + [s + 1 for s in stations],
+                             key=lambda s: (abs(s - lx), s)), lane))
+        plan[net] = {'lane': lane, 'x0': x0, 'x1': x1,
+                     'stations': stations, 'taps': taps}
+    return plan
+
+
 if __name__ == "__main__":
     # ponytail: ONE runnable check — port grid spec (docs/phase1).
     # Single-tile builds keep the lamp due east (nothing else placed yet),
