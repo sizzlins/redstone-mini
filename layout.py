@@ -82,7 +82,7 @@ def astar(starts, goal, net, W, D, solid, rings, wires, junctions, margin=None, 
 
 
 def layout(recipe, seed=None, grow=0):
-    gates = expand_gates(recipe["gates"])
+    gates = expand_gates(recipe["gates"], recipe["inputs"])
     banded = any(g.get("band") is not None for g in gates)
     if not banded:
         # topo-sort + one gate per column: every producer sits strictly west
@@ -120,7 +120,8 @@ def layout(recipe, seed=None, grow=0):
         D = 12 + max(counts.values()) * 14 + 12
     # ponytail: infinite room = grow on demand. Each grow doubles the field;
     # placement is deterministic so extra space only ever helps detours.
-    W = min(int(W * (1.5 ** grow)), 4000)
+    # (W cap fits ~830 bands; cpu4 needs 247.)
+    W = min(int(W * (1.5 ** grow)), 20000)
     D = min(int(D * (1.5 ** grow)), 4000)
     blocks = []  # (x, y, z, block-id [+state])
     solid, rings, wires, junctions, repeaters, paths = {}, {}, {}, {}, {}, []
@@ -280,6 +281,37 @@ def layout(recipe, seed=None, grow=0):
                 u |= box
         others_reserved.append(u)
 
+    def spot_free(op, ox, gz, i):
+        # one guard for all placers: bounds per tile, disjoint from every
+        # other grid slot, and actually empty (lever feeds now dot the
+        # field, so grid slots aren't provably free anymore).
+        if op == "AND":
+            if not (0 <= ox - 2 and ox + 6 < W and 0 <= gz and gz + 6 < D):
+                return False
+        elif op in ("NOT", "NOR"):
+            if not (0 <= ox - 2 and ox + 2 < W and 0 <= gz - 1 and gz + 1 < D):
+                return False
+        elif op == "LATCH":
+            if not (0 <= ox - 6 and ox + 7 < W and 0 <= gz - 5 and gz + 6 < D):
+                return False
+        elif op == "XOR":
+            if not (0 <= ox - 3 and ox + 7 < W and 0 <= gz - 2 and gz + 7 < D):
+                return False
+        else:
+            if not (0 <= ox - 3 and ox + 3 < W and 0 <= gz - 3 and gz + 3 < D):
+                return False
+        fp = footprint(op, ox, gz)
+        if not fp.isdisjoint(others_reserved[i]):
+            return False
+        return all((x, z) not in solid and (x, 1, z) not in wires for x, z in fp)
+
+    def gridrows(ox, gz):
+        # fallback rows when the grid slot is taken: 14 apart, footprints
+        # top out at 11 tall, so rows never overlap each other.
+        while gz <= D + 5:
+            yield ox, gz
+            gz += 14
+
     def _snap():
         return (len(blocks), dict(wires), dict(solid),
                 {k: set(v) for k, v in rings.items()},
@@ -359,28 +391,30 @@ def layout(recipe, seed=None, grow=0):
             # (in-B chaining marches north; dropped for that reason.)
             dv = pos.get(a[0])
             cands = []
-            if dv is not None and dv not in junctions:
-                cands.append((dv[0] + 3, dv[1]))
-            cands.append((ox, gz))
+            if dv is not None and dv not in junctions and not g.get("rep"):
+                cands.append((dv[0] + 3, dv[1], True))
+            cands.append((ox, gz, False))
             placed = False
-            for ox2, gz2 in cands:
-                if not (0 <= ox2 - 2 and ox2 + 6 < W and 0 <= gz2 and gz2 + 6 < D):
-                    continue
-                if abs(ox2 - ox) > 16 or abs(gz2 - gz) > 7:
-                    continue
-                if not footprint("AND", ox2, gz2).isdisjoint(others_reserved[i]):
-                    continue
-                s = _snap()
-                try:
-                    pa, pb, po = stamp_and(ox2, gz2, a[0], a[1], o)
-                    pos[o] = po
-                    for sig, port in ((a[0], pa), (a[1], pb)):
-                        firstport.setdefault(sig, port)
-                    recs.append((op, o, a, (pa, pb, po)))
-                    placed = True
+            for ox2, gz2, local in cands:
+                rows = [(ox2, gz2)] if local else gridrows(ox2, gz2)
+                for ox3, gz3 in rows:
+                    if local and (abs(ox3 - ox) > 16 or abs(gz3 - gz) > 7):
+                        break
+                    if not spot_free("AND", ox3, gz3, i):
+                        continue
+                    s = _snap()
+                    try:
+                        pa, pb, po = stamp_and(ox3, gz3, a[0], a[1], o)
+                        pos[o] = po
+                        for sig, port in ((a[0], pa), (a[1], pb)):
+                            firstport.setdefault(sig, port)
+                        recs.append((op, o, a, (pa, pb, po)))
+                        placed = True
+                        break
+                    except RuntimeError:
+                        _restore(s)
+                if placed:
                     break
-                except RuntimeError:
-                    _restore(s)
             if not placed:
                 raise RuntimeError(f"AND blocked for {o}")
             continue
@@ -388,19 +422,151 @@ def layout(recipe, seed=None, grow=0):
             # torch NOR (wiki): inputs into block sides. West chained, north mazed.
             dv = pos.get(a[0])
             cands = []
-            if dv is not None and dv not in junctions:
-                cands.append((dv[0] + 3, dv[1]))
-            cands.append((ox, gz))
+            if dv is not None and dv not in junctions and not g.get("rep"):
+                cands.append((dv[0] + 3, dv[1], True))
+            cands.append((ox, gz, False))
             placed = False
-            for bx, bz in cands:
-                if not (0 <= bx - 2 and bx + 2 < W and 0 <= bz - 1 and bz + 1 < D):
+            for bx, bz, local in cands:
+                rows = [(bx, bz)] if local else gridrows(bx, bz)
+                for bx3, bz3 in rows:
+                    if local and (abs(bx3 - ox) > 16 or abs(bz3 - gz) > 7):
+                        break
+                    if not spot_free("NOT", bx3, bz3, i):
+                        continue
+                    s = _snap()
+                    try:
+                        bx, bz = bx3, bz3
+                        nets = own(o, *a)
+                        stamp_cobble(bx, bz, o)
+                        stamp_torch(bx + 1, bz, o)
+                        for rx, rz in ((bx - 1, bz), (bx + 1, bz), (bx, bz - 1), (bx, bz + 1),
+                                       (bx + 2, bz), (bx + 1, bz - 1), (bx + 1, bz + 1)):
+                            ring(rx, rz, nets)
+                        if (bx + 2, 1, bz) in wires:
+                            raise RuntimeError(f"out cell blocked at {(bx + 2, bz)}")
+                        stamp_wire([(bx + 2, bz)], o)
+                        pos[o] = (bx + 2, bz)
+                        firstport.setdefault(a[0], (bx - 1, bz))
+                        recs.append((op, o, a, (bx, bz)))
+                        placed = True
+                        break
+                    except RuntimeError:
+                        _restore(s)
+                    if placed:
+                        break
+            if not placed:
+                raise RuntimeError(f"NOR blocked for {o}")
+            continue
+        if op == "LATCH":
+            # flat SR latch (textbook NOR latch, adjacent blocks): A-block
+            # reads R+Qb, B-block reads S+Q-west; Q exits west at z+2.
+            # Hand-placed: cross-coupling is delay-critical, the router must
+            # never thread repeaters through it (they sustain power-on race).
+            qb = f"{o}~qb"
+            fam = own(a[0], a[1], o, qb)
+            placed = False
+            for ox2, gz2 in gridrows(ox, gz):
+                if not spot_free("LATCH", ox2, gz2, i):
                     continue
-                if abs(bx - ox) > 16 or abs(bz - gz) > 7:
+                ox, gz = ox2, gz2
+                Sdust = [(ox - 1 + k, gz + 4) for k in range(6)] + \
+                    [(ox + 4, gz + 3), (ox + 4, gz + 2), (ox + 4, gz + 1)]
+                Rdust = [(ox - 2, gz), (ox - 1, gz)]
+                Qdust = [(ox + 2, gz), (ox + 3, gz), (ox + 2, gz + 1)] + \
+                    [(ox + 2 - k, gz + 2) for k in range(8)]
+                Qbdust = [(ox + 4, gz - 2), (ox + 4, gz - 3), (ox + 4, gz - 4)] + \
+                    [(ox + 4 - k, gz - 4) for k in range(5)] + \
+                    [(ox, gz - 3), (ox, gz - 2), (ox, gz - 1)]
+                s = _snap()
+                try:
+                    stamp_cobble(ox, gz, o)
+                    blocks.append((ox + 1, 1, gz, "minecraft:redstone_wall_torch[facing=east]"))
+                    solid[(ox + 1, gz)] = ("torch", o)
+                    stamp_cobble(ox + 4, gz, o)
+                    blocks.append((ox + 4, 1, gz - 1, "minecraft:redstone_wall_torch[facing=north]"))
+                    solid[(ox + 4, gz - 1)] = ("torch", o)
+                    for cells, net in ((Sdust, a[0]), (Rdust, a[1]),
+                                       (Qdust, o), (Qbdust, qb)):
+                        stamp_wire(cells, net)
+                    for cx_, cz_ in set([(ox, gz), (ox + 1, gz), (ox + 4, gz),
+                                         (ox + 4, gz - 1)] + Sdust + Rdust + Qdust + Qbdust):
+                        for dx, dz in DIRS:
+                            ring(cx_ + dx, cz_ + dz, fam)
+                    pa, pb, po = (ox - 1, gz + 4), (ox - 2, gz), (ox - 5, gz + 2)
+                    pos[o] = po
+                    firstport.setdefault(a[0], pa)
+                    firstport.setdefault(a[1], pb)
+                    recs.append((op, o, a, (pa, pb, po)))
+                    placed = True
+                except RuntimeError:
+                    _restore(s)
+                if placed:
+                    break
+            if not placed:
+                raise RuntimeError(f"LATCH blocked for {o}")
+            continue
+        if op == "XOR":
+            # comparator XOR (dual subtract, sim-verified): C1 = A-B,
+            # C2 = B-A, outputs merged west. Side inputs are tile-stamped
+            # levers (dust side-feeds don't count as comparator input).
+            fam = own(a[0], a[1], o)
+            placed = False
+            for ox2, gz2 in gridrows(ox, gz):
+                if not spot_free("XOR", ox2, gz2, i):
                     continue
-                if not footprint("NOT", bx, bz).isdisjoint(others_reserved[i]):
+                ox, gz = ox2, gz2
+                Adust = [(ox + 2, gz), (ox + 1, gz), (ox + 3, gz)]
+                Bdust = [(ox + 2, gz + 4), (ox + 1, gz + 4), (ox + 3, gz + 4)]
+                Odust = [(ox - 1, gz), (ox - 2, gz), (ox - 2, gz + 1),
+                         (ox - 2, gz + 2), (ox - 2, gz + 3), (ox - 2, gz + 4),
+                         (ox - 1, gz + 4), (ox - 2, gz + 5)]
+                s = _snap()
+                try:
+                    blocks.append((ox, 1, gz, "minecraft:comparator[facing=east,mode=subtract]"))
+                    solid[(ox, gz)] = ("comp", o)
+                    blocks.append((ox, 1, gz + 4, "minecraft:comparator[facing=east,mode=subtract]"))
+                    solid[(ox, gz + 4)] = ("comp", o)
+                    for cells, net in ((Adust, a[0]), (Bdust, a[1]), (Odust, o)):
+                        stamp_wire(cells, net)
+                    for lx, lz, ln in ((ox, gz + 3, a[0]), (ox, gz + 1, a[1])):
+                        blocks.append((lx, 1, lz, "minecraft:lever"))
+                        solid[(lx, lz)] = ("lever", ln)
+                        for dx, dz in DIRS:
+                            ring(lx + dx, lz + dz, own(ln))
+                    for cx_, cz_ in set([(ox, gz), (ox, gz + 4)] + Adust + Bdust + Odust):
+                        for dx, dz in DIRS:
+                            ring(cx_ + dx, cz_ + dz, fam)
+                    pa, pb, po = (ox + 3, gz), (ox + 3, gz + 4), (ox - 2, gz + 5)
+                    pos[o] = po
+                    firstport.setdefault(a[0], pa)
+                    firstport.setdefault(a[1], pb)
+                    recs.append((op, o, a, (pa, pb, po)))
+                    placed = True
+                except RuntimeError:
+                    _restore(s)
+                if placed:
+                    break
+            if not placed:
+                raise RuntimeError(f"XOR blocked for {o}")
+            continue
+        if op != "NOT":
+            raise ValueError(f"bad primitive {op}")
+        dv = pos.get(a[0])
+        cands = []
+        if dv is not None and dv not in junctions:
+            cands.append((dv[0] + 3, dv[1], True))
+        cands.append((ox, gz, False))
+        placed = False
+        for bx, bz, local in cands:
+            rows = [(bx, bz)] if local else gridrows(bx, bz)
+            for bx3, bz3 in rows:
+                if local and (abs(bx3 - ox) > 16 or abs(bz3 - gz) > 7):
+                    break
+                if not spot_free("NOT", bx3, bz3, i):
                     continue
                 s = _snap()
                 try:
+                    bx, bz = bx3, bz3
                     nets = own(o, *a)
                     stamp_cobble(bx, bz, o)
                     stamp_torch(bx + 1, bz, o)
@@ -417,124 +583,8 @@ def layout(recipe, seed=None, grow=0):
                     break
                 except RuntimeError:
                     _restore(s)
-            if not placed:
-                raise RuntimeError(f"NOR blocked for {o}")
-            continue
-        if op == "LATCH":
-            # flat SR latch (textbook NOR latch, adjacent blocks): A-block
-            # reads R+Qb, B-block reads S+Q-west; Q exits west at z+2.
-            # Hand-placed: cross-coupling is delay-critical, the router must
-            # never thread repeaters through it (they sustain power-on race).
-            qb = f"{o}~qb"
-            fam = own(a[0], a[1], o, qb)
-            Sdust = [(ox - 1 + i, gz + 4) for i in range(6)] + \
-                [(ox + 4, gz + 3), (ox + 4, gz + 2), (ox + 4, gz + 1)]
-            Rdust = [(ox - 2, gz), (ox - 1, gz)]
-            Qdust = [(ox + 2, gz), (ox + 3, gz), (ox + 2, gz + 1)] + \
-                [(ox + 2 - i, gz + 2) for i in range(8)]
-            Qbdust = [(ox + 4, gz - 2), (ox + 4, gz - 3), (ox + 4, gz - 4)] + \
-                [(ox + 4 - i, gz - 4) for i in range(5)] + \
-                [(ox, gz - 3), (ox, gz - 2), (ox, gz - 1)]
-            if not (0 <= ox - 6 and ox + 7 < W and 0 <= gz - 5 and gz + 6 < D):
-                raise RuntimeError(f"LATCH out of bounds for {o}")
-            if not footprint("LATCH", ox, gz).isdisjoint(others_reserved[i]):
-                raise RuntimeError(f"LATCH blocked for {o}")
-            s = _snap()
-            try:
-                stamp_cobble(ox, gz, o)
-                blocks.append((ox + 1, 1, gz, "minecraft:redstone_wall_torch[facing=east]"))
-                solid[(ox + 1, gz)] = ("torch", o)
-                stamp_cobble(ox + 4, gz, o)
-                blocks.append((ox + 4, 1, gz - 1, "minecraft:redstone_wall_torch[facing=north]"))
-                solid[(ox + 4, gz - 1)] = ("torch", o)
-                for cells, net in ((Sdust, a[0]), (Rdust, a[1]),
-                                   (Qdust, o), (Qbdust, qb)):
-                    stamp_wire(cells, net)
-                for cx_, cz_ in set([(ox, gz), (ox + 1, gz), (ox + 4, gz),
-                                     (ox + 4, gz - 1)] + Sdust + Rdust + Qdust + Qbdust):
-                    for dx, dz in DIRS:
-                        ring(cx_ + dx, cz_ + dz, fam)
-                pa, pb, po = (ox - 1, gz + 4), (ox - 2, gz), (ox - 5, gz + 2)
-                pos[o] = po
-                firstport.setdefault(a[0], pa)
-                firstport.setdefault(a[1], pb)
-                recs.append((op, o, a, (pa, pb, po)))
-            except RuntimeError:
-                _restore(s)
-                raise
-            continue
-        if op == "XOR":
-            # comparator XOR (dual subtract, sim-verified): C1 = A-B,
-            # C2 = B-A, outputs merged west. Side inputs are tile-stamped
-            # levers (dust side-feeds don't count as comparator input).
-            fam = own(a[0], a[1], o)
-            Adust = [(ox + 2, gz), (ox + 1, gz), (ox + 3, gz)]
-            Bdust = [(ox + 2, gz + 4), (ox + 1, gz + 4), (ox + 3, gz + 4)]
-            Odust = [(ox - 1, gz), (ox - 2, gz), (ox - 2, gz + 1),
-                     (ox - 2, gz + 2), (ox - 2, gz + 3), (ox - 2, gz + 4),
-                     (ox - 1, gz + 4), (ox - 2, gz + 5)]
-            if not (0 <= ox - 3 and ox + 7 < W and 0 <= gz - 2 and gz + 7 < D):
-                raise RuntimeError(f"XOR out of bounds for {o}")
-            if not footprint("XOR", ox, gz).isdisjoint(others_reserved[i]):
-                raise RuntimeError(f"XOR blocked for {o}")
-            s = _snap()
-            try:
-                blocks.append((ox, 1, gz, "minecraft:comparator[facing=east,mode=subtract]"))
-                solid[(ox, gz)] = ("comp", o)
-                blocks.append((ox, 1, gz + 4, "minecraft:comparator[facing=east,mode=subtract]"))
-                solid[(ox, gz + 4)] = ("comp", o)
-                for cells, net in ((Adust, a[0]), (Bdust, a[1]), (Odust, o)):
-                    stamp_wire(cells, net)
-                for lx, lz, ln in ((ox, gz + 3, a[0]), (ox, gz + 1, a[1])):
-                    blocks.append((lx, 1, lz, "minecraft:lever"))
-                    solid[(lx, lz)] = ("lever", ln)
-                    for dx, dz in DIRS:
-                        ring(lx + dx, lz + dz, own(ln))
-                for cx_, cz_ in set([(ox, gz), (ox, gz + 4)] + Adust + Bdust + Odust):
-                    for dx, dz in DIRS:
-                        ring(cx_ + dx, cz_ + dz, fam)
-                pa, pb, po = (ox + 3, gz), (ox + 3, gz + 4), (ox - 2, gz + 5)
-                pos[o] = po
-                firstport.setdefault(a[0], pa)
-                firstport.setdefault(a[1], pb)
-                recs.append((op, o, a, (pa, pb, po)))
-            except RuntimeError:
-                _restore(s)
-                raise
-            continue
-        if op != "NOT":
-            raise ValueError(f"bad primitive {op}")
-        dv = pos.get(a[0])
-        cands = []
-        if dv is not None and dv not in junctions:
-            cands.append((dv[0] + 3, dv[1]))
-        cands.append((ox, gz))
-        placed = False
-        for bx, bz in cands:
-            if not (0 <= bx - 2 and bx + 2 < W and 0 <= bz - 1 and bz + 1 < D):
-                continue
-            if abs(bx - ox) > 16 or abs(bz - gz) > 7:
-                continue
-            if not footprint("NOT", bx, bz).isdisjoint(others_reserved[i]):
-                continue
-            s = _snap()
-            try:
-                nets = own(o, *a)
-                stamp_cobble(bx, bz, o)
-                stamp_torch(bx + 1, bz, o)
-                for rx, rz in ((bx - 1, bz), (bx + 1, bz), (bx, bz - 1), (bx, bz + 1),
-                               (bx + 2, bz), (bx + 1, bz - 1), (bx + 1, bz + 1)):
-                    ring(rx, rz, nets)
-                if (bx + 2, 1, bz) in wires:
-                    raise RuntimeError(f"out cell blocked at {(bx + 2, bz)}")
-                stamp_wire([(bx + 2, bz)], o)
-                pos[o] = (bx + 2, bz)
-                firstport.setdefault(a[0], (bx - 1, bz))
-                recs.append((op, o, a, (bx, bz)))
-                placed = True
+            if placed:
                 break
-            except RuntimeError:
-                _restore(s)
         if not placed:
             raise RuntimeError(f"NOT blocked for {o}")
 
@@ -560,12 +610,22 @@ def layout(recipe, seed=None, grow=0):
     for name, ports in loadports.items():
         for px, pz in dict.fromkeys(ports):
             lx, fx = px - 2, px - 1
-            if (lx, pz) in solid or (fx, pz) in solid or \
-               (lx, 1, pz) in wires or (fx, 1, pz) in wires:
-                if (fx, 1, pz) in feeds and wires.get((fx, 1, pz)) == name:
-                    pos.setdefault(name, (fx, pz))
-                    continue  # sibling tap already feeds this port
-                raise RuntimeError(f"lever spot taken for {name} at {(lx, pz)}")
+            # sibling tap already feeds this port (lever feed or a
+            # tile-stamped lever driving the same net): share it.
+            tap = any(((px + dx, 1, pz + dz) in feeds and
+                       wires.get((px + dx, 1, pz + dz)) == name) or
+                      solid.get((px + dx, pz + dz)) == ("lever", name)
+                      for dx, dz in DIRS)
+            if tap:
+                pos.setdefault(name, (fx, pz))
+                continue
+            for cx, cz in ((lx, pz), (fx, pz)):
+                if (cx, cz) in solid or \
+                   ((cx, 1, cz) in wires and wires[(cx, 1, cz)] != name):
+                    raise RuntimeError(f"lever spot taken for {name} at {(lx, pz)}")
+                # same-net dust yields to the lever (stronger source, same
+                # signal; boolean physics can't tell the difference).
+                wires.pop((cx, 1, cz), None)
             blocks.append((lx, 1, pz, "minecraft:lever"))
             solid[(lx, pz)] = ("lever", name)
             for dx, dz in DIRS:
@@ -620,12 +680,14 @@ def layout(recipe, seed=None, grow=0):
             tasks.append((pos[a[0]], cell, a[0]))
     # ponytail: input loads already touch their own lever feed (stamped
     # above) need no route; without this every fanout load spans the field.
+    # Const "0" never routes either: dark stubs already read 0 (the checker
+    # and the sim both treat undriven "0" as 0).
     ins = set(recipe["inputs"])
     tasks = [t for t in tasks
-             if t[2] not in ins or not any(
+             if t[2] != "0" and (t[2] not in ins or not any(
                  (t[1][0] + dx, 1, t[1][1] + dz) in feeds and
                  wires.get((t[1][0] + dx, 1, t[1][1] + dz)) == t[2]
-                 for dx, dz in DIRS)]
+                 for dx, dz in DIRS))]
     tasks.sort(key=lambda t: -(abs(t[0][0] - t[1][0]) + abs(t[0][1] - t[1][1])))
     if seed is not None:
         random.Random(seed).shuffle(tasks)

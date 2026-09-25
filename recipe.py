@@ -7,6 +7,7 @@ OPS = ("AND", "OR", "XOR", "NOT")
 
 def parse_recipe(text):
     inputs, outputs, gates = [], [], []
+    band = None
     for raw in text.strip().splitlines():
         line = raw.split("#")[0].strip()
         if not line:
@@ -16,6 +17,13 @@ def parse_recipe(text):
             inputs = [s.strip() for s in line[3:].split(",") if s.strip()]
         elif up.startswith("OUT "):
             outputs = [s.strip() for s in line[4:].split(",") if s.strip()]
+        elif up.startswith("BAND "):
+            # ponytail: optional datapath columns (adder8 pattern). Untagged
+            # recipes auto-band exactly as before; nothing else changes.
+            try:
+                band = int(up[5:].strip())
+            except ValueError:
+                raise ValueError(f"bad BAND (use: BAND 0): {raw!r}")
         else:
             out, _, expr = line.partition("=")
             out = out.strip()
@@ -28,6 +36,8 @@ def parse_recipe(text):
                 gates.append({"out": out, "op": "NOT", "args": [parts[1]]})
             else:
                 raise ValueError(f"can't parse: {raw!r} (use: t = a AND b)")
+            if band is not None:
+                gates[-1]["band"] = band
     if not inputs or not gates:
         raise ValueError("need at least IN ... and one gate line")
     return {"inputs": inputs, "outputs": outputs, "gates": gates}
@@ -71,10 +81,11 @@ def eval_net(recipe, values):
 
 
 
-def expand_gates(gates):
-    """XOR->OR,AND,NOT,AND. AND stays a compound, OR a junction, NOT a tile.
-    Banded OR (dense datapath) expands to NOR+NOT (proven tiles, spread ports,
-    no junction funnel); unbanded keeps the compact repeater junction."""
+def expand_gates(gates, inputs=()):
+    """XOR stays a comparator tile. AND stays a compound, OR a junction,
+    NOT a tile. Banded OR (dense datapath) expands to NOR+NOT (proven
+    tiles, spread ports, no junction funnel); unbanded keeps the compact
+    repeater junction."""
     gates = [dict(g, args=list(g["args"])) for g in gates]
     c = [0]
     def T(p):
@@ -93,13 +104,6 @@ def expand_gates(gates):
                 nxt += [{"out": n, "op": "NOR", "args": [a[0], a[1]], "band": bd},
                         {"out": o, "op": "NOT", "args": [n], "band": bd}]
                 changed = True
-            elif op == "XOR" and banded:
-                t1, t2, t3 = T("xo"), T("xa"), T("xn")
-                nxt += [{"out": t1, "op": "OR", "args": [a[0], a[1]], "band": bd},
-                        {"out": t2, "op": "AND", "args": [a[0], a[1]], "band": bd},
-                        {"out": t3, "op": "NOT", "args": [t2], "band": bd},
-                        {"out": o, "op": "AND", "args": [t1, t3], "band": bd}]
-                changed = True
             else:
                 nxt.append(g)
         gates = nxt
@@ -107,21 +111,94 @@ def expand_gates(gates):
     # routes survive, so relay it: each load consumes a buffer AND(x,x) that
     # ALAP parks adjacent, chained to the previous buffer. Star-fed buffers
     # would just move the marathon; chains end it. Constants never chain.
+    # Inputs never chain either: layout taps every input load with its own
+    # lever (zero-wire), so input relay would only add tiles and chain spans.
     fan = {}
     for idx, g in enumerate(gates):
         for a in g["args"]:
-            if a not in ("0", "1"):
+            if a not in ("0", "1") and a not in inputs:
                 if not fan.get(a) or fan[a][-1] != idx:
                     fan.setdefault(a, []).append(idx)
     big = {n: ids for n, ids in fan.items() if len(ids) >= 3}
-    if big:
-        buf_of = {}
+    prebanded = any(g.get("band") is not None for g in gates)
+    buf_of, rep_of = {}, {}
+    if prebanded:
+        # ponytail: banded fanout. A shared gate driven purely by inputs
+        # is replicated per load-band (zero-wire in via multi-lever, short
+        # star out); anything else keeps the per-band relay below. Same-band
+        # fanout always routes direct.
+        outidx = {}
+        for i, g in enumerate(gates):
+            outidx.setdefault(g["out"], i)
+        drop, rep_of, clones = set(), {}, []
+        specs = []
         for n, ids in big.items():
+            d = {}
+            for j in ids:
+                d.setdefault(gates[j].get("band", 0), []).append(j)
+            if len(d) < 2:
+                continue
+            if any(a not in inputs and a not in ("0", "1")
+                   for a in gates[outidx[n]]["args"]):
+                continue
+            drop.add(outidx[n])
+            for b, jds in sorted(d.items()):
+                specs.append((n, b, jds))
+        for n, b, jds in specs:
+            kept = [j for j in jds if j not in drop]
+            if not kept:
+                continue  # all loads dropped too: clone would orphan
+            cn = T("rc")
+            for j in kept:
+                rep_of[(n, j)] = cn
+            gc = dict(gates[outidx[n]], out=cn,
+                      args=list(gates[outidx[n]]["args"]))
+            gc["band"] = b
+            gc["rep"] = True
+            clones.append((min(kept), gc))
+        out = []
+        pending = sorted(clones)
+        for idx, g in enumerate(gates):
+            if idx in drop:
+                continue
+            while pending and pending[0][0] == idx:
+                out.append(pending.pop(0)[1])
+            out.append(dict(g, args=[rep_of.get((a, idx), a)
+                                     for a in g["args"]]))
+        gates = out
+    # ponytail: relay runs on fresh indices (replication above renumbered).
+    fan = {}
+    for idx, g in enumerate(gates):
+        for a in g["args"]:
+            if a not in ("0", "1") and a not in inputs:
+                if not fan.get(a) or fan[a][-1] != idx:
+                    fan.setdefault(a, []).append(idx)
+    big = {n: ids for n, ids in fan.items() if len(ids) >= 3}
+    buf_of = {}
+    for n, ids in big.items():
+        if prebanded:
+            # ponytail: banded relay for the rest. Loads sharing a band tap
+            # one buffer parked there; buffers chain band-to-band.
+            # (Replicated nets need nothing: their loads were rewritten.)
+            d = {}
+            for j in ids:
+                d.setdefault(gates[j].get("band", 0), []).append(j)
+            bands_ = sorted(d.items())
+            if len(bands_) < 2:
+                continue
+            prev = n
+            for _, jds in bands_:
+                b = T("bf")
+                for j in jds:
+                    buf_of[(n, j)] = (b, prev)
+                prev = b
+        else:
             prev = n
             for j in ids:
                 b = T("bf")
                 buf_of[(n, j)] = (b, prev)
                 prev = b
+    if buf_of:
         out = []
         for idx, g in enumerate(gates):
             for a in dict.fromkeys(g["args"]):
