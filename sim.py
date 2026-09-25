@@ -4,7 +4,7 @@ import random
 
 from core import DIRS, base
 from layout import layout
-from recipe import eval_net, minimize_recipe
+from recipe import eval_net
 
 
 def layout_retry(recipe, tries=12, verify=False, grows=3):
@@ -13,7 +13,6 @@ def layout_retry(recipe, tries=12, verify=False, grows=3):
     ties): the sim is the selector, not just the guard; restarts are free
     search, so ship the cheapest verified one.
     Field grows on failure (effectively infinite room, capped at 2000)."""
-    recipe = minimize_recipe(recipe)
     last = None
     for grow in range(grows):
         out = None

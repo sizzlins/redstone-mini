@@ -142,7 +142,6 @@ def layout(recipe, seed=None, grow=0):
     D = min(int(D * (1.5 ** grow)), 4000)
     blocks = []  # (x, y, z, block-id [+state])
     solid, rings, wires, junctions, repeaters, paths = {}, {}, {}, {}, {}, []
-    bridges = set()  # (x, z) columns holding y=2 support cobble (Task 2 stamps)
     FLOOR = "minecraft:stone"
 
     def own(*nets):
@@ -328,11 +327,10 @@ def layout(recipe, seed=None, grow=0):
     def _snap():
         return (len(blocks), dict(wires), dict(solid),
                 {k: set(v) for k, v in rings.items()},
-                dict(pos), dict(junctions), len(recs),
-                set(bridges))
+                dict(pos), dict(junctions), len(recs))
 
     def _restore(s):
-        nb, w, so, ri, p, jn, nr, br = s
+        nb, w, so, ri, p, jn, nr = s
         del blocks[nb:]
         wires.clear(); wires.update(w)
         solid.clear(); solid.update(so)
@@ -340,9 +338,6 @@ def layout(recipe, seed=None, grow=0):
         pos.clear(); pos.update(p)
         junctions.clear(); junctions.update(jn)
         del recs[nr:]
-        bridges.clear(); bridges.update(br)
-    def _free(cells):
-        return all(c not in solid and c not in wires for c in cells)
 
     for i, g in enumerate(gates):
         ox, gz = gridpos[i]
@@ -831,7 +826,7 @@ def layout(recipe, seed=None, grow=0):
         raise RuntimeError(f"OPEN (unconnected dust, nothing drives it): {dead[:6]}")
     # ponytail: shrink-wrap grid to content (+3 margin). A 13x4 gate on a
     # 30x38 pad photographs as sprawl even when every wire is minimal.
-    OCC = [(x, 1, z) for (x, z) in solid] + list(wires) + [(x, 1, z) for (x, z) in bridges]
+    OCC = [(x, 1, z) for (x, z) in solid] + list(wires)
     minx = min(c[0] for c in OCC) - 3
     minz = min(c[2] for c in OCC) - 3
     maxx = max(c[0] for c in OCC) + 3
@@ -843,11 +838,8 @@ def layout(recipe, seed=None, grow=0):
     junctions = {(x - minx, z - minz): v for (x, z), v in junctions.items()}
     pos = {n: (x - minx, z - minz) for n, (x, z) in pos.items()}
     repeaters = {(x - minx, z - minz): v for (x, z), v in repeaters.items()}
-    bridges = {(x - minx, z - minz) for (x, z) in bridges}
     W, D = maxx - minx + 1, maxz - minz + 1
     out = list(blocks)
-    for x, z in sorted(bridges):
-        out.append((x, 1, z, "minecraft:cobblestone"))
     for (x, y, z), net in wires.items():
         out.append((x, y, z, "minecraft:redstone_wire"))
     for (x, z), (net, facing) in repeaters.items():

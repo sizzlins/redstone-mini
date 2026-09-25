@@ -85,34 +85,30 @@ def export_html(blocks, size, path, label="build", extra=None):
             for x, y, z, b in blocks if not (b == "minecraft:stone" and y == 0)]
     fdir = {"east": (1, 0), "west": (-1, 0), "south": (0, 1), "north": (0, -1)}
     mountxy = {(x, z) for x, y, z, b in blocks if y == 1 and base(b) in ("minecraft:cobblestone", "minecraft:stone")}
-    torchinfo = {}
+    torchinfo, repinfo, cmpinfo = {}, {}, {}
     for x, y, z, bid in blocks:
-        if y == 1 and base(bid) == "minecraft:redstone_wall_torch":
+        b = base(bid)
+        if y == 1 and b == "minecraft:redstone_wall_torch":
             f = bid.split("facing=")[1].rstrip("]") if "facing=" in bid else "east"
             d = fdir[f]
             torchinfo[(x, z)] = {"f": list(d), "m": 1 if (x - d[0], z - d[1]) in mountxy else 0}
-    for d in data:
-        if d["b"] == "minecraft:redstone_wall_torch":
-            t = torchinfo[(d["p"][0], d["p"][2])]
-            d["f"], d["m"] = t["f"], t["m"]
-    repinfo = {}
-    for x, y, z, bid in blocks:
-        if y == 1 and base(bid) == "minecraft:repeater":
+        elif y == 1 and b == "minecraft:repeater":
             f = bid.split("facing=")[1].split(",")[0] if "facing=" in bid else "east"
             dl = bid.split("delay=")[1].split(",")[0].rstrip("]") if "delay=" in bid else "1"
             repinfo[(x, z)] = {"f": list(fdir[f]), "dl": max(1, min(4, int(dl)))}
-    cmpinfo = {}
-    for x, y, z, bid in blocks:
-        if base(bid) == "minecraft:comparator":
+        if b == "minecraft:comparator":
             f = bid.split("facing=")[1].split(",")[0] if "facing=" in bid else "east"
             v = fdir[f]
             # render arrow points output-ward = negative of facing (which points output->input)
             cmpinfo[(x, y, z)] = {"f": [-v[0], -v[1]]}
     for d in data:
-        if d["b"] == "minecraft:repeater":
+        if d["b"] == "minecraft:redstone_wall_torch":
+            t = torchinfo[(d["p"][0], d["p"][2])]
+            d["f"], d["m"] = t["f"], t["m"]
+        elif d["b"] == "minecraft:repeater":
             r = repinfo[(d["p"][0], d["p"][2])]
             d["f"], d["dl"] = r["f"], r["dl"]
-        if d["b"] == "minecraft:comparator":
+        elif d["b"] == "minecraft:comparator":
             d["f"] = cmpinfo[(d["p"][0], d["p"][1], d["p"][2])]["f"]
     html = """<!doctype html><html><head><meta charset=utf-8><title>redstone build</title>
 <style>body{margin:0;font-family:sans-serif}#t{position:fixed;top:8px;left:8px;background:#111;color:#fff;padding:8px 12px;border-radius:8px}</style>
