@@ -186,46 +186,17 @@ def layout(recipe, seed=None, grow=0):
         paths.append((path, net))
         return path
 
-    # levers batch 1: inputs feeding an OR junction (its placement reads
-    # their feed up front). Unbanded sit top-left; banded sit by their band
-    # (short hops, no marathons). The junction taps their feed in place.
-    # Others get levers by their load ports after placement (zero-wire taps).
-    firstuse = {}
-    firstor = {}  # inputs feeding an OR junction need levers before it places,
-    for g in gates:  # even when an earlier non-OR gate uses them first.
-        for k, a in enumerate(g["args"]):
-            if a not in firstuse:
-                firstuse[a] = (g["op"], k, g.get("band"))
-            if g["op"] == "OR" and a not in firstor:
-                firstor[a] = (g["op"], k, g.get("band"))
-    orfeed = {a for g in gates if g["op"] == "OR" for a in g["args"]}
-    pos, feeds = {}, set()  # feeds: lever-feed wire cells (zero-wire taps)
-    for idx, name in enumerate(recipe["inputs"]):
-        if name not in firstuse:
-            continue  # unused input: no lever
-        op, role, band = firstor.get(name, firstuse[name])
-        if op != "OR" and (banded or name not in orfeed):
-            continue  # placed by load port later
-        x = 16 * band + (2 if role == 0 else 5) if band is not None else 2 + idx * 3
-        if (x, 6) in solid or (x, 6) in wires or (x + 1, 6) in solid or (x + 1, 1, 6) in wires:
-            raise RuntimeError(f"lever spot taken for {name} at {(x, 6)}")
-        blocks.append((x, 1, 6, "minecraft:lever"))
-        solid[(x, 6)] = ("lever", name)
-        for dx, dz in DIRS:
-            ring(x + dx, 6 + dz, own(name))
-        stamp_wire([(x + 1, 6)], name)
-        feeds.add((x + 1, 1, 6))
-        pos[name] = (x + 1, 6)
+    # bus: one lever per input at its lane head (planned after tiles).
+    # Batch-1/load-port levers and the feeds set are gone with the maze.
+    pos = {}
     if any(a in ("0", "1") for g in gates for a in g["args"]):
         stamp_wire([(0, 3)], "0")
-        feeds.add((0, 1, 3))
         pos["0"] = (0, 3)
         blocks.append((W - 1, 1, 3, "minecraft:redstone_block"))
         solid[(W - 1, 3)] = ("block", "1")
         for dx, dz in DIRS:
             ring(W - 1 + dx, 3 + dz, own("1"))
         stamp_wire([(W - 2, 3)], "1")
-        feeds.add((W - 2, 1, 3))
         pos["1"] = (W - 2, 3)
 
     # phase 1: place all tiles (solids+rings+outs) so routes see the full obstacle field.
@@ -366,7 +337,7 @@ def layout(recipe, seed=None, grow=0):
                     reps = []
                     seen = {j}
                     for sig in a:
-                        sx, sz = pos[sig]
+                        sx, sz = pos.get(sig, (jx - 4, jz))
                         if abs(sx - jx) >= abs(sz - jz):
                             order = [(1 if sx >= jx else -1, 0)]
                         else:
@@ -604,54 +575,80 @@ def layout(recipe, seed=None, grow=0):
         if not placed:
             raise RuntimeError(f"NOT blocked for {o}")
 
-    # levers by load port: one lever per input load (zero-wire tap each),
-    # so input fanout never spans the field. OR loads keep their batch-1
-    # lever (the junction aims at it); every other load taps in place and
-    # its route task is skipped below.
-    loadports = {}
+    # bus: net spec from tile ports (same mapping the maze tasks used),
+    # one lane per net, one lever per input at its lane head.
+    # (XOR tile-stamped side levers stay: tile geometry, and same-net
+    # duplicates are wired-OR harmless.)
+    netspec = {}
+    def _load(net, cell):
+        if net == "0":
+            return  # dark stubs read 0; nothing is stamped
+        e = netspec.setdefault(net, {'drv': None, 'loads': []})
+        e['loads'].append(cell)
     for op, o, a, cell in recs:
         if op == "AND":
-            ports = [(a[0], cell[0]), (a[1], cell[1])]
+            pa, pb, po = cell
+            netspec.setdefault(o, {'drv': po, 'loads': []})
+            _load(a[0], pa); _load(a[1], pb)
         elif op == "NOT":
-            ports = [(a[0], (cell[0] - 1, cell[1]))]
-        elif op == "NOR":
-            ports = [(a[0], (cell[0] - 1, cell[1])), (a[1], (cell[0], cell[1] - 1))]
+            bx, bz = cell
+            netspec.setdefault(o, {'drv': (bx + 2, bz), 'loads': []})
+            _load(a[0], (bx - 1, bz))
         elif op in ("LATCH", "XOR"):
-            ports = [(a[0], cell[0]), (a[1], cell[1])]
+            pa, pb, po = cell
+            netspec.setdefault(o, {'drv': po, 'loads': []})
+            _load(a[0], pa); _load(a[1], pb)
+        elif op == "OR":
+            j, reps = cell
+            netspec.setdefault(o, {'drv': j, 'loads': []})
+            for sig, (rr, bb) in zip(a, reps):
+                _load(sig, bb)
+        elif op == "OUT":
+            pass  # lamp sits at the lane end; no stub
         else:
-            continue  # OR aims batch-1, OUT taps its lamp
-        for sig, (px, pz) in ports:
-            if sig in recipe["inputs"]:
-                loadports.setdefault(sig, []).append((px, pz))
-    for name, ports in loadports.items():
-        for px, pz in dict.fromkeys(ports):
-            lx, fx = px - 2, px - 1
-            # sibling tap already feeds this port (lever feed or a
-            # tile-stamped lever driving the same net): share it.
-            tap = any(((px + dx, 1, pz + dz) in feeds and
-                       wires.get((px + dx, 1, pz + dz)) == name) or
-                      solid.get((px + dx, pz + dz)) == ("lever", name)
-                      for dx, dz in DIRS)
-            if tap:
-                pos.setdefault(name, (fx, pz))
+            raise RuntimeError(f"bus: unsupported {op}")
+    for name in recipe["inputs"]:
+        netspec.setdefault(name, {'drv': None, 'loads': []})
+    if "1" in netspec:
+        netspec["1"]['drv'] = pos["1"]
+    for net in [n for n, s in netspec.items()
+                if not s['loads'] and n not in recipe["outputs"]]:
+        del netspec[net]
+    busplan = plan_bus(netspec, solid, wires, rings, W, D, seed)
+    for name in recipe["inputs"]:
+        spec = netspec.get(name)
+        if not spec:
+            continue  # unused input: no lever
+        lane, x0 = busplan[name]['lane'], busplan[name]['x0']
+        lx = x0 - 1
+        if not (0 <= lx < W and 0 <= lane < D) or (lx, lane) in solid or (lx, 1, lane) in wires:
+            raise RuntimeError(f"bus lever blocked for {name} at {(lx, lane)}")
+        blocks.append((lx, 1, lane, "minecraft:lever"))
+        solid[(lx, lane)] = ("lever", name)
+        for dx, dz in DIRS:
+            ring(lx + dx, lane + dz, own(name))
+        # (lane stamp covers the (x0, lane) feed cell; lever touch powers it)
+
+    # phase 2: bus stamp. Lamps stay after it so their collision check
+    # dodges lanes automatically.
+    for name in recipe["outputs"]:
+        busplan[name]  # KeyError if output is undriven: loud, as before
+        pos[name] = (busplan[name]['x1'], busplan[name]['lane'])
+    for net, p in busplan.items():
+        lane, x0, x1 = p['lane'], p['x0'], p['x1']
+        rep_at = set(p['stations'])
+        for x in range(x0, x1 + 1):
+            if x in rep_at:
+                if (x, lane) in solid or (x, 1, lane) in wires:
+                    raise RuntimeError(f"bus station blocked for {net} at {(x, lane)}")
+                blocks.append((x, 1, lane, "minecraft:repeater[facing=east,delay=1]"))
+                solid[(x, lane)] = ("repeater", net)
             else:
-                for cx, cz in ((lx, pz), (fx, pz)):
-                    if (cx, cz) in solid or \
-                       ((cx, 1, cz) in wires and wires[(cx, 1, cz)] != name):
-                        raise RuntimeError(f"lever spot taken for {name} at {(lx, pz)}")
-                    # same-net dust yields to the lever (stronger source, same
-                    # signal; boolean physics can't tell the difference).
-                    wires.pop((cx, 1, cz), None)
-                blocks.append((lx, 1, pz, "minecraft:lever"))
-                solid[(lx, pz)] = ("lever", name)
-                for dx, dz in DIRS:
-                    ring(lx + dx, pz + dz, own(name))
-                stamp_wire([(fx, pz)], name)  # touches port stub: zero-wire tap
-                feeds.add((fx, 1, pz))
-                pos.setdefault(name, (fx, pz))
-            stamp_wire([(px, pz)], name)  # NOT/NOR ports are bare cells:
-            # a feed touching air drives nothing, so the port stub itself
-            # must exist (no-op where tiles pre-stamp it).
+                stamp_wire([(x, lane)], net)
+        if p['jog']:
+            stamp_wire([(x, z) for x, z in dict.fromkeys(p['jog'])], net)
+        for path in p['stubs']:
+            stamp_wire([(x, z) for x, z in dict.fromkeys(path)], net)
 
     for name in recipe["outputs"]:
         ox_, oz = pos[name]
@@ -672,149 +669,6 @@ def layout(recipe, seed=None, grow=0):
             break
         if not done:
             raise RuntimeError(f"lamp spot taken for {name} at {(ox_, oz)}")
-
-    # phase 2: route every net through the finished field, longest runs
-    # first so they maze around settled locals instead of fencing them in.
-    tasks = []
-    for op, o, a, cell in recs:
-        if op == "OR":
-            j, reps = cell
-            tasks += [(pos[sig], b, sig) for sig, (r, b) in zip(a, reps)]
-        elif op == "AND":
-            pa, pb, po = cell
-            tasks += [(pos[a[0]], pa, a[0]), (pos[a[1]], pb, a[1])]
-        elif op == "NOT":
-            bx, bz = cell
-            tasks.append((pos[a[0]], (bx - 1, bz), a[0]))
-        elif op == "NOR":
-            bx, bz = cell
-            tasks += [(pos[a[0]], (bx - 1, bz), a[0]), (pos[a[1]], (bx, bz - 1), a[1])]
-        elif op == "LATCH":
-            pa, pb, po = cell
-            tasks += [(pos[a[0]], pa, a[0]), (pos[a[1]], pb, a[1])]
-        elif op == "XOR":
-            pa, pb, po = cell
-            tasks += [(pos[a[0]], pa, a[0]), (pos[a[1]], pb, a[1])]
-        elif op == "OUT":
-            tasks.append((pos[a[0]], cell, a[0]))
-    # ponytail: input loads already touch their own lever feed (stamped
-    # above) need no route; without this every fanout load spans the field.
-    # Const "0" never routes either: dark stubs already read 0 (the checker
-    # and the sim both treat undriven "0" as 0).
-    ins = set(recipe["inputs"])
-    tasks = [t for t in tasks
-             if t[2] != "0" and (t[2] not in ins or not any(
-                 (t[1][0] + dx, 1, t[1][1] + dz) in feeds and
-                 wires.get((t[1][0] + dx, 1, t[1][1] + dz)) == t[2]
-                 for dx, dz in DIRS))]
-    tasks.sort(key=lambda t: -(abs(t[0][0] - t[1][0]) + abs(t[0][1] - t[1][1])))
-    if seed is not None:
-        random.Random(seed).shuffle(tasks)
-    placed = set(wires)  # feeds/outs/ties stay; routed paths may be ripped up
-    last_blocked = {}  # net -> wire cells whose touch sealed its last failure
-    congest = {}  # wire cell -> extra cost after a rip (lanes stay shared)
-    guard = set()  # torch cells + their attach blocks: the only solids a
-    for x, y, z, bid in blocks:  # routed wire must never hug (oscillators).
-        if "wall_torch" in bid:  # lever/lamp coupling settles merely wrong
-            guard.add((x, z))  # (no loop possible); sim catches it instead.
-            face = bid.split("facing=")[1].rstrip("]")
-            dx, dz = TORCH_BACK[face]
-            guard.add((x + dx, z + dz))
-    pending = tasks[:]
-    fails = {}
-    while pending:
-        s, t, net = pending.pop(0)
-        try:
-            route(s, t, net)
-            continue
-        except RuntimeError:
-            pass
-        # targeted ripup: nets physically sealing this goal get re-routed after us.
-        blockers = set()
-        for dx, dz in DIRS:
-            for yy in (1, 2):
-                A = (t[0] + dx, yy, t[1] + dz)
-                for c in [A] + [(A[0] + ex, A[1], A[2] + ez) for ex, ez in DIRS]:
-                    w = wires.get(c)
-                    if w is not None and w != net and c not in placed:
-                        blockers.add(w)
-        for c in last_blocked.get(net, ()):
-            w = wires.get(c)
-            if w is not None and w != net and c not in placed:
-                blockers.add(w)
-        block_tasks = [tk for tk in tasks if tk[2] in blockers]
-        key = (net, tuple(sorted(blockers)))
-        fails[key] = fails.get(key, 0) + 1
-        if not block_tasks or fails[key] > 2:
-            raise RuntimeError(f"no route for {net}: {s} -> {t} (grid full, widen W)")
-        for p, m in paths[:]:
-            if m in blockers:
-                for c in p:
-                    if wires.get(c) == m and c not in placed:
-                        del wires[c]
-                        congest[c] = congest.get(c, 0) + 5
-                paths.remove((p, m))
-        pending = [(s, t, net)] + block_tasks + pending
-
-    # repeaters: dust dies after 15 blocks. Backward cover from each goal:
-    # every path cell ends within 14 of a booster-or-source behind it.
-    def is_straight(path, i):
-        if i <= 0 or i >= len(path) - 1:
-            return False
-        (x0, y0, z0), (x1, y1, z1), (x2, y2, z2) = path[i - 1], path[i], path[i + 1]
-        if not (y0 == y1 == y2 == 1):
-            return False
-        return (x0 == x1 == x2) or (z0 == z1 == z2)
-
-    def place_rep(path, net, j):
-        (x0, _, z0), (x1, _, z1) = path[j - 1], path[j]
-        dx, dz = x1 - x0, z1 - z0
-        facing = {(1, 0): "east", (-1, 0): "west", (0, 1): "south", (0, -1): "north"}[(dx, dz)]
-        for f in ((x1 + dx, 1, z1 + dz), (x1 - dx, 1, z1 - dz)):
-            w = wires.get(f)
-            if w is not None and w != net:
-                raise RuntimeError(f"repeater guard {net} vs {w} at {f}")
-        if wires.get((x1, 1, z1)) != net:
-            if (x1, z1) in repeaters and repeaters[(x1, z1)][0] == net:
-                return  # shared fanout trunk: a sibling branch already boosted here
-            raise RuntimeError(
-                f"repeater spot {net} at {(x1, 1, z1)} holds {wires.get((x1, 1, z1), 'EMPTY')} "
-                f"(solid {solid.get((x1, z1), '-')})")
-        del wires[(x1, 1, z1)]
-        repeaters[(x1, z1)] = (net, facing)
-
-    for path, net in paths:
-        # cover the tile-stub tail past the goal too: same-net dust stamped
-        # in phase 1 (ports, latch rows) decays exactly like routed wire, and
-        # a latch S-row needs level 9 at the port to reach its block, while
-        # the endpoint alone is only guaranteed level 1. Bounded walk so a
-        # shared trunk never drags in a far sibling branch.
-        cells = list(path)
-        seen = set(cells)
-        g = cells[-1]
-        stack = [g]
-        while stack:
-            c = stack.pop()
-            for dx, dz in DIRS:
-                m = (c[0] + dx, 1, c[2] + dz)
-                if m in seen or wires.get(m) != net:
-                    continue
-                if abs(m[0] - g[0]) + abs(m[2] - g[2]) > 12:
-                    continue
-                seen.add(m)
-                cells.append(m)
-                stack.append(m)
-        path = cells
-        n = len(path)
-        i = n - 1
-        while i > 14:
-            cands = [j for j in range(max(1, i - 14), min(i - 1, n - 1) + 1)
-                     if is_straight(path, j)]
-            if not cands:
-                raise RuntimeError(f"unboostable gap on {net} near index {i} (twisty path)")
-            j = min(cands)
-            place_rep(path, net, j)
-            i = j
 
     # checker: no two nets may share/side-touch dust, except at OR junctions.
     for (x, y, z), net in wires.items():
@@ -864,6 +718,8 @@ def layout(recipe, seed=None, grow=0):
                     stack.append((m, nm if nm == n or (m[0], m[2]) not in junctions else n))
             elif (m[0], m[2]) in repeaters and repeaters[(m[0], m[2])][0] == n:
                 stack.append((m, n))
+            elif solid.get((m[0], m[2]), (None,))[0] == "repeater" and solid[(m[0], m[2])][1] == n:
+                stack.append((m, n))  # bus stations + OR diodes stamp solid-only
     dead = [(x, y, z) for (x, y, z) in wires if (x, y, z) not in reached
             and wires[(x, y, z)] != "0"]  # undriven "0" stubs read 0 unconnected
     if dead:
@@ -881,6 +737,10 @@ def layout(recipe, seed=None, grow=0):
     rings = {(x - minx, z - minz): v for (x, z), v in rings.items()}
     junctions = {(x - minx, z - minz): v for (x, z), v in junctions.items()}
     pos = {n: (x - minx, z - minz) for n, (x, z) in pos.items()}
+    bus = {n: {'lane': p['lane'] - minz, 'x0': p['x0'] - minx, 'x1': p['x1'] - minx,
+               'stations': [s - minx for s in p['stations']],
+               'taps': [(x - minx, z - minz) for x, z in p['taps']],
+               'jog': [(x - minx, z - minz) for x, z in p['jog']]} for n, p in busplan.items()}
     repeaters = {(x - minx, z - minz): v for (x, z), v in repeaters.items()}
     bridges = {(x - minx, z - minz) for (x, z) in bridges}
     W, D = maxx - minx + 1, maxz - minz + 1
@@ -897,44 +757,98 @@ def layout(recipe, seed=None, grow=0):
         out.append((x, 0, z, "minecraft:stone"))
     io = {"levers": {c: n for c, (k, n) in solid.items() if k == "lever"},
           "lamps": {c: n for c, (k, n) in solid.items() if k == "lamp"},
-          "nets": dict(wires)}
+          "nets": dict(wires),
+          "bus": bus}
     return sorted(out), (W, D), io
 
 
-def plan_bus(netspec, solid, wires, W, D, seed=None):
+def plan_bus(netspec, solid, wires, rings, W, D, seed=None):
     """Bus lane geometry (pure: same inputs → same plan; seed only
     shuffles row-candidate order so retries explore new lanes).
-    '0' nets never appear here (dark stubs read 0 — caller drops them).
-    Raises RuntimeError when no lane row fits (grow backstop)."""
+    Driverless (input) nets plan first — lever and stub columns are
+    fixed, so they are least flexible. Every lane/lever/jog/stub cell
+    is checked against tile solids, foreign wires and halos, and
+    foreign-wire adjacency (the SHORT rule — the maze's
+    touches_foreign discipline, applied per row). Each jog/stub tries
+    both L-orientations (diode blocks often bar one approach).
+    Own-net wires merge and never block. Loud RuntimeError when no
+    lane row fits (grow backstop). '0' nets never appear here
+    (dark stubs read 0 — caller drops them)."""
     plan, taken = {}, []
-    for net, spec in netspec.items():
+    order = [n for n in netspec if netspec[n]['drv'] is None] + \
+            [n for n in netspec if netspec[n]['drv'] is not None]
+    for net in order:
+        spec = netspec[net]
         anchor = spec['drv'] or spec['loads'][0]
         rows = [anchor[1]] + [anchor[1] + d for k in range(1, 26)
                               for d in (k, -k)]
         if seed is not None:
-            random.Random((seed, net)).shuffle(rows[1:])
+            random.Random(f"{seed}:{net}").shuffle(rows[1:])
         xs = ([spec['drv'][0]] if spec['drv'] else []) + [c[0] for c in spec['loads']]
         x0, x1 = min(xs), max(xs)
+        def _bad(x, z):
+            if (x, z) in solid:
+                return True
+            if (x, 1, z) in wires and wires[(x, 1, z)] != net:
+                return True
+            if (x, z) in rings and net not in rings[(x, z)]:
+                return True
+            if any((x + dx, 1, z + dz) in wires and wires[(x + dx, 1, z + dz)] != net
+                   for dx, dz in DIRS):
+                return True
+            return any(abs(z - zl) < 2 and xl0 - 1 <= x <= xl1 + 1
+                       for zl, xl0, xl1 in taken)
+        def _shapes(fx, fz, tx, tz, cap=14):
+            vfirst = [(fx, z) for z in range(min(fz, tz), max(fz, tz) + 1)] + \
+                     [(x, tz) for x in range(min(fx, tx), max(fx, tx) + 1)]
+            hfirst = [(x, fz) for x in range(min(fx, tx), max(fx, tx) + 1)] + \
+                     [(tx, z) for z in range(min(fz, tz), max(fz, tz) + 1)]
+            return [s for s in (vfirst, hfirst)
+                    if len(dict.fromkeys(s)) - 1 <= cap
+                    and all(0 <= x < W and 0 <= z < D for x, z in s)
+                    and not any(_bad(x, z) for x, z in s)]
         for lane in rows:
             if not (0 <= lane < D):
                 continue
-            if any((x, lane) in solid or (x, 1, lane) in wires
-                   for x in range(max(0, x0 - 2), min(W, x1 + 3))):
+            cells = [(x, lane) for x in range(x0, x1 + 1)]
+            if spec['drv'] is None:
+                cells += [(x0 - 1, lane)]
+            if not all(0 <= x < W and 0 <= z < D for x, z in cells):
                 continue
-            if any(z == lane and not (x1 + 1 < ox or x0 - 1 > ox1)
-                   for z, ox, ox1 in taken):
+            if any(_bad(x, z) for x, z in cells):
                 continue
-            break
+            if spec['drv'] is None:
+                jogshape, jog_len = [], 0
+            else:
+                dx, dz = spec['drv']
+                jogs = _shapes(dx, dz, x0, lane)
+                if not jogs:
+                    continue
+                jogshape = jogs[0]
+                jog_len = len(dict.fromkeys(jogshape)) - 1
+            stations = [x for x in range(x0 + 14 - jog_len, x1 + 1, 14)]
+            taps, stubshapes = [], []
+            for lx, lz in spec['loads']:
+                cands = sorted([(x0, 14 - jog_len)] + [(s + 1, 14) for s in stations],
+                               key=lambda c: (abs(c[0] - lx), c[0]))
+                for tx, budget in cands:
+                    shapes = _shapes(tx, lane, lx, lz, cap=budget)
+                    if shapes:
+                        break
+                else:
+                    break
+                taps.append((tx, lane))
+                stubshapes.append(shapes[0])
+            else:
+                break
         else:
-            raise RuntimeError(f"bus: no lane row for {net}")
+            raise RuntimeError(f"bus: no lane row for {net} spec={spec} taken={taken} W={W} D={D}")
         taken.append((lane, x0, x1))
-        stations = [x for x in range(x0 + 14, x1 + 1, 14)]
-        taps = []
-        for lx, _lz in spec['loads']:
-            taps.append((min([x0] + [s + 1 for s in stations],
-                             key=lambda s: (abs(s - lx), s)), lane))
         plan[net] = {'lane': lane, 'x0': x0, 'x1': x1,
-                     'stations': stations, 'taps': taps}
+                     'stations': stations,
+                     'taps': taps,
+                     'jog': jogshape,
+                     'stubs': stubshapes}
     return plan
 
 
