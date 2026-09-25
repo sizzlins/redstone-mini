@@ -50,7 +50,7 @@
   tiles); pure master greens same logic relay-free (4-gate 0.0s, micro1
   2.3s). Tiles seal pockets. Reverted.
 - **v1 lanes vs 4-gate:** mutual walling under pitch-2 (0/200 seeds).
-  (Prior-session detail preserved in v1 plan doc.)
+  (Prior-session detail was in the v1 plan doc, now in `scratch/attic-plans/`.)
 - **alu4 relay blowup (spike datum):** 576 bufs for 72 gates — moot after
   revert, recorded only.
 - **alu1/alu4 ceiling:** red under maze (unbanded + banded, 86–260s thrash),
