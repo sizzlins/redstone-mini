@@ -7,7 +7,7 @@ from core import DIRS
 from recipe import expand_gates
 
 
-def astar(starts, goal, net, W, D, solid, rings, wires, junctions, margin=None):
+def astar(starts, goal, net, W, D, solid, rings, wires, junctions, margin=None, blocked=None):
     """Maze route for one wire (multi-source: fanout taps nearest own wire).
     None if blocked (loud fail, never silent wrong). Cells are (x, y, z);
     rings/junctions/solid stay 2D (rings guard whole columns)."""
@@ -64,6 +64,14 @@ def astar(starts, goal, net, W, D, solid, rings, wires, junctions, margin=None):
             if m == goal and (m[0], m[2]) in junctions and net in junctions[(m[0], m[2])]:
                 pass  # OR junction: wired-OR is the gate
             elif touches_foreign(m, cell):
+                if blocked is not None:
+                    # sealed-pocket ripup: record the exact wire cells whose
+                    # touch rejects this step (a closed loop far from the goal
+                    # seals just as dead as a wall on the goal itself).
+                    for dx2, dz2 in DIRS:
+                        k = (m[0] + dx2, 1, m[2] + dz2)
+                        if k != cell and k in wires and wires[k] != net:
+                            blocked.add(k)
                 continue
             ng = g + 1
             if ng < cost.get(m, 1e9):
@@ -77,31 +85,30 @@ def layout(recipe, seed=None, grow=0):
     gates = expand_gates(recipe["gates"])
     banded = any(g.get("band") is not None for g in gates)
     if not banded:
-        # Compute topological depth for auto-banding: depth 0 = no consumers,
-        # depth = 1 + max depth of consumers. This groups signals by dependency
-        # level so they route in separate columns, left-to-right, avoiding the
-        # single-column wire clash that forces A* into damaging U-turns.
-        firstuse = {}
-        for g in gates:
-            for k, a in enumerate(g["args"]):
-                if a not in firstuse:
-                    firstuse[a] = g["out"]
-        consumers = {}
-        for g in gates:
-            for a in g["args"]:
-                consumers.setdefault(a, []).append(g["out"])
-        depth = {}
-        def get_depth(sig, memo={}):
-            if sig in memo:
-                return memo[sig]
-            out = firstuse.get(sig)
-            if out is None:
-                memo[sig] = 0
-            else:
-                memo[sig] = 1 + max(get_depth(c) for c in consumers.get(out, [out]))
-            return memo[sig]
-        for g in gates:
-            g["band"] = max(get_depth(a) for a in g["args"])
+        # topo-sort + one gate per column: every producer sits strictly west
+        # of its consumers, so wires flow east and never cross on the layer.
+        # (Sharing a column forced crossings: whoever detoured sealed another
+        # stub into a pocket, or hugged a torch block into an oscillator.)
+        by_out = {}
+        for i, g in enumerate(gates):
+            by_out.setdefault(g["out"], i)
+        deps = {i: {by_out[a] for a in g["args"] if a in by_out and by_out[a] != i}
+                for i, g in enumerate(gates)}
+        ready = sorted(i for i, d in deps.items() if not d)
+        order = []
+        while ready:
+            i = ready.pop(0)
+            order.append(i)
+            for j, d in deps.items():
+                if i in d:
+                    d.discard(i)
+                    if not d and j not in order and j not in ready:
+                        ready.append(j)
+            ready.sort()
+        if len(order) == len(gates):
+            gates = [gates[i] for i in order]
+        for i, g in enumerate(gates):
+            g["band"] = i
         banded = True
     if banded:
         maxband = max(g.get("band", -1) for g in gates)
@@ -111,14 +118,10 @@ def layout(recipe, seed=None, grow=0):
             b = g.get("band", -1)
             counts[b] = counts.get(b, 0) + 1
         D = 12 + max(counts.values()) * 14 + 12
-    else:
-        W = max(30, len(recipe["inputs"]) * 3 + 10)
-        D = 12 + len(gates) * 14 + 12
     # ponytail: infinite room = grow on demand. Each grow doubles the field;
     # placement is deterministic so extra space only ever helps detours.
     W = min(int(W * (1.5 ** grow)), 4000)
     D = min(int(D * (1.5 ** grow)), 4000)
-    cx = W // 2
     blocks = []  # (x, y, z, block-id [+state])
     solid, rings, wires, junctions, repeaters, paths = {}, {}, {}, {}, {}, []
     bridges = set()  # (x, z) columns holding y=2 support cobble (Task 2 stamps)
@@ -152,11 +155,15 @@ def layout(recipe, seed=None, grow=0):
         # single source: every branch traces full-length to its driver.
         # (Tapping live-looking mid-wire cells caused decayed weak taps;
         #  connected-tap + shortest-first retries in 2026-09 also broke xor.)
+        seen = set()
+        best = None
         for margin in (12, 40, None):
-            path = astar([(a[0], 1, a[1])], (b[0], 1, b[1]), net, W, D, solid, rings, wires, junctions, margin)
-            if path:
-                break
+            path = astar([(a[0], 1, a[1])], (b[0], 1, b[1]), net, W, D, solid, rings, wires, junctions, margin, blocked=seen)
+            if path and (best is None or len(path) < len(best)):
+                best = path
+        path = best
         if not path:
+            last_blocked[net] = seen
             raise RuntimeError(f"no route for {net}: {a} -> {b} (grid full, widen W)")
         stamp_wire(path, net)
         paths.append((path, net))
@@ -167,16 +174,19 @@ def layout(recipe, seed=None, grow=0):
     # (short hops, no marathons). The junction taps their feed in place.
     # Others get levers by their load ports after placement (zero-wire taps).
     firstuse = {}
-    for g in gates:
+    firstor = {}  # inputs feeding an OR junction need levers before it places,
+    for g in gates:  # even when an earlier non-OR gate uses them first.
         for k, a in enumerate(g["args"]):
             if a not in firstuse:
                 firstuse[a] = (g["op"], k, g.get("band"))
+            if g["op"] == "OR" and a not in firstor:
+                firstor[a] = (g["op"], k, g.get("band"))
     orfeed = {a for g in gates if g["op"] == "OR" for a in g["args"]}
     pos = {}
     for idx, name in enumerate(recipe["inputs"]):
         if name not in firstuse:
             continue  # unused input: no lever
-        op, role, band = firstuse[name]
+        op, role, band = firstor.get(name, firstuse[name])
         if op != "OR" and (banded or name not in orfeed):
             continue  # placed by load port later
         x = 16 * band + (2 if role == 0 else 5) if band is not None else 2 + idx * 3
@@ -244,12 +254,9 @@ def layout(recipe, seed=None, grow=0):
     gridpos = []
     for i, g in enumerate(gates):
         b = g.get("band")
-        if b is None:
-            gridpos.append((cx, 12 + i * 14))
-        else:
-            gz = bandrows.get(b, 12)
-            bandrows[b] = gz + 14
-            gridpos.append((6 + b * 24, gz))
+        gz = bandrows.get(b, 12)
+        bandrows[b] = gz + 14
+        gridpos.append((6 + b * 24, gz))
     def footprint(op, ox, gz):
         if op == "AND":
             return {(x, z) for x in range(ox - 2, ox + 9) for z in range(gz - 1, gz + 8)}
@@ -590,6 +597,7 @@ def layout(recipe, seed=None, grow=0):
     if seed is not None:
         random.Random(seed).shuffle(tasks)
     placed = set(wires)  # feeds/outs/ties stay; routed paths may be ripped up
+    last_blocked = {}  # net -> wire cells whose touch sealed its last failure
     pending = tasks[:]
     fails = {}
     while pending:
@@ -608,6 +616,10 @@ def layout(recipe, seed=None, grow=0):
                     w = wires.get(c)
                     if w is not None and w != net and c not in placed:
                         blockers.add(w)
+        for c in last_blocked.get(net, ()):
+            w = wires.get(c)
+            if w is not None and w != net and c not in placed:
+                blockers.add(w)
         block_tasks = [tk for tk in tasks if tk[2] in blockers]
         key = (net, tuple(sorted(blockers)))
         fails[key] = fails.get(key, 0) + 1
@@ -640,6 +652,8 @@ def layout(recipe, seed=None, grow=0):
             if w is not None and w != net:
                 raise RuntimeError(f"repeater guard {net} vs {w} at {f}")
         if wires.get((x1, 1, z1)) != net:
+            if (x1, z1) in repeaters and repeaters[(x1, z1)][0] == net:
+                return  # shared fanout trunk: a sibling branch already boosted here
             raise RuntimeError(
                 f"repeater spot {net} at {(x1, 1, z1)} holds {wires.get((x1, 1, z1), 'EMPTY')} "
                 f"(solid {solid.get((x1, z1), '-')})")
@@ -647,6 +661,27 @@ def layout(recipe, seed=None, grow=0):
         repeaters[(x1, z1)] = (net, facing)
 
     for path, net in paths:
+        # cover the tile-stub tail past the goal too: same-net dust stamped
+        # in phase 1 (ports, latch rows) decays exactly like routed wire, and
+        # a latch S-row needs level 9 at the port to reach its block, while
+        # the endpoint alone is only guaranteed level 1. Bounded walk so a
+        # shared trunk never drags in a far sibling branch.
+        cells = list(path)
+        seen = set(cells)
+        g = cells[-1]
+        stack = [g]
+        while stack:
+            c = stack.pop()
+            for dx, dz in DIRS:
+                m = (c[0] + dx, 1, c[2] + dz)
+                if m in seen or wires.get(m) != net:
+                    continue
+                if abs(m[0] - g[0]) + abs(m[2] - g[2]) > 12:
+                    continue
+                seen.add(m)
+                cells.append(m)
+                stack.append(m)
+        path = cells
         n = len(path)
         i = n - 1
         while i > 14:

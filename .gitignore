@@ -2,3 +2,4 @@ __pycache__/
 build*.html
 build*.mcfunction
 build*.schem
+scratch/
