@@ -3,11 +3,11 @@
 import heapq
 import random
 
-from core import DIRS
+from core import DIRS, TORCH_BACK
 from recipe import expand_gates
 
 
-def astar(starts, goal, net, W, D, solid, rings, wires, junctions, margin=None, blocked=None):
+def astar(starts, goal, net, W, D, solid, rings, wires, junctions, margin=None, blocked=None, congest=None, guard=None):
     """Maze route for one wire (multi-source: fanout taps nearest own wire).
     None if blocked (loud fail, never silent wrong). Cells are (x, y, z);
     rings/junctions/solid stay 2D (rings guard whole columns)."""
@@ -74,6 +74,22 @@ def astar(starts, goal, net, W, D, solid, rings, wires, junctions, margin=None, 
                             blocked.add(k)
                 continue
             ng = g + 1
+            if congest:
+                # ponytail: negotiated congestion (lite). Ripped corridors
+                # stay expensive, so retries explore new lanes instead of
+                # cycling the same blame pair. Zero when nothing failed.
+                ng += congest.get(m, 0)
+            if guard and m != goal:
+                # ponytail: no hugging solids mid-run. A wire beside a
+                # torch block powers it (wrong values); beside a lit torch
+                # it gets back-powered into a ring oscillator. Ports live
+                # within 2 of goal/start, so only drive-bys are refused.
+                if max(abs(m[0] - goal[0]), abs(m[2] - goal[2])) > 2 and all(
+                        max(abs(m[0] - s[0]), abs(m[2] - s[2])) > 2
+                        for s in starts):
+                    if any((m[0] + dx, m[2] + dz) in guard
+                           for dx, dz in DIRS):
+                        continue
             if ng < cost.get(m, 1e9):
                 cost[m], came[m] = ng, cell
                 heapq.heappush(open_h, (ng + abs(m[0] - goal[0]) + abs(m[2] - goal[2]), ng, (m[0], m[2]), m, cell))
@@ -159,7 +175,7 @@ def layout(recipe, seed=None, grow=0):
         seen = set()
         best = None
         for margin in (12, 40, None):
-            path = astar([(a[0], 1, a[1])], (b[0], 1, b[1]), net, W, D, solid, rings, wires, junctions, margin, blocked=seen)
+            path = astar([(a[0], 1, a[1])], (b[0], 1, b[1]), net, W, D, solid, rings, wires, junctions, margin, blocked=seen, congest=congest, guard=guard)
             if path and (best is None or len(path) < len(best)):
                 best = path
         path = best
@@ -618,21 +634,24 @@ def layout(recipe, seed=None, grow=0):
                       for dx, dz in DIRS)
             if tap:
                 pos.setdefault(name, (fx, pz))
-                continue
-            for cx, cz in ((lx, pz), (fx, pz)):
-                if (cx, cz) in solid or \
-                   ((cx, 1, cz) in wires and wires[(cx, 1, cz)] != name):
-                    raise RuntimeError(f"lever spot taken for {name} at {(lx, pz)}")
-                # same-net dust yields to the lever (stronger source, same
-                # signal; boolean physics can't tell the difference).
-                wires.pop((cx, 1, cz), None)
-            blocks.append((lx, 1, pz, "minecraft:lever"))
-            solid[(lx, pz)] = ("lever", name)
-            for dx, dz in DIRS:
-                ring(lx + dx, pz + dz, own(name))
-            stamp_wire([(fx, pz)], name)  # touches port stub: zero-wire tap
-            feeds.add((fx, 1, pz))
-            pos.setdefault(name, (fx, pz))
+            else:
+                for cx, cz in ((lx, pz), (fx, pz)):
+                    if (cx, cz) in solid or \
+                       ((cx, 1, cz) in wires and wires[(cx, 1, cz)] != name):
+                        raise RuntimeError(f"lever spot taken for {name} at {(lx, pz)}")
+                    # same-net dust yields to the lever (stronger source, same
+                    # signal; boolean physics can't tell the difference).
+                    wires.pop((cx, 1, cz), None)
+                blocks.append((lx, 1, pz, "minecraft:lever"))
+                solid[(lx, pz)] = ("lever", name)
+                for dx, dz in DIRS:
+                    ring(lx + dx, pz + dz, own(name))
+                stamp_wire([(fx, pz)], name)  # touches port stub: zero-wire tap
+                feeds.add((fx, 1, pz))
+                pos.setdefault(name, (fx, pz))
+            stamp_wire([(px, pz)], name)  # NOT/NOR ports are bare cells:
+            # a feed touching air drives nothing, so the port stub itself
+            # must exist (no-op where tiles pre-stamp it).
 
     for name in recipe["outputs"]:
         ox_, oz = pos[name]
@@ -693,6 +712,14 @@ def layout(recipe, seed=None, grow=0):
         random.Random(seed).shuffle(tasks)
     placed = set(wires)  # feeds/outs/ties stay; routed paths may be ripped up
     last_blocked = {}  # net -> wire cells whose touch sealed its last failure
+    congest = {}  # wire cell -> extra cost after a rip (lanes stay shared)
+    guard = set()  # torch cells + their attach blocks: the only solids a
+    for x, y, z, bid in blocks:  # routed wire must never hug (oscillators).
+        if "wall_torch" in bid:  # lever/lamp coupling settles merely wrong
+            guard.add((x, z))  # (no loop possible); sim catches it instead.
+            face = bid.split("facing=")[1].rstrip("]")
+            dx, dz = TORCH_BACK[face]
+            guard.add((x + dx, z + dz))
     pending = tasks[:]
     fails = {}
     while pending:
@@ -725,6 +752,7 @@ def layout(recipe, seed=None, grow=0):
                 for c in p:
                     if wires.get(c) == m and c not in placed:
                         del wires[c]
+                        congest[c] = congest.get(c, 0) + 5
                 paths.remove((p, m))
         pending = [(s, t, net)] + block_tasks + pending
 
@@ -805,6 +833,15 @@ def layout(recipe, seed=None, grow=0):
         p3 = (p[0], 1, p[1])
         if p3 in wires and wires[p3] == name:
             seed_states.append((p3, name))
+    for (x, z), (kind, name) in solid.items():
+        # ponytail: every lever island seeds (multi-lever inputs drive
+        # several disconnected feeds; pos[] only knows the first).
+        if kind != "lever":
+            continue
+        for dx, dz in DIRS:
+            c = (x + dx, 1, z + dz)
+            if c in wires and wires[c] == name:
+                seed_states.append((c, name))
     for (x, y, z), net in wires.items():
         for dx, dz in DIRS:
             if solid.get((x + dx, z + dz), (None,))[0] == "torch":
