@@ -656,7 +656,7 @@ def layout(recipe, seed=None, grow=0):
     for name in recipe["outputs"]:
         ox_, oz = pos[name]
         done = False
-        for dx, dz in ((1, 0), (0, 1), (-1, 0), (0, -1)):
+        for dx, dz in ((1, 0), (0, 1), (0, -1), (-1, 0)):
             fx, lx = (ox_ + dx, oz + dz), (ox_ + dx * 2, oz + dz * 2)
             if not (0 <= lx[0] < W and 0 <= lx[1] < D):
                 continue
@@ -899,4 +899,34 @@ def layout(recipe, seed=None, grow=0):
           "lamps": {c: n for c, (k, n) in solid.items() if k == "lamp"},
           "nets": dict(wires)}
     return sorted(out), (W, D), io
+
+
+if __name__ == "__main__":
+    # ponytail: ONE runnable check — port grid spec (docs/phase1).
+    # Single-tile builds keep the lamp due east (nothing else placed yet),
+    # so lamp-anchored relative offsets prove the grid: absolute coords
+    # shift per build (shrink-wrap), easternmost cells are downstream
+    # routes — only tile-to-port vectors are invariant.
+    # (NOR has no recipe syntax — covered indirectly by banded builds;
+    # OR is a junction, exempt per spec.)
+    from recipe import parse_recipe
+    from sim import layout_retry
+    _r = parse_recipe("IN a\nOUT n\nn = NOT a\n")
+    _, _, _io, _ = layout_retry(_r, verify=True)
+    _lamps = [c for c, v in _io["lamps"].items() if v == "n"]
+    assert len(_lamps) == 1, _io["lamps"]
+    _lx, _lz = _lamps[0]
+    _nets = _io["nets"]
+    assert _nets.get((_lx - 2, 1, _lz)) == "n", "NOT out drifted"
+    assert _nets.get((_lx - 5, 1, _lz)) == "a", "NOT port drifted"
+    _r = parse_recipe("IN a, b\nOUT t\nt = a AND b\n")
+    _, _, _io, _ = layout_retry(_r, verify=True)
+    _lamps = [c for c, v in _io["lamps"].items() if v == "t"]
+    assert len(_lamps) == 1, _io["lamps"]
+    _lx, _lz = _lamps[0]
+    _nets = _io["nets"]
+    assert _nets.get((_lx - 2, 1, _lz)) == "t", "AND out drifted"
+    assert _nets.get((_lx - 10, 1, _lz - 1)) == "a", "AND A-port drifted"
+    assert _nets.get((_lx - 10, 1, _lz + 2)) == "b", "AND B-port drifted"
+    print("ports ok: AND/NOT grid matches spec")
 

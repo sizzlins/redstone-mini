@@ -90,3 +90,25 @@
    (`scratch/alu4_banded.txt` as template); program counter → instruction
    ROM → RAM per the researched architecture (accumulator/RISC, Harvard,
    torch-NOR cores already match community practice).
+
+## 2026-09-25 — Phase 1 executed (branch `phase1-tiles`, PR to master)
+
+Two commits on `phase1-tiles` (pushed):
+- `2f254e6` lamp east-first (1 line in `layout.py`, char-locked `((5,9),'Q')`).
+- `fc56bd9` lamp-anchored port-grid asserts in `layout.py.__main__`
+  (`python layout.py` → `ports ok`).
+
+Deviations from `docs/plans/2026-09-25-phase1-tiles.md` (plan bugs, root-caused):
+- Plan recipe `OUT y,z,w` matched no gate (`KeyError: 'y'`) → isolated
+  single-tile builds (`OUT n`, `OUT t`).
+- Easternmost-cell anchor wrong twice: shrink-wrap (`layout.py:875-889`)
+  translates all coords, and routed nets run east past the tile → relative
+  offsets off the lamp (NOT out −2/port −5; AND out −2, A −10/−1, B −10/+2).
+- 4-gate recipe is micro1's gated-D head (`micro1.txt:3-6`), not in the
+  phase-1 doc → `scratch/check4gate.py` (gitignored): `4-gate bad: 0 /6`
+  + `sequence ok`.
+
+Verified green: `recipe.py`, `serve.py --check`, `sim.py`, `layout.py`,
+demo 114 blocks, micro1 1434 blocks re-exported to `build.html`.
+
+Next: Phase 2 (bus routing) brainstorm → spec → plan.
