@@ -182,7 +182,7 @@ def layout(recipe, seed=None, grow=0):
             if g["op"] == "OR" and a not in firstor:
                 firstor[a] = (g["op"], k, g.get("band"))
     orfeed = {a for g in gates if g["op"] == "OR" for a in g["args"]}
-    pos = {}
+    pos, feeds = {}, set()  # feeds: lever-feed wire cells (zero-wire taps)
     for idx, name in enumerate(recipe["inputs"]):
         if name not in firstuse:
             continue  # unused input: no lever
@@ -197,15 +197,18 @@ def layout(recipe, seed=None, grow=0):
         for dx, dz in DIRS:
             ring(x + dx, 6 + dz, own(name))
         stamp_wire([(x + 1, 6)], name)
+        feeds.add((x + 1, 1, 6))
         pos[name] = (x + 1, 6)
     if any(a in ("0", "1") for g in gates for a in g["args"]):
         stamp_wire([(0, 3)], "0")
+        feeds.add((0, 1, 3))
         pos["0"] = (0, 3)
         blocks.append((W - 1, 1, 3, "minecraft:redstone_block"))
         solid[(W - 1, 3)] = ("block", "1")
         for dx, dz in DIRS:
             ring(W - 1 + dx, 3 + dz, own("1"))
         stamp_wire([(W - 2, 3)], "1")
+        feeds.add((W - 2, 1, 3))
         pos["1"] = (W - 2, 3)
 
     # phase 1: place all tiles (solids+rings+outs) so routes see the full obstacle field.
@@ -535,19 +538,41 @@ def layout(recipe, seed=None, grow=0):
         if not placed:
             raise RuntimeError(f"NOT blocked for {o}")
 
-    for idx, name in enumerate(recipe["inputs"]):
-        if name not in firstport or name in pos:
-            continue  # unused, or OR-first (already placed)
-        px, pz = firstport[name]
-        lx, fx = px - 2, px - 1
-        if (lx, pz) in solid or (lx, pz) in wires or (fx, pz) in solid or (fx, pz) in wires:
-            raise RuntimeError(f"lever spot taken for {name} at {(lx, pz)}")
-        blocks.append((lx, 1, pz, "minecraft:lever"))
-        solid[(lx, pz)] = ("lever", name)
-        for dx, dz in DIRS:
-            ring(lx + dx, pz + dz, own(name))
-        stamp_wire([(fx, pz)], name)  # touches port stub: zero-wire tap
-        pos[name] = (fx, pz)
+    # levers by load port: one lever per input load (zero-wire tap each),
+    # so input fanout never spans the field. OR loads keep their batch-1
+    # lever (the junction aims at it); every other load taps in place and
+    # its route task is skipped below.
+    loadports = {}
+    for op, o, a, cell in recs:
+        if op == "AND":
+            ports = [(a[0], cell[0]), (a[1], cell[1])]
+        elif op == "NOT":
+            ports = [(a[0], (cell[0] - 1, cell[1]))]
+        elif op == "NOR":
+            ports = [(a[0], (cell[0] - 1, cell[1])), (a[1], (cell[0], cell[1] - 1))]
+        elif op in ("LATCH", "XOR"):
+            ports = [(a[0], cell[0]), (a[1], cell[1])]
+        else:
+            continue  # OR aims batch-1, OUT taps its lamp
+        for sig, (px, pz) in ports:
+            if sig in recipe["inputs"]:
+                loadports.setdefault(sig, []).append((px, pz))
+    for name, ports in loadports.items():
+        for px, pz in dict.fromkeys(ports):
+            lx, fx = px - 2, px - 1
+            if (lx, pz) in solid or (fx, pz) in solid or \
+               (lx, 1, pz) in wires or (fx, 1, pz) in wires:
+                if (fx, 1, pz) in feeds and wires.get((fx, 1, pz)) == name:
+                    pos.setdefault(name, (fx, pz))
+                    continue  # sibling tap already feeds this port
+                raise RuntimeError(f"lever spot taken for {name} at {(lx, pz)}")
+            blocks.append((lx, 1, pz, "minecraft:lever"))
+            solid[(lx, pz)] = ("lever", name)
+            for dx, dz in DIRS:
+                ring(lx + dx, pz + dz, own(name))
+            stamp_wire([(fx, pz)], name)  # touches port stub: zero-wire tap
+            feeds.add((fx, 1, pz))
+            pos.setdefault(name, (fx, pz))
 
     for name in recipe["outputs"]:
         ox_, oz = pos[name]
@@ -593,6 +618,14 @@ def layout(recipe, seed=None, grow=0):
             tasks += [(pos[a[0]], pa, a[0]), (pos[a[1]], pb, a[1])]
         elif op == "OUT":
             tasks.append((pos[a[0]], cell, a[0]))
+    # ponytail: input loads already touch their own lever feed (stamped
+    # above) need no route; without this every fanout load spans the field.
+    ins = set(recipe["inputs"])
+    tasks = [t for t in tasks
+             if t[2] not in ins or not any(
+                 (t[1][0] + dx, 1, t[1][1] + dz) in feeds and
+                 wires.get((t[1][0] + dx, 1, t[1][1] + dz)) == t[2]
+                 for dx, dz in DIRS)]
     tasks.sort(key=lambda t: -(abs(t[0][0] - t[1][0]) + abs(t[0][1] - t[1][1])))
     if seed is not None:
         random.Random(seed).shuffle(tasks)
