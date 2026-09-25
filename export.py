@@ -241,7 +241,8 @@ function readout(extra){
 }
 function applyState(key){
  const v=STATES?STATES.vectors[key]:null;
- const paint=(mesh,idx,lvl)=>{mesh.setColorAt(idx,wireCol(lvl));mesh.instanceColor.needsUpdate=true;};
+ const grey=v?null:new T.Color(0x555555);
+ const paint=(mesh,idx,lvl)=>{mesh.setColorAt(idx,grey||wireCol(lvl));mesh.instanceColor.needsUpdate=true;};
  for(const k in dotIdx){const lvl=v&&v.w[k]?v.w[k]:0;paint(dotI,dotIdx[k],lvl);}
  armE.forEach(([b,dx,dz],i)=>{const k=b.p[0]+','+b.p[1]+','+b.p[2];const lvl=v&&v.w[k]?v.w[k]:0;paint(armEIM,i,lvl);});
  armN.forEach(([b,dx,dz],i)=>{const k=b.p[0]+','+b.p[1]+','+b.p[2];const lvl=v&&v.w[k]?v.w[k]:0;paint(armNIM,i,lvl);});
@@ -252,6 +253,7 @@ function applyState(key){
  for(const k in leverMeshes){const n=LEVERNET[k];leverMeshes[k].stick.rotation.x=leverState[n]?-0.5:0.25;}
   readout(v);
   renderIO(v);
+  if(!v)document.getElementById('t').textContent+=' — no data here (memory holds previous state; not simulated from power-on)';
 }
 const _ray=new T.Raycaster(),_ptr=new T.Vector2();let _down=null;
 let AC=null;function click(on){try{AC=AC||new (window.AudioContext||window.webkitAudioContext)();const o=AC.createOscillator(),g=AC.createGain();o.type='square';o.frequency.value=on?2200:1400;g.gain.setValueAtTime(0.08,AC.currentTime);g.gain.exponentialRampToValueAtTime(0.001,AC.currentTime+0.06);o.connect(g);g.connect(AC.destination);o.start();o.stop(AC.currentTime+0.07);}catch(e){}}
