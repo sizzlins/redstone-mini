@@ -763,20 +763,38 @@ def layout(recipe, seed=None, grow=0):
 
 
 def plan_bus(netspec, solid, wires, rings, W, D, seed=None):
-    """Bus lane geometry (pure: same inputs → same plan; seed only
-    shuffles row-candidate order so retries explore new lanes).
-    Driverless (input) nets plan first — lever and stub columns are
-    fixed, so they are least flexible. Every lane/lever/jog/stub cell
-    is checked against tile solids, foreign wires and halos, and
-    foreign-wire adjacency (the SHORT rule — the maze's
-    touches_foreign discipline, applied per row). Each jog/stub tries
-    both L-orientations (diode blocks often bar one approach).
-    Own-net wires merge and never block. Loud RuntimeError when no
-    lane row fits (grow backstop). '0' nets never appear here
-    (dark stubs read 0 — caller drops them)."""
+    """Bus lane geometry (pure: same (netspec, seed) → same plan).
+    Greedy lane choice deadlocks on ordering (whoever claims a
+    corridor walls the rest), so seeded calls search: several
+    shuffles of net order × row order, first complete plan wins.
+    Unseeded call does one deterministic pass (driverless nets first).
+    '0' nets never appear here (dark stubs read 0 — caller drops
+    them). Loud RuntimeError when nothing fits (grow backstop)."""
+    tries = 1 if seed is None else 25
+    last = None
+    for t in range(tries):
+        try:
+            return _plan_once(netspec, solid, wires, rings, W, D,
+                              None if seed is None else f"{seed}/{t}")
+        except RuntimeError as e:
+            last = e
+    raise last
+
+
+def _plan_once(netspec, solid, wires, rings, W, D, seed=None):
+    """One greedy pass (see plan_bus). Driverless (input) nets plan
+    first under seed None; seeded passes shuffle all nets. Every
+    lane/lever/jog/stub cell is checked against tile solids, foreign
+    wires and halos, and foreign-wire adjacency (the SHORT rule —
+    the maze's touches_foreign discipline, applied per row). Each
+    jog/stub tries both L-orientations. Own-net wires merge."""
     plan, taken = {}, []
-    order = [n for n in netspec if netspec[n]['drv'] is None] + \
-            [n for n in netspec if netspec[n]['drv'] is not None]
+    if seed is None:
+        order = [n for n in netspec if netspec[n]['drv'] is None] + \
+                [n for n in netspec if netspec[n]['drv'] is not None]
+    else:
+        order = list(netspec)
+        random.Random(seed).shuffle(order)
     for net in order:
         spec = netspec[net]
         anchor = spec['drv'] or spec['loads'][0]
