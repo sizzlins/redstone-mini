@@ -1,114 +1,87 @@
-# Handoff — redstone-mini routing session (2026-09-25)
+# Handoff — redstone-mini bus routing (2026-09-25 evening)
 
 ## Goal (evolved)
-1. Fix the 4-gate latch that never routed → DONE, verified.
-2. Full working CPU (`cpu4.txt`, 126 gates) → NOT DONE (ceiling, see failures).
-3. Along the way: ALU arithmetic circuit (`alu1.txt`) → logic proven, not routed.
-4. Standardize builds (tiles → buses → clock) → 3 spec `.md` + Phase 1 implementation plan written; execution choice pending.
+1. Phase 1 port grid → DONE, PR #1 open (`phase1-tiles`, unmerged).
+2. Replace maze A\* so dense datapaths route → v1 horizontal lanes hit a
+   structural wall (below) → v2 (relays + N-S trunks) specced, relay core
+   proven by spike, v2 implementation plan NOT yet written.
 
-## Current state (all pushed to `origin/master`)
-- **Green, verified:** 4-gate latch (6/6 seeds + hold sequence), micro1 (full
-  `layout_retry(verify=True)`, all 16 vectors, 1434 blocks), suite
-  (`recipe.py`, `serve.py --check`, `redstone_mini.py` demo at 114 blocks,
-  `sim.py` incl. crossover/comparator, examples, `latch_sr.txt`).
-- **`build.html` holds the verified micro1 build** (re-export with
-  `python -u scratch/exportmicro.py`; note `redstone_mini.py` overwrites it
-  with the demo).
-- **Red (documented ceiling):** `--alu8`/adder8, `alu4` (flat and banded),
-  `cpu4`, `ctrl_decode`. All fail routing with dense-column seals.
-- alu1 logic proven 32/32 via `eval_net`; not routed.
+## Current state
+- **Master + suite green** (untouched all session: `sim/recipe/export/serve`
+  green, demo 114 blocks maze-era).
+- **Branch `phase1-tiles`** (pushed): lamp east-first (1 line) + lamp-anchored
+  port-grid asserts in `layout.py.__main__`. PR #1 OPEN, unmerged.
+- **Branch `phase2-design`** (local only, 8 commits on master): v1 bus router
+  (planner + stamp + order search), v1+v2 plans, v2 spec. Worktree clean.
+- **Green under v1 bus (verified):** `example_and` (42 blocks/0 reps),
+  `example_2gates` (90/3), `latch_sr` (77/0), demo (90 blocks, was 114),
+  `python layout.py` ports ok. `build.html` currently holds the DEMO
+  (overwritten by the Task-3 demo run; gitignored, no repo impact).
+- **Proven by spike (temp-only, NOT committed):** relay-split expansion —
+  every hop spans ≤1 band gap (asserted) + truth tables identical pre/post
+  on 4-gate (4→13 gates, 4 vectors), micro1 (10→36, 16), alu1 (21→40, 32),
+  alu4 (72→648, 1024).
+- **Red:** v1 lanes fail 4-gate 6/6, micro1 (net S skipper); alu4/cpu4 never
+  routed under any router (maze ceiling stands).
 
-## What changed (commits, oldest first)
-- `7247b31` 4-gate latch routes: per-column auto-band + topo-sort,
-  frontier rip-up (records blocking cells in A\*), stub-tail repeater
-  cover, shortest-of-3-margins.
-- `f757390` phase-2 comment matches longest-first order.
-- `ab52aed` zero-wire input fanout: one lever per load, redundant tasks
-  skipped, first-OR lever rule.
-- `b40b2d5` BAND sections in recipe language; input-relay deletion;
-  banded per-band relay + driver replicas; placement guards
-  (`spot_free`, row-march, W-cap fix); LATCH loop-break fix (was silently
-  dropping gates!); banded XOR stays a tile.
-- `fb7f625` torch-guard routing (no hugging torch cells/blocks mid-run),
-  negotiated congestion lite (+5 on ripped cells), lever-island checker
-  seeding, NOT/NOR port-stub stamping.
-- `7b60cea` `alu1.txt` (1-bit AND/OR/ADD/XOR slice), `micro1.txt` tracked.
-- `59a00ac` viewer gray no-data for unverified latch-hold combos.
-- `61e0f91` banded OR uses junctions (delete NOR+NOT doubling, net −15).
-- `b58da06` three standardization specs (`docs/phase{1,2,3}-*.md`).
-- `79eabac` Phase 1 implementation plan (`docs/plans/2026-09-25-phase1-tiles.md`).
+## What changed (newest last)
+1. v2 brainstorm (trunks + relays, §§1–3 approved) → v2 spec committed
+   (`docs/superpowers/specs/2026-09-25-bus-v2-design.md`).
+2. STOPPED v1 implementation per debugging rule (8 root-cause fixes, wall
+   just moved): committed progress on `phase2-design`, reverted temp hacks.
+3. v1 order search (25 shuffles/call) + decay budgets + station shift +
+   OPEN-trace solid repeaters + driver jogs + stub L-shapes + pitch-2 +
+   ring-awareness. Each verified; each revealed the next wall.
+4. v1 Tasks 1–2 done (planner+probe, stamp, small builds green).
+5. Phase-2 v1 plan written; brainstorm (big-bang, every-net-lane) before it.
+6. Phase-1 plan executed; handoff updated; PR #1 created.
+7. Older (from prior session): 4-gate latch maze fix, alu1 logic proof 32/32,
+   phase specs + Phase-1 plan docs, ~20 reverted maze heuristics.
 
-## What failed (and was reverted or shelved)
-- Rip-up ping-pong (S↔Q, T0↔nOP…): deterministic blame cycles; fails-cap
-  terminates but never converges on dense knots.
-- Bend penalty, congestion halo, OR-goal priority, OR b-cell spacing,
-  shortest-first ordering: each unblocked one pair and starved the next.
-  All reverted (kept only what suite-verified: congestion-lite + guard).
-- Depth bands / depth grid: broke 4-gate (shared-band crowding,
-  spillover cascades); reverted to index bands + bandrows.
-- Column pitch 24→12: breaks 15-wide LATCH adjacency (proven by
-  instrumented rejection trace); reverted same session.
-- Subdividing bands (per-bit → sub → sub-sub): Zeno effect, each split
-  moved the seal; stopped.
-- `--alu8` on master: no verdict in 15 min (never proven green anywhere).
+## What failed (with evidence, no theory)
+- **v1 lanes vs 4-gate:** mutual walling — D@10 walls nD south (pitch),
+  W@17 walls east rows, S-AND tiles wall center. 0/200 seeds (≈5000 order
+  samples) + forced-order probe (wall moves, never falls). Structural:
+  rigid straight lanes + pitch-2 cannot pack interleaved port rows.
+- **v1 vs micro1:** net S (band 1→3 skipper), no lane row. Same class.
+- **alu4 relay blowup (spike datum):** per-column chaining on unbanded
+  auto-columns = 576 bufs for 72 gates. Structurally sound, needs cost
+  control (share? limit? accept?) before layout.
+- **Plan bugs fixed en route:** OUT/gate mismatch, easternmost anchor
+  (shrink-wrap translates coords), tap-coord typo, tuple seeds,
+  probe lane-7/stations, unconditional "sequence ok" print, task-reviewer
+  pre-judgment traps. Process calibration: hand-simming tile geometry
+  failed repeatedly — instrument (`dbgrows` pattern) or replicate in
+  probes; never trust mental coordinates.
 
-## Files touched (tracked)
-- `layout.py` (placer/router), `recipe.py` (parser/expand/minimize),
-  `core.py` (`TORCH_BACK`), `export.py` (viewer no-data state).
-- New recipes: `alu1.txt`, `micro1.txt`.
-- Docs: `docs/phase1-standard-tiles.md`, `docs/phase2-bus-routing.md`,
-  `docs/phase3-clock-discipline.md`,
-  `docs/plans/2026-09-25-phase1-tiles.md`.
-- Scratch (gitignored, probes/runners/annotated copies):
-  `scratch/{probe,runalu,runalu1,rumicro,exportmicro,proofalu,checkhtml}.py`,
-  `scratch/alu4_banded.txt`, build artifacts (`build.html/.mcfunction/.schem`).
-
-## Environment gotchas (learned the hard way)
-- PowerShell 7 wrapper: no `grep`/`head`/`tail`, no `/dev/null`, no `&&`
-  with `$env:` assignments; quote inline `python -c` via files instead.
-- `Start-Process` background launches glitch the wrapper and pop visible
-  consoles: run foreground with `python -u` + heartbeat prints + watchdog
-  (`os._exit` on timeout). Nothing ever waits for stdin.
-- `__pycache__` goes stale when edit+run land in the same mtime second:
-  delete it when results contradict the code on disk.
-- `layout_retry(r, verify=True, tries=0|grows=0)` raises `TypeError`
-  (`raise last` with `last=None`); minimum tries=1, grows=1.
-- `sim_verify` SKIPS latch-hold vectors (S=R=0, undefined power-on) and
-  never compares latch outputs — direct `_run_vec` + `eval_net` checks
-  are required for latch circuits.
+## Files touched
+- **Tracked, on `phase2-design`:** `layout.py` (v1 bus router: plan_bus +
+  order search + stamp + trace fix); `docs/plans/2026-09-25-phase2-bus.md`
+  (v1 plan, in sync — mechanical parity check 0 diffs);
+  `docs/superpowers/specs/2026-09-25-bus-routing-design.md` (v1 spec);
+  `docs/superpowers/specs/2026-09-25-bus-v2-design.md` (v2 spec).
+- **Tracked, on `phase1-tiles`:** `layout.py` (lamp line + `__main__`
+  asserts), `handoff.md` (phase-1 section).
+- **Gitignored (never merge):** `scratch/countrep.py`, `scratch/check4gate.py`
+  (honest skip print), `scratch/exportmicro.py` runs.
+- **Temp only (prove, don't merge):** `probe_bus.py`, `relayspike.py`,
+  `parity*.py`, `sweepfour.py`, `dbg*.py`.
+- **Untouched:** `sim.py`, `recipe.py`, `export.py`, `serve.py`, `core.py`.
 
 ## What next (in order)
-1. **Execute Phase 1 plan** (`docs/plans/2026-09-25-phase1-tiles.md`):
-   lamp order (1 line), port-grid asserts, suite green. Awaiting execution
-   choice: subagent-driven vs inline.
-2. **Phases 2–3** need their own brainstorm→plan cycles when Phase 1 lands.
-3. **Dense datapaths** (adder8/alu4/cpu4) need, ranked: congestion schedule
-   (static +5 now), lane-assigned router, or bridge layers (sim physics +
-   scaffolding already exist). Do NOT add more maze heuristics — ~20 were
-   tried, all migrated failures.
-4. **CPU path** if revived: `BAND` syntax + bit-slice annotation exist
-   (`scratch/alu4_banded.txt` as template); program counter → instruction
-   ROM → RAM per the researched architecture (accumulator/RISC, Harvard,
-   torch-NOR cores already match community practice).
-
-## 2026-09-25 — Phase 1 executed (branch `phase1-tiles`, PR to master)
-
-Two commits on `phase1-tiles` (pushed):
-- `2f254e6` lamp east-first (1 line in `layout.py`, char-locked `((5,9),'Q')`).
-- `fc56bd9` lamp-anchored port-grid asserts in `layout.py.__main__`
-  (`python layout.py` → `ports ok`).
-
-Deviations from `docs/plans/2026-09-25-phase1-tiles.md` (plan bugs, root-caused):
-- Plan recipe `OUT y,z,w` matched no gate (`KeyError: 'y'`) → isolated
-  single-tile builds (`OUT n`, `OUT t`).
-- Easternmost-cell anchor wrong twice: shrink-wrap (`layout.py:875-889`)
-  translates all coords, and routed nets run east past the tile → relative
-  offsets off the lamp (NOT out −2/port −5; AND out −2, A −10/−1, B −10/+2).
-- 4-gate recipe is micro1's gated-D head (`micro1.txt:3-6`), not in the
-  phase-1 doc → `scratch/check4gate.py` (gitignored): `4-gate bad: 0 /6`
-  + `sequence ok`.
-
-Verified green: `recipe.py`, `serve.py --check`, `sim.py`, `layout.py`,
-demo 114 blocks, micro1 1434 blocks re-exported to `build.html`.
-
-Next: Phase 2 (bus routing) brainstorm → spec → plan.
+1. **Write the v2 implementation plan** (`docs/plans/2026-09-25-phase2-bus-v2.md`):
+   Task 1 crossing-relays in `expand_gates` (+ `__main__` asserts, transcribe
+   the proven spike) + retire-vs-keep call on old fanout/replication;
+   Task 2 trunk planner (transpose v1 legality core) + probe; Task 3 stamp +
+   small builds; Task 4 ladder with 4-gate FIRST + repeater ratio; Task 5
+   self-check + suite + retire dead code (v1 orphans: astar/route/firstport/
+   NOR/heapq/TORCH_BACK/paths + old expander mechanisms) + push.
+   Base: `phase2-design` as-is. Pre-decided in spec: no minimize guard needed
+   (expansion runs post-minimize — verify by reading, not memory).
+2. **Decide the alu4 buf question before layout:** accept 8× tiles, share
+   chains, or limit relay depth (spec gate counts repeaters, not blocks —
+   but 648 placements must still fit/verify).
+3. **Execute v2 plan** (subagent-driven vs inline — ask then).
+4. **Land:** merge PR #1 first (v2 base assumes it), then v2 PR.
+5. **Do NOT:** add maze heuristics (~20 reverted for migrating failures);
+   trust mental tile coordinates (instrument instead); merge `scratch/`.
