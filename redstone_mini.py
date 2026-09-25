@@ -5,14 +5,7 @@ from core import base
 from recipe import eval_net, parse_recipe
 from sim import layout_retry
 from export import export_mcfunction, export_schem, export_html
-from serve import serve
-
-
-DEMO = """IN a, b, c
-OUT y
-t = a AND b
-y = t OR c
-"""
+from serve import serve, DEMO
 
 
 

@@ -17,15 +17,13 @@ import time
 DUMP = r"C:\Users\LOQ\AppData\Local\Temp\opencode\dbg_state.json"
 
 
-def dump_state(path, gates, netspec, busplan, solid, wires, rings, W, D):
+def dump_state(path, gates, netspec, solid, wires, rings, W, D):
     """Planning-frame snapshot (called from layout.py, both paths)."""
     def ck(cell):
         return ",".join(map(str, cell))
     doc = {"W": W, "D": D, "gates": gates,
-           "netspec": {n: {"drv": s.get("drv"), "loads": s.get("loads"),
-                           "db": s.get("db"), "lbs": s.get("lbs")}
+           "netspec": {n: {"drv": s.get("drv"), "loads": s.get("loads")}
                        for n, s in netspec.items()},
-           "busplan": busplan,
            "solid": {ck(c): v for c, v in solid.items()},
            "wires": {ck(c): v for c, v in wires.items()},
            "rings": {ck(c): sorted(v) for c, v in rings.items()}}
@@ -85,8 +83,6 @@ if __name__ == "__main__":
     if rest and rest[0] == "net":
         n = rest[1]
         print("NET", n, doc["netspec"].get(n))
-        if doc["busplan"] and n in doc["busplan"]:
-            print("PLAN", n, doc["busplan"][n])
     elif rest:
         x0, z0, x1, z1 = map(int, rest[0].split(","))
         show_map(doc, x0, z0, x1, z1)

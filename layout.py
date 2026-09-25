@@ -682,7 +682,7 @@ def layout(recipe, seed=None, grow=0):
         # check per layout; replaces every ad-hoc Temp probe.
         if _os.environ.get("REDSTONE_DEBUG"):
             from debug import dump_state
-            dump_state(_os.environ["REDSTONE_DEBUG"], gates, netspec, None,
+            dump_state(_os.environ["REDSTONE_DEBUG"], gates, netspec,
                        solid, wires, rings, W, D)
     for name in recipe["outputs"]:
         pos[name]  # KeyError if output is undriven: loud, as before
