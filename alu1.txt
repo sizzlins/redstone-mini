@@ -1,0 +1,27 @@
+IN A, B, CIN, OP1, OP0
+OUT Y, COUT
+BAND 0
+n1 = NOT OP1
+n0 = NOT OP0
+BAND 1
+AB = A AND B
+O = A OR B
+X = A XOR B
+U = X AND CIN
+C = AB OR U
+S = X XOR CIN
+BAND 2
+m0 = AB AND n1
+t0 = m0 AND n0
+m1 = O AND n1
+t1 = m1 AND OP0
+m2 = S AND OP1
+t2 = m2 AND n0
+m3 = X AND OP1
+t3 = m3 AND OP0
+m4 = C AND OP1
+COUT = m4 AND n0
+BAND 3
+o1 = t0 OR t1
+o2 = o1 OR t2
+Y = o2 OR t3

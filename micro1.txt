@@ -1,0 +1,12 @@
+IN D, W, B, OP
+OUT Y
+nD = NOT D
+S = D AND W
+R = nD AND W
+Q = LATCH S R
+T0 = Q AND B
+T1 = Q OR B
+nOP = NOT OP
+m0 = T0 AND OP
+m1 = T1 AND nOP
+Y = m0 OR m1
