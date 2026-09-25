@@ -656,7 +656,7 @@ def layout(recipe, seed=None, grow=0):
     for name in recipe["outputs"]:
         ox_, oz = pos[name]
         done = False
-        for dx, dz in ((1, 0), (0, 1), (-1, 0), (0, -1)):
+        for dx, dz in ((1, 0), (0, 1), (0, -1), (-1, 0)):
             fx, lx = (ox_ + dx, oz + dz), (ox_ + dx * 2, oz + dz * 2)
             if not (0 <= lx[0] < W and 0 <= lx[1] < D):
                 continue
