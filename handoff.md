@@ -1,114 +1,104 @@
-# Handoff — redstone-mini routing session (2026-09-25)
+# Handoff — redstone-mini routing (2026-09-26 evening)
 
 ## Goal (evolved)
-1. Fix the 4-gate latch that never routed → DONE, verified.
-2. Full working CPU (`cpu4.txt`, 126 gates) → NOT DONE (ceiling, see failures).
-3. Along the way: ALU arithmetic circuit (`alu1.txt`) → logic proven, not routed.
-4. Standardize builds (tiles → buses → clock) → 3 spec `.md` + Phase 1 implementation plan written; execution choice pending.
+1. Phase 1 port grid → DONE, PR #1 merged.
+2. Phase 2 routing → v1 lanes walled → v2 trunks+relays tried, both hit
+   walls → shipped maze per-hop + master boosters. 4-gate + micro1 green.
+   alu1/alu4 ceiling stands under every router tried.
+3. Hardening (NEW, shipped): crossover bridges, astar anti-freeze cap,
+   driver-side rip-up. Suite green, greens byte-identical.
+4. Single-lever panel (DECIDED 2026-09-26: ship with ceiling): south
+    bank, inputs ride the router. Small builds green and cheaper
+    (demo 270→246 blocks); micro1 red under every variant (see What
+    failed). Panel-vs-micro1 call went to the user → ship, note ceiling.
 
-## Current state (all pushed to `origin/master`)
-- **Green, verified:** 4-gate latch (6/6 seeds + hold sequence), micro1 (full
-  `layout_retry(verify=True)`, all 16 vectors, 1434 blocks), suite
-  (`recipe.py`, `serve.py --check`, `redstone_mini.py` demo at 114 blocks,
-  `sim.py` incl. crossover/comparator, examples, `latch_sr.txt`).
-- **`build.html` holds the verified micro1 build** (re-export with
-  `python -u scratch/exportmicro.py`; note `redstone_mini.py` overwrites it
-  with the demo).
-- **Red (documented ceiling):** `--alu8`/adder8, `alu4` (flat and banded),
-  `cpu4`, `ctrl_decode`. All fail routing with dense-column seals.
-- alu1 logic proven 32/32 via `eval_net`; not routed.
+## Current state
+- **Master:** PR #1 merged (phase-1 tiles). Suite green (multi-lever).
+- **Branch `phase2-design`** (PR #2 OPEN): commits through `6dd2b78`
+  (Task-3 cleanup + median-band bank + inputs-first) — all committed and
+  pushed pending. Panel plan doc still untracked
+  (`docs/plans/2026-09-26-single-lever-panel.md`, never merge as-is).
+- **Green (verified, WITH panel):** full suite — `recipe.py`, `sim.py`
+  (incl. crossover), `serve.py --check`, `layout.py` (ports + or-lever +
+  panel + bridge checks); `example_and`, `example_2gates` (110),
+  fanout probe (534, shared input exactly 1 lever), demo (270 blocks).
+- **Red/slow:** micro1 + panel (full retry >290s unfinished; pre-panel
+  2s/1960 blocks). alu1 fast-red (walls move per seed: AB/n0/t1);
+  alu4/cpu4 never routed under any router.
+- **Honesty:** panel costs real wire — demo 110→270 blocks, fanout 534.
+  micro1 repeaters 73 vs master 46 (pre-panel) — no economy won, only 4-gate.
+  Debt-ledger old rows predate the bridge line-shift (grep `ponytail:`).
 
-## What changed (commits, oldest first)
-- `7247b31` 4-gate latch routes: per-column auto-band + topo-sort,
-  frontier rip-up (records blocking cells in A\*), stub-tail repeater
-  cover, shortest-of-3-margins.
-- `f757390` phase-2 comment matches longest-first order.
-- `ab52aed` zero-wire input fanout: one lever per load, redundant tasks
-  skipped, first-OR lever rule.
-- `b40b2d5` BAND sections in recipe language; input-relay deletion;
-  banded per-band relay + driver replicas; placement guards
-  (`spot_free`, row-march, W-cap fix); LATCH loop-break fix (was silently
-  dropping gates!); banded XOR stays a tile.
-- `fb7f625` torch-guard routing (no hugging torch cells/blocks mid-run),
-  negotiated congestion lite (+5 on ripped cells), lever-island checker
-  seeding, NOT/NOR port-stub stamping.
-- `7b60cea` `alu1.txt` (1-bit AND/OR/ADD/XOR slice), `micro1.txt` tracked.
-- `59a00ac` viewer gray no-data for unverified latch-hold combos.
-- `61e0f91` banded OR uses junctions (delete NOR+NOT doubling, net −15).
-- `b58da06` three standardization specs (`docs/phase{1,2,3}-*.md`).
-- `79eabac` Phase 1 implementation plan (`docs/plans/2026-09-25-phase1-tiles.md`).
+## What changed (newest last)
+1. Panel experiment: brainstorm (4 sections approved) → spec
+   (`docs/superpowers/specs/2026-09-26-single-lever-panel-design.md`,
+   committed) → plan (`docs/plans/`, untracked) → subagent Tasks 1–2
+   (bank commit `9980297`, routing commit `7efe42e`, both review-clean).
+   Task 3 subagent cancelled mid-flight (left uncommitted edits + 3
+   runaway pythons at ~800s CPU — killed); Task 3 completed inline
+   (orbbs/feeds dead-code deletion, panel check, or-lever message
+   batch→bank). Suite green throughout. Micro1 thrash found via timed
+   probes (earlier "slow" readings were broken inline-quote probes —
+   SyntaxError on stderr, fixed by moving to `scratch/*.py`).
+2. Bridges + antifreeze + driver ripup (committed `2b68e72`, in PR #2):
+   single pre-proven crossover hop (last-resort, slope-aware open-check +
+   live-fire check); astar pop cap 100k (`REDSTONE_ASTAR_CAP`, micro1
+   green down to 5k, 20× cap reproduces identical walls — cap innocent);
+   two-tier rip-up (goal-side first, driver-side pre-raise; AB entombment
+   fixed). Bus-plan docs removed from branch (attic holds substance).
+   bb-first ordering tried, reverted (micro1 >290s thrash — ordering
+   games backfire).
+3. Audit cuts to scratch (-190/+17) + debt ledger + v2 PR prep + rip-up
+   restore + relay revert (see prior handoff; unchanged).
+4. Trunk planner deleted (~210 lines, 12-fix debug-rule stop); relays
+   reverted (seal pockets); v1 lanes walled (0/200 seeds).
 
-## What failed (and was reverted or shelved)
-- Rip-up ping-pong (S↔Q, T0↔nOP…): deterministic blame cycles; fails-cap
-  terminates but never converges on dense knots.
-- Bend penalty, congestion halo, OR-goal priority, OR b-cell spacing,
-  shortest-first ordering: each unblocked one pair and starved the next.
-  All reverted (kept only what suite-verified: congestion-lite + guard).
-- Depth bands / depth grid: broke 4-gate (shared-band crowding,
-  spillover cascades); reverted to index bands + bandrows.
-- Column pitch 24→12: breaks 15-wide LATCH adjacency (proven by
-  instrumented rejection trace); reverted same session.
-- Subdividing bands (per-bit → sub → sub-sub): Zeno effect, each split
-  moved the seal; stopped.
-- `--alu8` on master: no verdict in 15 min (never proven green anywhere).
+## What failed (with evidence, no theory)
+- **Panel vs micro1 (decided: ship, note ceiling):** three fixes tried
+  with timings — inputs-last (seal moved gates→OP, 26s/try), median-band
+  bank (OP marathon 160→26 cells, demo 270→246, goals still sealed 11s),
+  inputs-first+median (W goal sealed by S-bridge's own supports+rings).
+  Grow ruled out (78s, still sealed — entombment is local). Bridges ruled
+  out (23 free hops exist but feet land inside the wall; segments can't
+  reach). Relay chaining ruled out (fanout 2 < 3, buffers park at bank).
+  Verdict: single south-bank driver can't enter dense tile rows on the
+  flat y=1 mesh. Small builds unaffected (suite green incl. panel check).
+  Full data: `scratch/panel-micro1-report.md` (gitignored).
+- **alu1 standing wall:** gate-fed OR diode-backs buried 1 cell inside
+  their own OR's diode/exit cluster (dump-proven, seed=1: t1→(78,14)).
+  Neither order, rip-up, nor 1-hop bridges dissolve it — placement
+  geometry, needs design talk.
+- **Attempt economics:** red attempts run 55–408s even capped; 36-combo
+  retry is hours. Background + poll + per-attempt timeouts mandatory;
+  never trust foreground on dense builds.
+- **Subagent ops lesson:** cancelled Task-3 left edits + runaways; inline
+  `python -c` with multiline recipes breaks on pwsh (use `scratch/*.py`
+  with sys.path insert, capture stderr).
+- **Prior:** trunks (12 fixes, wall moved each time), relays (seal
+  pockets), lanes (0/200), alu4 relay blowup datum (576 bufs/72 gates).
 
-## Files touched (tracked)
-- `layout.py` (placer/router), `recipe.py` (parser/expand/minimize),
-  `core.py` (`TORCH_BACK`), `export.py` (viewer no-data state).
-- New recipes: `alu1.txt`, `micro1.txt`.
-- Docs: `docs/phase1-standard-tiles.md`, `docs/phase2-bus-routing.md`,
-  `docs/phase3-clock-discipline.md`,
-  `docs/plans/2026-09-25-phase1-tiles.md`.
-- Scratch (gitignored, probes/runners/annotated copies):
-  `scratch/{probe,runalu,runalu1,rumicro,exportmicro,proofalu,checkhtml}.py`,
-  `scratch/alu4_banded.txt`, build artifacts (`build.html/.mcfunction/.schem`).
-
-## Environment gotchas (learned the hard way)
-- PowerShell 7 wrapper: no `grep`/`head`/`tail`, no `/dev/null`, no `&&`
-  with `$env:` assignments; quote inline `python -c` via files instead.
-- `Start-Process` background launches glitch the wrapper and pop visible
-  consoles: run foreground with `python -u` + heartbeat prints + watchdog
-  (`os._exit` on timeout). Nothing ever waits for stdin.
-- `__pycache__` goes stale when edit+run land in the same mtime second:
-  delete it when results contradict the code on disk.
-- `layout_retry(r, verify=True, tries=0|grows=0)` raises `TypeError`
-  (`raise last` with `last=None`); minimum tries=1, grows=1.
-- `sim_verify` SKIPS latch-hold vectors (S=R=0, undefined power-on) and
-  never compares latch outputs — direct `_run_vec` + `eval_net` checks
-  are required for latch circuits.
+## Files touched
+- **Tracked, on `phase2-design`:** `layout.py` (bridges + cap + two-tier
+  ripup + panel bank/routing/check, COMMITTED through `7efe42e` EXCEPT
+  Task-3 cleanup + panel check + message fix = UNCOMMITTED);
+  `PONYTAIL-DEBT.md` (+4 bridge/cap rows, +2 watch items);
+  `docs/superpowers/specs/2026-09-26-single-lever-panel-design.md` (new);
+  `debug.py`, `sim.py`, `recipe.py`, `export.py`, `redstone_mini.py`
+  (phase-2/audit, committed); `handoff.md` (this file).
+- **Untracked (never merge as-is):** `docs/plans/2026-09-26-single-lever-panel.md`.
+- **Gitignored (never merge):** `scratch/` keepers + `probe_panel.py`,
+  `probe_micro1.py`, `micro1.log/.err` (this session's probes);
+  `scratch/attic.md`, `scratch/attic-plans/`; `build.*` outputs.
+- **Untouched:** `serve.py`, `core.py`.
 
 ## What next (in order)
-1. **Execute Phase 1 plan** (`docs/plans/2026-09-25-phase1-tiles.md`):
-   lamp order (1 line), port-grid asserts, suite green. Awaiting execution
-   choice: subagent-driven vs inline.
-2. **Phases 2–3** need their own brainstorm→plan cycles when Phase 1 lands.
-3. **Dense datapaths** (adder8/alu4/cpu4) need, ranked: congestion schedule
-   (static +5 now), lane-assigned router, or bridge layers (sim physics +
-   scaffolding already exist). Do NOT add more maze heuristics — ~20 were
-   tried, all migrated failures.
-4. **CPU path** if revived: `BAND` syntax + bit-slice annotation exist
-   (`scratch/alu4_banded.txt` as template); program counter → instruction
-   ROM → RAM per the researched architecture (accumulator/RISC, Harvard,
-   torch-NOR cores already match community practice).
-
-## 2026-09-25 — Phase 1 executed (branch `phase1-tiles`, PR to master)
-
-Two commits on `phase1-tiles` (pushed):
-- `2f254e6` lamp east-first (1 line in `layout.py`, char-locked `((5,9),'Q')`).
-- `fc56bd9` lamp-anchored port-grid asserts in `layout.py.__main__`
-  (`python layout.py` → `ports ok`).
-
-Deviations from `docs/plans/2026-09-25-phase1-tiles.md` (plan bugs, root-caused):
-- Plan recipe `OUT y,z,w` matched no gate (`KeyError: 'y'`) → isolated
-  single-tile builds (`OUT n`, `OUT t`).
-- Easternmost-cell anchor wrong twice: shrink-wrap (`layout.py:875-889`)
-  translates all coords, and routed nets run east past the tile → relative
-  offsets off the lamp (NOT out −2/port −5; AND out −2, A −10/−1, B −10/+2).
-- 4-gate recipe is micro1's gated-D head (`micro1.txt:3-6`), not in the
-  phase-1 doc → `scratch/check4gate.py` (gitignored): `4-gate bad: 0 /6`
-  + `sequence ok`.
-
-Verified green: `recipe.py`, `serve.py --check`, `sim.py`, `layout.py`,
-demo 114 blocks, micro1 1434 blocks re-exported to `build.html`.
-
-Next: Phase 2 (bus routing) brainstorm → spec → plan.
+1. **Panel decision DONE (ship with ceiling)** — user chose ship on
+    2026-09-26. No revert, no redesign this round.
+2. **Merge v2 PR #2** — panel code is in the branch, committed
+    (`6dd2b78`); push + merge.
+3. **alu1/alu4 routing** — open architectural question (OR-cluster
+   geometry first; trunk+relay+maze+bridge avenues exhausted with data).
+4. **Do NOT:** add maze heuristics (~20 reverted); trust mental tile
+   coordinates (`debug.py` instead); merge `scratch/` or the worktree;
+   run dense retries in foreground (background + poll + timeouts);
+   dispatch long subagents unattended (they leave runaways when cancelled).

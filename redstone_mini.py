@@ -2,17 +2,10 @@
 import sys
 
 from core import base
-from recipe import eval_net, parse_recipe, build_adder8
+from recipe import eval_net, parse_recipe
 from sim import layout_retry
 from export import export_mcfunction, export_schem, export_html
-from serve import serve
-
-
-DEMO = """IN a, b, c
-OUT y
-t = a AND b
-y = t OR c
-"""
+from serve import serve, DEMO
 
 
 
@@ -32,30 +25,13 @@ def demo():
     print(f"ok: {len(blocks)} blocks -> build.html + build.mcfunction")
 
 
-
-def demo_alu8():
-    r = build_adder8()
-    for a, b in ((13, 29), (200, 100), (255, 1), (0, 0)):
-        v = {f"A{i}": (a >> i) & 1 for i in range(8)}
-        v.update({f"B{i}": (b >> i) & 1 for i in range(8)})
-        got = eval_net(r, v)
-        s = sum(got[f"S{i}"] << i for i in range(8))
-        assert (s, got["C8"]) == ((a + b) & 255, (a + b) >> 8), (a, b, s)
-    blocks, size, io, st = layout_retry(r, verify=True)
-    export_mcfunction(blocks, "build_alu8.mcfunction")
-    export_schem(blocks, "build_alu8.schem")
-    export_html(blocks, size, "build_alu8.html", "8-bit adder", st)
-    print(f"alu8 ok: {len(blocks)} blocks -> build_alu8.html + build_alu8.mcfunction")
-
 if __name__ == "__main__":
     if "--serve" in sys.argv:
         i = sys.argv.index("--serve")
         serve(int(sys.argv[i + 1]) if i + 1 < len(sys.argv) else 8000)
         sys.exit(0)
     demo()
-    if "--alu8" in sys.argv:
-        demo_alu8()
-    elif len(sys.argv) > 1:  # custom recipe file
+    if len(sys.argv) > 1:  # custom recipe file
         text = open(sys.argv[1]).read()
         r = parse_recipe(text)
         blocks, size, io, st = layout_retry(r, verify=True)
