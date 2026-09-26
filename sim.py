@@ -273,9 +273,19 @@ def _run_vec(vec, init, ctx):
             if con.get(c, 0) != v:
                 con[c] = v
                 wake(now, c)
-    return ({net: any(pw.get((cell[0] + dx, cell[1], cell[2] + dz), 0) >= 1
-                     for dx, dz in DIRS)
-            for cell, net in lampnet.items()},
+    def _lit(cell):
+        # ponytail: lamps need pointing-at dust (vanilla arms). End-of-line
+        # dust aims at the lamp beyond its tip; a straight run passing
+        # sideways does not light a side lamp. Isolated dust counts (cross
+        # assumed; layouts never stamp dots).
+        for dx, dz in DIRS:
+            if pw.get((cell[0] + dx, cell[1], cell[2] + dz), 0) < 1:
+                continue
+            if all((cell[0] + dx + ex, cell[1], cell[2] + dz + ez) not in dust
+                   for ex, ez in DIRS if (ex, ez) != (dx, dz)):
+                return True
+        return False
+    return ({net: _lit(cell) for cell, net in lampnet.items()},
             {c: v for c, v in pw.items() if v},
             {c: 1 if tl.get(c, False) else 0 for c in torch},
             ticks[0],
@@ -462,6 +472,17 @@ if __name__ == "__main__":
     _g3, _, _, _, _, _ = _run_vec({"A": 1}, None, _p3)
     assert _g3.get("B", False) is False, _g3
     print("vertical units ok: stacked dark, step-up lit, lid blocks")
+    # pointing: end-of-line dust lights the lamp beyond its tip...
+    _b4 = [(0, 1, 0, "minecraft:lever"), (1, 1, 0, W_), (2, 1, 0, W_), (3, 1, 0, "minecraft:redstone_lamp")]
+    _p4, _io4 = _hand(_b4, {(0, 0): "A"}, {(3, 1, 0): "B"})
+    _g4, _, _, _, _, _ = _run_vec({"A": 1}, None, _p4)
+    assert _g4.get("B", False) is True, _g4
+    # ...but a straight run passing sideways does not light a side lamp.
+    _b5 = [(0, 1, 0, "minecraft:lever"), (1, 1, 0, W_), (2, 1, 0, W_), (3, 1, 0, W_), (1, 1, 1, "minecraft:redstone_lamp")]
+    _p5, _io5 = _hand(_b5, {(0, 0): "A"}, {(1, 1, 1): "B"})
+    _g5, _, _, _, _, _ = _run_vec({"A": 1}, None, _p5)
+    assert _g5.get("B", False) is False, _g5
+    print("lamp pointing ok: tip lights, passerby dark")
     CB = "minecraft:cobblestone"
     _xb = [(2, 1, 5, "minecraft:lever")] + [(x, 1, 5, W_) for x in range(3, 10)] + [(10, 1, 5, "minecraft:redstone_lamp")]
     _xb += [(7, 1, 1, "minecraft:lever"), (7, 1, 2, W_), (7, 1, 3, W_)]

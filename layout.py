@@ -281,7 +281,7 @@ def layout(recipe, seed=None, grow=0):
         x = max(min(_ax[name], W - 2), _prev)
         if not (x + 1 < W and bz - 1 >= 0):
             raise RuntimeError(f"bank lever out of bounds for {name}")
-        if (x, bz) in solid or (x, bz) in wires or (x + 1, bz) in solid or (x + 1, 1, bz) in wires:
+        if (x, bz) in solid or (x, 1, bz) in wires or (x + 1, bz) in solid or (x + 1, 1, bz) in wires:
             raise RuntimeError(f"bank lever spot taken for {name} at {(x, bz)}")
         blocks.append((x, 1, bz, "minecraft:lever"))
         solid[(x, bz)] = ("lever", name)
@@ -426,7 +426,7 @@ def layout(recipe, seed=None, grow=0):
             s = _snap()
             try:
                     j = (jx, jz)
-                    if j in solid or j in wires:
+                    if j in solid or (j[0], 1, j[1]) in wires:
                         raise RuntimeError(f"OR cell blocked at {j}")
                     reps = []
                     seen = {j}
@@ -442,7 +442,7 @@ def layout(recipe, seed=None, grow=0):
                             for step in (1, 2, 3):
                                 r = (j[0] + dx * step, j[1] + dz * step)
                                 b = (j[0] + dx * (step + 1), j[1] + dz * (step + 1))
-                                if r in solid or r in wires or b in solid or b in wires \
+                                if r in solid or (r[0], 1, r[1]) in wires or b in solid or (b[0], 1, b[1]) in wires \
                                    or r in seen or b in seen:
                                     continue
                                 facing = {(1, 0): "west", (-1, 0): "east",
@@ -884,7 +884,7 @@ def layout(recipe, seed=None, grow=0):
             fx, lx = (ox_ + dx, oz + dz), (ox_ + dx * 2, oz + dz * 2)
             if not (0 <= lx[0] < W and 0 <= lx[1] < D):
                 continue
-            if lx in solid or lx in wires or fx in solid or fx in wires:
+            if lx in solid or (lx[0], 1, lx[1]) in wires or fx in solid or (fx[0], 1, fx[1]) in wires:
                 continue
             stamp_wire([fx], name)  # touches out stub: zero-wire tap
             blocks.append((lx[0], 1, lx[1], "minecraft:redstone_lamp"))
