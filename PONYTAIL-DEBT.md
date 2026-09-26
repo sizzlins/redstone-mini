@@ -38,6 +38,14 @@ anti-rot devices themselves, listed for completeness.
   ceiling: flat worlds (breaks on uneven terrain). upgrade: none named. `no-trigger`
 - layout.py:858, port-grid self-check (check-marker, not a shortcut). `no-trigger`
 - layout.py:885, or-lever self-check (check-marker, not a shortcut). `no-trigger`
+- layout.py:10, astar pop cap (anti-freeze).
+  ceiling: 100k pops/call. upgrade: `REDSTONE_ASTAR_CAP` if a verified build trips it.
+- layout.py:126, single bridge shape (no 3D search).
+  ceiling: one pre-proven hop. upgrade: full 3D search if hops dominate.
+- layout.py:721, last-resort bridge hops.
+  ceiling: 24 hops/build. upgrade: raise cap or 3D search if dense builds need more.
+- layout.py:963, slope-link open-check (check-helper, not a shortcut). `no-trigger`
+- layout.py:1041, bridge template check (check-marker, not a shortcut). `no-trigger`
 
 ## recipe.py
 
@@ -69,5 +77,7 @@ anti-rot devices themselves, listed for completeness.
 2. Grow caps W 20000 / D 4000 bind ~(830 bands, cpu4 needs 247). (layout.py:138)
 3. Sim covers flat + verticals only. (sim.py:330)
 4. Preview textures need network at view time. (export.py:13)
+5. A* pop cap 100k/call bounds search; long detours need the env knob. (layout.py:10)
+6. Bridges are one fixed shape, max 24/build; denser needs full 3D. (layout.py:126,721)
 
-25 markers, 25 with no trigger.
+29 markers, 23 with no trigger.

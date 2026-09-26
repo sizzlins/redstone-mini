@@ -7,6 +7,11 @@ import random
 from core import DIRS, TORCH_BACK
 from recipe import expand_gates
 
+# ponytail: pop cap bounds worst-case search per astar call (a sealed field
+# is W*D pops of thrash; trip -> None -> loud RuntimeError -> next seed).
+# Raise via REDSTONE_ASTAR_CAP if a verified build ever trips it.
+_ASTAR_CAP = int(_os.environ.get("REDSTONE_ASTAR_CAP", "100000"))
+
 
 def astar(starts, goal, net, W, D, solid, rings, wires, junctions, margin=None, blocked=None, congest=None, guard=None):
     """Maze route for one wire (multi-source: fanout taps nearest own wire).
@@ -50,8 +55,12 @@ def astar(starts, goal, net, W, D, solid, rings, wires, junctions, margin=None, 
     open_h = [(abs(s[0] - goal[0]) + abs(s[2] - goal[2]), 0, (s[0], s[2]), s, None) for s in starts]
     heapq.heapify(open_h)
     came, cost = {s: None for s in starts}, {s: 0 for s in starts}
+    n = 0
     while open_h:
         _, g, _, cell, prev = heapq.heappop(open_h)
+        n += 1
+        if n > _ASTAR_CAP:
+            return None  # anti-freeze: sealed pocket, fail fast, try next seed
         if cell == goal:
             path, c = [cell], cell
             while came[c] is not None:
@@ -95,6 +104,70 @@ def astar(starts, goal, net, W, D, solid, rings, wires, junctions, margin=None, 
                 cost[m], came[m] = ng, cell
                 heapq.heappush(open_h, (ng + abs(m[0] - goal[0]) + abs(m[2] - goal[2]), ng, (m[0], m[2]), m, cell))
     return None
+
+
+
+def bridge_plan(fx, fz, axis):
+    """One pre-proven crossover footprint (coordinates match sim.py's
+    crossover vectors exactly). ns = travel along z over victim (fx,1,fz).
+    Returns (feet, supports, dusts) as full (x,y,z) cells."""
+    if axis == "ns":
+        feet = [(fx, 1, fz - 2), (fx, 1, fz + 2)]
+        supports = [(fx, 1, fz - 1), (fx, 1, fz + 1), (fx, 2, fz)]
+        dusts = [(fx, 2, fz - 1), (fx, 3, fz), (fx, 2, fz + 1)]
+    else:
+        feet = [(fx - 2, 1, fz), (fx + 2, 1, fz)]
+        supports = [(fx - 1, 1, fz), (fx + 1, 1, fz), (fx, 2, fz)]
+        dusts = [(fx - 1, 2, fz), (fx, 3, fz), (fx + 1, 2, fz)]
+    return feet, supports, dusts
+
+
+def bridge_free(wires, solid, repeaters, guard, W, D, fx, fz, axis, net):
+    # ponytail: single bridge shape; any footprint collision -> no bridge,
+    # the router detours instead. Full 3D search if hops ever dominate.
+    if wires.get((fx, 1, fz)) in (None, net):
+        return False  # nothing foreign to hop
+    feet, supports, dusts = bridge_plan(fx, fz, axis)
+    for x, y, z in supports + dusts:
+        if not (0 <= x < W and 0 <= z < D):
+            return False
+        if (x, z) in guard:
+            return False
+        if wires.get((x, y, z)) not in (None, net):
+            return False
+    for x, y, z in supports:
+        if y == 1 and (x, z) in solid:
+            return False
+        if (x, z) in repeaters:
+            return False
+    if solid.get((fx, fz)) is not None or (fx, fz) in repeaters:
+        return False  # center column must hold only victim dust
+    if wires.get((fx, 4, fz)) is not None:
+        return False  # air above the hop
+    for x, y, z in feet:
+        if not (0 <= x < W and 0 <= z < D):
+            return False
+        if wires.get((x, y, z)) not in (None, net):
+            return False
+        if (x, z) in solid or (x, z) in repeaters:
+            return False
+    return True
+
+
+def bridge_stamp(blocks, solid, wires, rings, placed, net, fx, fz, axis):
+    """Stamp a free-checked bridge; returns ground feet for 2D routing."""
+    CB = "minecraft:cobblestone"
+    feet, supports, dusts = bridge_plan(fx, fz, axis)
+    for x, y, z in supports:
+        blocks.append((x, y, z, CB))
+        solid[(x, z)] = ("cobble", net)
+    for x, y, z in dusts:
+        wires[(x, y, z)] = net
+        placed.add((x, y, z))
+    for x, y, z in supports + [(fx, 1, fz)]:
+        for dx, dz in DIRS:
+            rings.setdefault((x + dx, z + dz), set()).add(net)
+    return feet
 
 
 
@@ -643,6 +716,51 @@ def layout(recipe, seed=None, grow=0):
             guard.add((x + dx, z + dz))
     pending = tasks[:]
     fails = {}
+    bridged = set()  # (fx, fz, axis) already hopped; never retry
+    def try_bridge(s, t, net):
+        # ponytail: last-resort hop over sealing dust with one pre-proven
+        # bridge, then two 2D segments (no 3D search). Green builds never
+        # reach here, so their routes are unchanged. Cap 24 hops per build.
+        if len(bridged) >= 24 or s is None or t is None:
+            return False
+        cands = []
+        for c in last_blocked.get(net, ()):
+            if c[1] == 1 and c not in placed:
+                w = wires.get(c)
+                if w is not None and w != net:
+                    cands.append((c[0], c[2]))
+        for dx, dz in DIRS:
+            A = (t[0] + dx, 1, t[1] + dz)
+            for c in [A] + [(A[0] + ex, 1, A[2] + ez) for ex, ez in DIRS]:
+                if c not in placed:
+                    w = wires.get(c)
+                    if w is not None and w != net:
+                        cands.append((c[0], c[2]))
+        cands = list(dict.fromkeys(cands))
+        cands.sort(key=lambda p: ((p[0], 1, p[1]) not in placed,
+                                  abs(p[0] - s[0]) + abs(p[1] - s[1]) + abs(p[0] - t[0]) + abs(p[1] - t[1])))
+        prefer = ("ew", "ns") if abs(s[0] - t[0]) >= abs(s[1] - t[1]) else ("ns", "ew")
+        for fx, fz in cands[:8]:
+            for axis in prefer:
+                if (fx, fz, axis) in bridged:
+                    continue
+                if not bridge_free(wires, solid, repeaters, guard, W, D, fx, fz, axis, net):
+                    continue
+                feet = bridge_stamp(blocks, solid, wires, rings, placed, net, fx, fz, axis)
+                fa, fb = sorted(feet, key=lambda f: abs(f[0] - s[0]) + abs(f[2] - s[1]))
+                try:
+                    route(s, (fa[0], fa[2]), net)
+                    route((fb[0], fb[2]), t, net)
+                except RuntimeError:
+                    return False  # caller raises; this layout try is discarded
+                bridged.add((fx, fz, axis))
+                try:
+                    tasks.remove((s, t, net))
+                except ValueError:
+                    pass
+                tasks.extend([(s, (fa[0], fa[2]), net), ((fb[0], fb[2]), t, net)])
+                return True
+        return False
     try:
         while pending:
             s, t, net = pending.pop(0)
@@ -651,15 +769,20 @@ def layout(recipe, seed=None, grow=0):
                 continue
             except RuntimeError:
                 pass
-            # targeted ripup: nets physically sealing this goal get re-routed after us.
-            blockers = set()
-            for dx, dz in DIRS:
-                for yy in (1, 2):
-                    A = (t[0] + dx, yy, t[1] + dz)
-                    for c in [A] + [(A[0] + ex, A[1], A[2] + ez) for ex, ez in DIRS]:
-                        w = wires.get(c)
-                        if w is not None and w != net and c not in placed:
-                            blockers.add(w)
+            # targeted ripup: nets physically sealing this wire get re-routed
+            # after us. Goal-side first (cheap, master-identical); driver-side
+            # only when goal rips are exhausted (drivers get entombed too).
+            def seal_nets(cell):
+                found = set()
+                for dx, dz in DIRS:
+                    for yy in (1, 2):
+                        A = (cell[0] + dx, yy, cell[1] + dz)
+                        for c in [A] + [(A[0] + qx, A[1], A[2] + qz) for qx, qz in DIRS]:
+                            w = wires.get(c)
+                            if w is not None and w != net and c not in placed:
+                                found.add(w)
+                return found
+            blockers = seal_nets(t)
             for c in last_blocked.get(net, ()):
                 w = wires.get(c)
                 if w is not None and w != net and c not in placed:
@@ -668,6 +791,22 @@ def layout(recipe, seed=None, grow=0):
             key = (net, tuple(sorted(blockers)))
             fails[key] = fails.get(key, 0) + 1
             if not block_tasks or fails[key] > 2:
+                extra = (seal_nets(s) - blockers) if s is not None else set()
+                extra_tasks = [tk for tk in tasks if tk[2] in extra]
+                xkey = (net, tuple(sorted(blockers | extra)), "drv")
+                if extra_tasks and fails.get(xkey, 0) < 2:
+                    fails[xkey] = fails.get(xkey, 0) + 1
+                    for p, m in paths[:]:
+                        if m in extra:
+                            for c in p:
+                                if wires.get(c) == m and c not in placed:
+                                    del wires[c]
+                                    congest[c] = congest.get(c, 0) + 5
+                            paths.remove((p, m))
+                    pending = [(s, t, net)] + extra_tasks + pending
+                    continue
+                if try_bridge(s, t, net):
+                    continue
                 raise RuntimeError(f"no route for {net}: {s} -> {t} (grid full, widen W)")
             for p, m in paths[:]:
                 if m in blockers:
@@ -803,6 +942,7 @@ def layout(recipe, seed=None, grow=0):
                 break
     reached, seen_states = set(), set()
     stack = seed_states
+    cob = {(x, y, z) for x, y, z, bid in blocks if bid.split("[")[0] == "minecraft:cobblestone"}
     while stack:
         c, n = stack.pop()
         if (c, n) in seen_states:
@@ -820,6 +960,16 @@ def layout(recipe, seed=None, grow=0):
                 stack.append((m, n))
             elif solid.get((m[0], m[2]), (None,))[0] == "repeater" and solid[(m[0], m[2])][1] == n:
                 stack.append((m, n))  # boosters + OR diodes stamp solid-only
+            # ponytail: slope links use sim's rule (support below, no lid
+            # above); without this every bridge reads as unconnected dust.
+            up = (c[0] + dx, c[1] + 1, c[2] + dz)
+            if wires.get(up) == n and (c[0] + dx, c[1], c[2] + dz) in cob \
+                    and (c[0], c[1] + 1, c[2]) not in cob:
+                stack.append((up, n))
+            dn = (c[0] + dx, c[1] - 1, c[2] + dz)
+            if wires.get(dn) == n and (c[0], c[1] - 1, c[2]) in cob \
+                    and (c[0] + dx, c[1], c[2] + dz) not in cob:
+                stack.append((dn, n))
     dead = [(x, y, z) for (x, y, z) in wires if (x, y, z) not in reached
             and wires[(x, y, z)] != "0"]  # undriven "0" stubs read 0 unconnected
     if dead:
@@ -888,4 +1038,34 @@ if __name__ == "__main__":
     _, _, _io, _ = layout_retry(_r, verify=True)
     assert set(_io["levers"].values()) >= {"a", "b"}, _io["levers"]
     print("or-lever ok: OR inputs on batch levers, verify green")
+    # ponytail: ONE bridge check — template matches sim's proven crossover
+    # vectors; live-fire two independent nets through it, sim green.
+    _feet, _sup, _dst = bridge_plan(7, 5, "ns")
+    assert _dst == [(7, 2, 4), (7, 3, 5), (7, 2, 6)], _dst
+    assert _sup == [(7, 1, 4), (7, 1, 6), (7, 2, 5)], _sup
+    assert bridge_free({(7, 1, 5): "A"}, {}, {}, set(), 40, 40, 7, 5, "ns", "B") is True
+    assert bridge_free({}, {}, {}, set(), 40, 40, 7, 5, "ns", "B") is False
+    _bl, _so, _wi, _ri, _pl = [], {}, {}, {}, set()
+    _feet = bridge_stamp(_bl, _so, _wi, _ri, _pl, "B", 7, 5, "ns")
+    assert _feet == [(7, 1, 3), (7, 1, 7)], _feet
+    assert all(_wi[c] == "B" for c in [(7, 2, 4), (7, 3, 5), (7, 2, 6)]), _wi
+    assert all(_so[k][0] == "cobble" for k in [(7, 4), (7, 6), (7, 5)]), _so
+    assert _pl == {(7, 2, 4), (7, 3, 5), (7, 2, 6)}, _pl
+    assert bridge_free(_wi, _so, {}, set(), 40, 40, 7, 5, "ns", "C") is False
+    assert bridge_free(_wi, _so, {}, set(), 40, 40, 7, 5, "ew", "C") is False
+    from sim import sim_verify as _sv
+    _W, _CB = "minecraft:redstone_wire", "minecraft:cobblestone"
+    _xb = [(2, 1, 5, "minecraft:lever")] + [(x, 1, 5, _W) for x in range(3, 10)] + [(10, 1, 5, "minecraft:redstone_lamp")]
+    _xb += [(7, 1, 1, "minecraft:lever"), (7, 1, 2, _W), (7, 1, 3, _W)]
+    for _c in _sup:
+        _xb.append((_c[0], _c[1], _c[2], _CB))
+    for _c in _dst:
+        _xb.append((_c[0], _c[1], _c[2], _W))
+    _xb += [(7, 1, 7, _W), (7, 1, 8, _W), (7, 1, 9, "minecraft:redstone_lamp")]
+    _xio = {"levers": {(2, 5): "A", (7, 1): "B"}, "lamps": {(10, 5): "Aout", (7, 9): "Bout"}, "nets": {}}
+    _xr = {"inputs": ["A", "B"], "outputs": ["Aout", "Bout"],
+           "gates": [{"out": "Aout", "op": "AND", "args": ["A", "A"]},
+                     {"out": "Bout", "op": "AND", "args": ["B", "B"]}]}
+    _sv(_xr, _xb, _xio, quiet=True)
+    print("bridge ok: ns hop crosses live wire, sim green both ways")
 

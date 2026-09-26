@@ -8,10 +8,11 @@
 
 ## Current state
 - **Master:** PR #1 merged (phase-1 tiles). Suite green.
-- **Branch `phase2-design`** (pushed, v2 PR #2 OPEN): maze per-hop routing +
+- **Branch `phase2-design`** (uncommitted bridge fold-in pending push, PR #2 OPEN): maze per-hop routing +
   master boosters + rip-up restore + batch-1 OR levers + multi-lever inputs
-  + `debug.py` instrument + or-lever self-check; firstport/NOR/io-bus dead
-  code deleted; `recipe.py` == master (relay expansion reverted — sealed
+  + `debug.py` instrument + or-lever self-check + NEW: crossover bridges,
+  astar cap, driver-side ripup; firstport/NOR/io-bus dead
+  code deleted; bus-plan docs removed from branch (attic'd, never merge); `recipe.py` == master (relay expansion reverted — sealed
   pockets). Audit cuts applied (minimize, adder8, bridges, `_free`, NOR
   branch, info loops → `scratch/attic.md`; bus plans → `scratch/attic-plans/`).
   Debt ledger `PONYTAIL-DEBT.md` (25 markers, 4 real ceilings). Worktree has
@@ -24,7 +25,16 @@
 - **Honesty:** micro1 repeaters 73 vs master 46 — no economy won, only 4-gate.
 
 ## What changed (newest last)
-1. Audit cuts to scratch (-190/+17): minimize, adder8, bridges, `_free`,
+1. Bridges + antifreeze + driver ripup (uncommitted, for PR #2 fold-in):
+   single pre-proven crossover hop (last-resort, slope-aware open-check +
+   `__main__` live-fire check); astar pop cap 100k (`REDSTONE_ASTAR_CAP`,
+   micro1 green down to 5k); rip-up scans driver-side pre-raise (AB
+   entombment fixed). Suite green, micro1 1960/2gates 110 identical.
+   alu1 still red (fast-red; walls move per seed: AB/n0/t1 — standing wall
+   is OR-bb delivery vs own-exit cluster, needs design talk). Bus-plan
+   docs removed from branch (attic holds substance). bb-first ordering
+   tried, reverted (micro1 >290s thrash).
+2. Audit cuts to scratch (-190/+17): minimize, adder8, bridges, `_free`,
    NOR branch, info loops — all attic'd, suite + ladder re-verified green.
    Debt ledger written. Bus plan docs moved to `scratch/attic-plans/`.
 2. v2 PR prep: or-lever self-check, suite + ladder re-verified, PR #1 merged,
