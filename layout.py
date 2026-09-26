@@ -262,13 +262,23 @@ def layout(recipe, seed=None, grow=0):
     # maze: every used input gets one bank lever on the south edge; fanout
     # below rides the router (zero-wire taps deleted — see bus section).
     pos = {}
-    feeds = set()  # bank feed wire cells, seeded for the open-check
     used = {a for g in gates for a in g["args"]} & set(recipe["inputs"])
     bz = D - 2
-    for idx, name in enumerate(recipe["inputs"]):
-        if name not in used:
-            continue  # unused input: no lever
-        x = 2 + idx * 3
+    # ponytail: levers park below their loads' median band, not huddled
+    # west. West-corner levers force every input marathon east across all
+    # gate columns (micro1 OP ran 160 east and sealed the field: 2s->>290s);
+    # north runs cross free middle field instead. Ceiling: colliding medians
+    # run east and may go out of bounds (loud); upgrade is input fanout
+    # chaining (recipe.py still excludes inputs from relay chains).
+    _ax = {}
+    for name in recipe["inputs"]:
+        if name in used:
+            _bands = sorted(g.get("band", 0) for g in gates if name in g["args"])
+            _ax[name] = 6 + _bands[len(_bands) // 2] * 24
+    _ord = {n: i for i, n in enumerate(recipe["inputs"])}
+    _prev = 2
+    for name in sorted(_ax, key=lambda n: (_ax[n], _ord[n])):
+        x = max(min(_ax[name], W - 2), _prev)
         if not (x + 1 < W and bz - 1 >= 0):
             raise RuntimeError(f"bank lever out of bounds for {name}")
         if (x, bz) in solid or (x, bz) in wires or (x + 1, bz) in solid or (x + 1, 1, bz) in wires:
@@ -278,8 +288,8 @@ def layout(recipe, seed=None, grow=0):
         for dx, dz in DIRS:
             ring(x + dx, bz + dz, own(name))
         stamp_wire([(x + 1, bz)], name)
-        feeds.add((x + 1, 1, bz))
         pos[name] = (x + 1, bz)
+        _prev = x + 3
     if any(a in ("0", "1") for g in gates for a in g["args"]):
         stamp_wire([(0, 3)], "0")
         pos["0"] = (0, 3)
@@ -360,7 +370,7 @@ def layout(recipe, seed=None, grow=0):
 
     def spot_free(op, ox, gz, i):
         # one guard for all placers: bounds per tile, disjoint from every
-        # other grid slot, and actually empty (lever feeds now dot the
+        # other grid slot, and actually empty (lever cells now dot the
         # field, so grid slots aren't provably free anymore).
         if op == "AND":
             if not (0 <= ox - 2 and ox + 6 < W and 0 <= gz and gz + 6 < D):
@@ -536,7 +546,7 @@ def layout(recipe, seed=None, grow=0):
         if op == "XOR":
             # comparator XOR (dual subtract, sim-verified): C1 = A-B,
             # C2 = B-A, outputs merged west. Side inputs are tile-stamped
-            # levers (dust side-feeds don't count as comparator input).
+            # levers (dust side inputs don't count as comparator input).
             fam = own(a[0], a[1], o)
             placed = False
             for ox2, gz2 in gridrows(ox, gz):
@@ -620,7 +630,6 @@ def layout(recipe, seed=None, grow=0):
     # (XOR tile-stamped side levers stay: tile geometry, and same-net
     # duplicates are wired-OR harmless.)
     netspec = {}
-    orbbs = set()  # OR diode-backs: input-fed ones read the batch-1 lever, never a tap
     def _load(net, cell):
         if net == "0":
             return  # dark stubs read 0; nothing is stamped
@@ -643,7 +652,6 @@ def layout(recipe, seed=None, grow=0):
             j, reps = cell
             netspec.setdefault(o, {'drv': j, 'loads': []})
             for sig, (rr, bb) in zip(a, reps):
-                orbbs.add(bb)
                 _load(sig, bb)
         elif op == "OUT":
             pass  # lamp taps the driver wire; no stub
@@ -656,13 +664,6 @@ def layout(recipe, seed=None, grow=0):
     for net in [n for n, s in netspec.items()
                 if not s['loads'] and n not in recipe["outputs"]]:
         del netspec[net]
-    for name in recipe["inputs"]:
-        spec = netspec.get(name)
-        if not spec:
-            continue  # unused input: no lever
-        for (lx, lz) in spec['loads']:
-            if (lx, lz) in orbbs:
-                continue  # OR diode-back: batch-1 lever feeds it via the junction
     # ponytail: inputs ride the router like gate nets (single-lever panel);
     # fanout cost is real routing now. Loud fail if a dense input seals.
     tasks = []
@@ -675,7 +676,15 @@ def layout(recipe, seed=None, grow=0):
     tasks.sort(key=lambda t: -(abs(t[0][0] - t[1][0]) + abs(t[0][1] - t[1][1])))
     if seed is not None:
         random.Random(seed).shuffle(tasks)
-    placed = set(wires)  # feeds/outs/ties stay; routed paths may be ripped up
+    # ponytail: panel inputs ride FIRST (stable: keeps distance/shuffle order
+    # within each phase). Inputs are thin south-anchored runs; gate marathons
+    # detour around their tips cheaply. The reverse (gates first) entombs
+    # input ports inside the east-west gate-wire wall (micro1 OP: 11-26s
+    # seals, grow-proof). Ceiling: fanout-dense inputs may still need help;
+    # upgrade is input fanout chaining (recipe.py still excludes inputs).
+    _ins = set(recipe["inputs"])
+    tasks.sort(key=lambda t: t[2] not in _ins)
+    placed = set(wires)  # stubs/outs/ties stay; routed paths may be ripped up
     last_blocked = {}  # net -> wire cells whose touch sealed its last failure
     congest = {}  # wire cell -> extra cost after a rip (lanes stay shared)
     guard = set()  # torch cells + their attach blocks: the only solids a
@@ -899,7 +908,7 @@ def layout(recipe, seed=None, grow=0):
             seed_states.append((p3, name))
     for (x, z), (kind, name) in solid.items():
         # ponytail: every lever island seeds (multi-lever inputs drive
-        # several disconnected feeds; pos[] only knows the first).
+        # several disconnected dust cells; pos[] only knows the first).
         if kind != "lever":
             continue
         for dx, dz in DIRS:
@@ -1008,7 +1017,15 @@ if __name__ == "__main__":
     _r = parse_recipe("IN a, b\nOUT y\ny = a OR b\n")
     _, _, _io, _ = layout_retry(_r, verify=True)
     assert set(_io["levers"].values()) >= {"a", "b"}, _io["levers"]
-    print("or-lever ok: OR inputs on batch levers, verify green")
+    print("or-lever ok: OR inputs on bank levers, verify green")
+    # ponytail: ONE panel check — shared input builds green with exactly
+    # one lever per input (verify=True proves the routed fanout fires).
+    from collections import Counter as _Ctr
+    _r = parse_recipe("IN a, b, c\nOUT y\ny1 = a AND b\ny2 = a AND c\ny = y1 OR y2\n")
+    _, _, _io, _ = layout_retry(_r, verify=True)
+    _c = _Ctr(_io["levers"].values())
+    assert _c["a"] == 1 and len(_c) == 3, _c
+    print("panel ok: shared input on one bank lever, verify green")
     # ponytail: ONE bridge check — template matches sim's proven crossover
     # vectors; live-fire two independent nets through it, sim green.
     _feet, _sup, _dst = bridge_plan(7, 5, "ns")
