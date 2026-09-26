@@ -259,35 +259,27 @@ def layout(recipe, seed=None, grow=0):
         paths.append((path, net))
         return path
 
-    # maze: inputs fan out via one lever per load below (zero-wire taps),
-    # except OR-feeding inputs: the junction aims at a batch-1 lever, so
-    # those keep a pre-placement lever (master pattern, verbatim).
+    # maze: every used input gets one bank lever on the south edge; fanout
+    # below rides the router (zero-wire taps deleted — see bus section).
     pos = {}
-    feeds = set()  # lever-feed wire cells: loads touching one need no route
-    firstuse, firstor = {}, {}
-    for g in gates:
-        for k, a in enumerate(g["args"]):
-            if a not in firstuse:
-                firstuse[a] = (g["op"], k, g.get("band"))
-            if g["op"] == "OR" and a not in firstor:
-                firstor[a] = (g["op"], k, g.get("band"))
-    orfeed = {a for g in gates if g["op"] == "OR" for a in g["args"]}
+    feeds = set()  # bank feed wire cells, seeded for the open-check
+    used = {a for g in gates for a in g["args"]} & set(recipe["inputs"])
+    bz = D - 2
     for idx, name in enumerate(recipe["inputs"]):
-        if name not in firstuse:
+        if name not in used:
             continue  # unused input: no lever
-        op, role, band = firstor.get(name, firstuse[name])
-        if op != "OR" and (banded or name not in orfeed):
-            continue  # placed by load port later
-        x = 16 * band + (2 if role == 0 else 5) if band is not None else 2 + idx * 3
-        if (x, 6) in solid or (x, 6) in wires or (x + 1, 6) in solid or (x + 1, 1, 6) in wires:
-            raise RuntimeError(f"lever spot taken for {name} at {(x, 6)}")
-        blocks.append((x, 1, 6, "minecraft:lever"))
-        solid[(x, 6)] = ("lever", name)
+        x = 2 + idx * 3
+        if not (x + 1 < W and bz - 1 >= 0):
+            raise RuntimeError(f"bank lever out of bounds for {name}")
+        if (x, bz) in solid or (x, bz) in wires or (x + 1, bz) in solid or (x + 1, 1, bz) in wires:
+            raise RuntimeError(f"bank lever spot taken for {name} at {(x, bz)}")
+        blocks.append((x, 1, bz, "minecraft:lever"))
+        solid[(x, bz)] = ("lever", name)
         for dx, dz in DIRS:
-            ring(x + dx, 6 + dz, own(name))
-        stamp_wire([(x + 1, 6)], name)
-        feeds.add((x + 1, 1, 6))
-        pos[name] = (x + 1, 6)
+            ring(x + dx, bz + dz, own(name))
+        stamp_wire([(x + 1, bz)], name)
+        feeds.add((x + 1, 1, bz))
+        pos[name] = (x + 1, bz)
     if any(a in ("0", "1") for g in gates for a in g["args"]):
         stamp_wire([(0, 3)], "0")
         pos["0"] = (0, 3)
