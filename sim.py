@@ -7,12 +7,14 @@ from core import DIRS, base
 from layout import layout
 from recipe import eval_net
 
-# ponytail: settling budget. A dense build is ~10x the cells of a small one, so
-# the old fixed 500 ticks / 20000 steps could expire on slow-but-finite
-# convergence and be reported as an oscillator. Env knobs, same idea as
-# REDSTONE_ASTAR_CAP: raise them when a build is big, lower them to fail fast.
-_TICK_CAP = int(_os.environ.get("REDSTONE_SIM_TICKS", "500"))
-_STEP_CAP = int(_os.environ.get("REDSTONE_SIM_STEPS", "20000"))
+# ponytail: settling budget. A dense build is ~10x the cells of a small one and
+# legitimately needs more ticks (a 40-cell boosted run alone costs 40), so the
+# old fixed 500 ticks / 20000 steps expired mid-convergence and got reported as
+# "sim not settling" — which reads as a router fault and is not one. Measured:
+# micro1 converges at 5000/300000 in 0.4s. Env knobs, same idea as
+# REDSTONE_ASTAR_CAP, for builds that need more.
+_TICK_CAP = int(_os.environ.get("REDSTONE_SIM_TICKS", "5000"))
+_STEP_CAP = int(_os.environ.get("REDSTONE_SIM_STEPS", "300000"))
 
 
 def layout_retry(recipe, tries=12, verify=False, grows=3):
