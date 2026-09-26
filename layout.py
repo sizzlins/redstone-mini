@@ -127,6 +127,43 @@ def astar(starts, goal, net, W, D, solid, rings, wires, junctions, margin=None, 
     airstrip = set()
     for ax, ay, az in air:
         airstrip.update(((ax + 1, az), (ax - 1, az), (ax, az + 1), (ax, az - 1)))
+    # ponytail: hoist the coupling predicate from per-candidate to per-search.
+    # `forb` = every cell that side-touches a foreign net, or slope-couples to
+    # one. Built from the FOREIGN cell outwards, so each foreign wire visits 4
+    # same-level neighbours (+8 slope partners when elevated dust exists)
+    # instead of every candidate probing 12 neighbours. Per search: ~1.3k
+    # cheap ops instead of 12.8k x ~6 dict.gets (was 63M gets on alu1).
+    fwire = {c for c, n in wires.items() if n != net}
+    _XCHECK = _os.environ.get("REDSTONE_XCHECK") == "1"
+    forb = set()
+    addforb = forb.add
+    jget = junctions.get
+    wg = wires.get
+    for c in fwire:
+        cx, cy, cz = c
+        # every exemption in the per-candidate form is stated about the
+        # FOREIGN cell (it can never be `prev`, but it CAN be a foreign-held
+        # port that sits in `starts`, and the goal may be foreign-owned).
+        x_exempt = c in starts
+        for dx, dz in DIRS:
+            nx, nz = cx + dx, cz + dz
+            if not x_exempt:
+                j = jget((cx, cz))       # OR junction: wired-OR is the gate
+                if not (j and net in j):
+                    addforb((nx, cy, nz))
+            if x_exempt or c == goal:
+                continue
+            # foreign c is the LOWER cell, candidate the upper one (own
+            # support comes from move legality, so only the lid over the
+            # foreign is tested).
+            if (cx, cy + 1, cz) not in cob:
+                addforb((nx, cy + 1, nz))
+            # foreign c is the UPPER cell, candidate the lower one. Support
+            # belongs UNDER the upper (sim's rule), the lid sits OVER the
+            # lower. A y=1 candidate can only couple if it is in the strip.
+            if (cx, cy - 1, cz) in cob and (nx, cy, nz) not in cob:
+                if cy > 2 or (air and (nx, nz) in airstrip):
+                    addforb((nx, cy - 1, nz))
     def lid(cell):
         return cell in cob  # any pillar: tile, bridge, or stamped
     def ok(cell):
@@ -150,6 +187,37 @@ def astar(starts, goal, net, W, D, solid, rings, wires, junctions, margin=None, 
             return False  # inside a pillar (tile/bridge/stamped): no dust here
         return True
     def touches_foreign(cell, prev):
+        # same-y side touch couples; diagonal +-1 couples only via a true
+        # slope link (support under upper + no lid over lower). Stacked or
+        # unsupported y-adjacency never links, so overflight stays legal.
+        #
+        # ponytail: ONE set lookup, not ~12 dict probes. The predicate depends
+        # only on the cell, the foreign wires and the support/lid sets — all
+        # fixed for the whole search — so `forb` is built once per search
+        # (O(foreign wires x 8)) and the per-candidate cost collapses from
+        # ~6 dict.gets to a single membership test. Measured on alu1: 10.1M
+        # calls / 63M dict.gets, i.e. the entire layout cost.
+        if cell not in forb:
+            return False
+        if blocked is not None:
+            x, y, z = cell
+            for dx, dz in DIRS:
+                m = (x + dx, y, z + dz)
+                if m == prev or m not in fwire:
+                    continue
+                if y == 1:
+                    # blame the ring, exactly as the 2D code did: a closed
+                    # loop far from the goal seals just as dead as a wall on
+                    # the goal itself.
+                    for dx2, dz2 in DIRS:
+                        k = (m[0] + dx2, 1, m[2] + dz2)
+                        if k != cell and k in wires and wires[k] != net:
+                            blocked.add(k)
+                else:
+                    blocked.add(m)
+        return True
+
+    def _unused_touches_foreign_reference(cell, prev):
         # same-y side touch couples; diagonal +-1 couples only via a true
         # slope link (support under upper + no lid over lower). Stacked or
         # unsupported y-adjacency never links, so overflight stays legal.
@@ -233,8 +301,17 @@ def astar(starts, goal, net, W, D, solid, rings, wires, junctions, margin=None, 
                     continue
                 if m == goal and (m[0], m[2]) in junctions and net in junctions[(m[0], m[2])]:
                     pass  # OR junction: wired-OR is the gate
-                elif touches_foreign(m, cell):
-                    continue
+                else:
+                    _tf = touches_foreign(m, cell)
+                    if _XCHECK and _tf is not _unused_touches_foreign_reference(m, cell):
+                        # Set REDSTONE_XCHECK=1 to run the old predicate beside
+                        # the hoisted one on every candidate (it caught three
+                        # inversion bugs: the support cell, the candidate's
+                        # y, and that the junction gate reads the FOREIGN
+                        # column). Keep it green when touching `forb`.
+                        raise AssertionError(f"forb inversion differs at {m}")
+                    if _tf:
+                        continue
                 ng = g + step
                 if congest:
                     # ponytail: negotiated congestion (lite). Ripped corridors
