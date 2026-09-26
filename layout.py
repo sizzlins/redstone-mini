@@ -570,7 +570,7 @@ def layout(recipe, seed=None, grow=0):
                 Bdust = [(ox + 2, gz + 4), (ox + 1, gz + 4), (ox + 3, gz + 4)]
                 Odust = [(ox - 1, gz), (ox - 2, gz), (ox - 2, gz + 1),
                          (ox - 2, gz + 2), (ox - 2, gz + 3), (ox - 2, gz + 4),
-                         (ox - 1, gz + 4), (ox - 2, gz + 5)]
+                         (ox - 1, gz + 4), (ox - 2, gz + 5), (ox - 2, gz + 6)]
                 s = _snap()
                 try:
                     blocks.append((ox, 1, gz, "minecraft:comparator[facing=east,mode=subtract]"))
@@ -579,6 +579,21 @@ def layout(recipe, seed=None, grow=0):
                     solid[(ox, gz + 4)] = ("comp", o)
                     for cells, net in ((Adust, a[0]), (Bdust, a[1]), (Odust, o)):
                         stamp_wire(cells, net)
+                    # ponytail: merge-tail diodes (example_xor SIM-dark root).
+                    # Subtract outs start at whatever decayed level the routed
+                    # rear delivers (~4, not 15); the 9-cell Odust merge eats
+                    # it before y-drv. Diodes facing flow restore 15; the
+                    # second also carries C2's entry south of the first.
+                    # Ceiling: two fixed diodes; revisit if the merge grows.
+                    for _jx, _jz in ((ox - 2, gz + 3), (ox - 2, gz + 5)):
+                        for _fx, _fz in ((_jx, _jz - 1), (_jx, _jz + 1)):
+                            _w = wires.get((_fx, 1, _fz))
+                            if _w is not None and _w != o:
+                                raise RuntimeError(f"XOR diode guard {o} vs {_w} at {(_fx, _fz)}")
+                        if wires.get((_jx, 1, _jz)) != o:
+                            raise RuntimeError(f"XOR diode spot holds {wires.get((_jx, 1, _jz), 'EMPTY')}")
+                        del wires[(_jx, 1, _jz)]
+                        repeaters[(_jx, _jz)] = (o, "south")
                     for lx, lz, ln in ((ox, gz + 3, a[0]), (ox, gz + 1, a[1])):
                         blocks.append((lx, 1, lz, "minecraft:lever"))
                         solid[(lx, lz)] = ("lever", ln)
@@ -587,7 +602,7 @@ def layout(recipe, seed=None, grow=0):
                     for cx_, cz_ in set([(ox, gz), (ox, gz + 4)] + Adust + Bdust + Odust):
                         for dx, dz in DIRS:
                             ring(cx_ + dx, cz_ + dz, fam)
-                    pa, pb, po = (ox + 3, gz), (ox + 3, gz + 4), (ox - 2, gz + 5)
+                    pa, pb, po = (ox + 3, gz), (ox + 3, gz + 4), (ox - 2, gz + 6)
                     pos[o] = po
                     recs.append((op, o, a, (pa, pb, po)))
                     placed = True

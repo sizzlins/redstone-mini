@@ -40,7 +40,13 @@
   (4) remote sync — force approval pending.
 
 ## What changed (newest last)
-1. Bridge-primary disproven, PARKED (`layout.py` reverted): bridge-first +
+1. XOR tile fixed (SIM-dark → green): routed rears arrive decayed (~4),
+   8-cell merge ate it; two south-facing merge diodes + 1-cell drv
+   extension (lamp feed is a tip again — C2's output cell sat beside it,
+   failing the pointing rule all 36 tries). `example_xor` verify green;
+   suite green. Note: tile side-levers stay (strong-side rule), so XOR
+   builds carry 2 levers/input by geometry; bank stays single.
+2. Bridge-primary disproven, PARKED (`layout.py` reverted): bridge-first +
    try-all-candidates with rollback; single-shot still `no route for Q`
    (dump: goal ringed by tile solids `T0` cobble + `T1` repeater, zero
    foreign wire — no hoppable seal exists); background full-retry hit the
