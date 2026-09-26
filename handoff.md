@@ -38,55 +38,64 @@
     `((5,1,12),13), ((5,1,13),14), ((5,1,14),15), ((6,1,12),12)…`). Different
     failure class than before: this is an electrical defect with the evidence
     printed, not a routing wall.
-  - **3D PROOF POINT — micro1 is GREEN.** `micro1 GREEN 41.9s ticks=36 blocks=1963
-  field=(229,44) y>=2=90 inputs=4 dupInputLevers=none`. 1963 blocks, **90
-  elevated wire cells**, all 4 inputs on a single lever each, sim ticks=36,
-  whole 12x3 ladder in ~42s. This is the number that justifies the whole 3D
-  direction — and it only appeared after the sim budget fix below, i.e. the
-  router was already capable and the *verifier* was wrong.
-- **alu1 failure census (grow 0, seed None) — do this before Attempt 2 next
-  time.** 31 of 42 loads route; **11 fail, and every one of them is a single
-  unreached load**: inputs `B, OP0, OP1` plus gates `AB, U, o1, o2, t0, t1,
-  t2, t3`. Input B alone owns **275 of 758 wire cells (36%)**, concentrated at
-  x=20-40. The `o*`/`t*` gate failures are at x=76-78, **40-50 cells from B's
-  wire** — so they are NOT collateral from B's footprint, they are a separate
-  zone. By the owner's decision rule ("if gate nets fail too, spine-on-top
-  won't touch those"), **spine-on-top alone does not cover alu1.**
-- **The census is a lower bound, and the reason is a second bug (named, fix
-  known, NOT shipped).** The routing loop sets `stuck` and `break`s the whole
-  pass the moment a task fails again, so **exactly one task per layout ever
-  reaches the 3D pass**. Measured on alu1: 7 route attempts over 2 nets, 1
-  three-D search, and the other ~25 nets in the spec **never attempted at
-  all** — which is why 8 gate "failures" are really "never tried". The fix is
-  ~6 lines (defer failures in a list, keep draining, raise at the end).
-- **That fix was tried and REVERTED (keep-or-revert).** It works as intended
-  (3 nets escalated, A alone 9 three-D searches) but it (a) exposes a
-  **ground-level SHORT** — `SHORT: W touches S at (47,1,15)->(47,1,16)`, input W
-  running east-west at z=15 crossing gate S running north-south at z=16, both
-  at y=1, so it is a same-level coupling hole, not a 3D/slope one — and (b)
-  makes each attempt ~8x slower (3.7s -> ~30s) with **no green micro1 in 28+
-  attempts**. Reverted; micro1 green restored immediately (41.9s). **The next
-  step is to name that SHORT** (both cells are plain ground wire: W at
-  (47,1,15) has W east/west and S south; S at (47,1,16) runs north to
-  (47,1,17)). Only then re-apply the deferral fix, and only then re-census
-  alu1 for Attempt 2's real scope.
+  - **micro1 is UNVERIFIED — DO NOT COUNT IT TOWARD THE ACCEPTANCE BAR.** It
+  was green (`41.9s ticks=36 blocks=1963 y>=2=90 dupInputLevers=none`) **only
+  under the buggy retry discipline**, where exactly one task per layout ever
+  reached the 3D pass. Proven, not assumed: micro1's green seed (seed 0) made
+  **3 three-D searches**, and pass 2 only runs when pass 1 exits via the
+  exhaust-break — so that build depended on the under-trying bug. With the
+  deferral in (`12dd3c9`), **no seed is green**:
+  | seed | result with deferral |
+  |---|---|
+  | 0 | layout FAIL `lamp spot taken for Y at (222,12)` |
+  | 1 | sim not settling (196 elevated) |
+  | 2 | FAIL `no route for S: (36,13)->(50,17)` (114 3D searches) |
+  | 3 | sim not settling (257 elevated) |
+  | 4 | SIM MISMATCH x2 |
+  | 5 | SIM MISMATCH x2 |
+  That is **information, not regression**, and it is why the bar is not met
+  yet: the previous "green" was measuring the bug, not the router.
+- **The ground SHORT is FIXED and it was not the search** (`c321674`). Root
+  cause: `stamp_wire` refused a cell that *holds* a foreign wire but not one
+  that merely *side-touches* a foreign net. A\* guarantees routed paths never
+  do that, but every non-searched stamp did: output taps, bank stubs, tile port
+  rows, XOR side wires, the cover tail. Proven by provenance, not guessed:
+  `SHORT: m0 touches Y at (223,1,13)->(222,1,13)` — m0's cell was in its
+  recorded routed path (#135), Y's cell was in **no routed path at all**; Y is
+  micro1's output and x=222 is the far east end, i.e. the output lamp's
+  zero-wire tap, stamped after routing so no route could avoid it. Both cells
+  are routed-path cells (not cover-tail: a tail only exists within 12 cells of
+  the goal, and W's only phase-1 cell is its south-edge bank stub), so the
+  search was right and the stamp was wrong. Fix: the adjacency guard in
+  `stamp_wire` (one place, covers every non-searched stamp) plus the output
+  tap dodging adjacency. Flat builds unchanged — hashes still
+  `b1896abd3762dd99` / `777948c5fc963e20` / `7525f9fd37ae316e`.
+- **The escalation fix is in** (`12dd3c9`): exhausted tasks are deferred in a
+  list and the pass keeps draining, instead of abandoning the pass so only one
+  task per layout ever reached 3D.
 - **micro1's "sim not settling" was a BUDGET artifact, not an oscillator**
   (measured, `6ae2a74`). The sim capped settling at 500 ticks / 20000 steps; a
-  dense build legitimately needs more (a 40-cell boosted run alone costs 40
-  ticks), so it expired mid-convergence and raised "not settling", which reads
-  like a topology fault. Raise the caps and the same build settles in 0.4s
-  with `ticks=36`. Caps are now env knobs defaulting to 5000 / 300000, with
-  the cost ceiling ledgered in `PONYTAIL-DEBT.md`.
+  dense build legitimately needs more. Raise the caps and the same build
+  settles in 0.4s with `ticks=36`. Caps are now env knobs defaulting to
+  5000 / 300000, cost ceiling ledgered. **Still marginal**: seeds that settle
+  do so at ~87-99 elevated cells while 147-257 elevated cells still exhaust the
+  raised caps, so the budget likely scales with 3D content — unproven, and the
+  next thing to check before trusting any "not settling" on a dense build.
 - **RETRACTED — do not re-derive this.** I diagnosed micro1 as "a real ring
   oscillator in the router's topology" from a churn heuristic (cells changing
   value ≥3 times). That inference was **wrong**: in a converging system a cell's
   value can change many times as its neighbours settle, so churn is not
   evidence of oscillation. The traced 16-node ring is the LATCH's cross-coupled
-  NOR pair — a legitimate structure, present in green `latch_sr` too. No router
-  feedback loop was ever found.
-- alu4 / ctrl_decode / cpu4: **never measured.** The ladder was killed on
-  alu1's grown fields before reaching them. Cheap stage-1 reads are ~2s each;
-  run them before planning anything.
+  NOR pair — legitimate, and present in green `latch_sr` too.
+- **alu1 failure census (grow 0, seed None) — a LOWER BOUND, taken before the
+  deferral.** 31 of 42 loads route; 11 fail, each a single unreached load:
+  inputs `B, OP0, OP1` plus gates `AB, U, o1, o2, t0..t3`. Input B owns **275
+  of 758 wire cells (36%)** at x=20-40, while the `o*`/`t*` gate failures sit
+  at x=76-78, **40-50 cells away** — a separate zone, NOT B-collateral. **The
+  census must be re-run under `12dd3c9`** before Attempt 2's scope is written;
+  the owner's prediction that the failure set changes completely is consistent
+  with everything measured since.
+- alu4 / ctrl_decode / cpu4: **never measured.** Stage-1 reads are ~2s each.
 
 ## Method note (the part worth keeping)
 - **540s → 113s came from fixing two real bugs, NOT from the margin trim.**
@@ -244,27 +253,32 @@
 - **Not committed by policy:** the 4 untracked plans, all of `scratch/`.
 
 ## What next (in order)
-1. **Name the ground-level SHORT** (`W touches S at (47,1,15)->(47,1,16)`,
-   both y=1) before touching anything else. It is a same-level coupling hole,
-   not a slope/3D one, and it is what blocks the escalation fix. Cheapest next
-   probe: are those two cells both routed-path cells, or is one a phase-1 stub
-   or a cover-pass tail cell? That distinguishes "the search let it happen"
-   from "a stamp bypassed the search" — the fix location differs entirely.
-2. **Re-apply the deferral fix** (the ~6-line loop change, described above) once
-   the SHORT is fixed. Then **re-census alu1** — the current census is a lower
-   bound because 25 nets were never attempted, so Attempt 2's scope is still
-   unsettled. Do not start spine-on-top before that.
-3. **Stage-1 reads for alu4 / ctrl_decode / cpu4** (~2s each): one of them may
+1. **Re-census alu1 under the deferral** (`12dd3c9`). The old census is a lower
+   bound taken while 25 nets were never attempted, so Attempt 2's scope is still
+   unsettled — the owner's prediction that the failure set changes completely is
+   consistent with everything since. Write Attempt 2's scope from THAT census.
+2. **Settle the sim budget question on dense builds.** Seeds settle at ~87-99
+   elevated cells and exhaust the raised caps at 147-257, so "not settling" on
+   a 3D-heavy build is still not trustworthy. Either scale the budget with
+   build size or report a distinct "budget exhausted" verdict — do not read
+   either as a router fault until this is settled.
+3. **micro1's three residual failures under the deferral**, in the order the
+   evidence suggests: seed 0's `lamp spot taken for Y` (the output tap has no
+   free direction once adjacency counts — the tap is stamped after routing, so
+   it must be *reserved* in phase 1 rather than dodge), then the SIM MISMATCH ×2
+   seeds, then `no route for Q`. micro1 counts toward the bar only when it is
+   green *with* the deferral in.
+4. **Stage-1 reads for alu4 / ctrl_decode / cpu4** (~2s each): one of them may
    already pass, which would change the priority order.
-4. **Sync remote** — ahead ~28, behind 1; needs explicit force-with-lease
+5. **Sync remote** — ahead ~30, behind 1; needs explicit force-with-lease
    approval. Nothing at risk locally.
-5. **Do NOT:** change shipping `layout_retry` defaults (12×3 is a product
-   decision — the ladder harness uses 1×1 then 12×3, a test choice); run dense
-   builds in the foreground (a *fixed* alu1 attempt is ~30s and a grown one
-   >15 min); treat a "not settling"/"impossible" verdict as a system fact
-   without checking the threshold that produced it; build spine-on-top before
-   the census is re-done on a build that actually attempts every net; compare
-   timings across runs that die at different walls or on a loaded machine;
-   merge `scratch/` or the untracked plans.
+6. **Do NOT:** count micro1 toward the acceptance bar while it is green only
+   under the buggy retry discipline; change shipping `layout_retry` defaults
+   (12×3 is a product decision — the ladder harness uses 1×1 then 12×3, a test
+   choice); run dense builds in the foreground; treat a "not settling" verdict
+   as a system fact before checking the budget that produced it; write
+   Attempt 2's scope from a census taken under the old loop; compare timings
+   across runs that die at different walls or on a loaded machine; merge
+   `scratch/` or the untracked plans.
 
 
