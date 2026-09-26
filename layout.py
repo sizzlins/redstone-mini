@@ -12,11 +12,86 @@ from recipe import expand_gates
 # Raise via REDSTONE_ASTAR_CAP if a verified build ever trips it.
 _ASTAR_CAP = int(_os.environ.get("REDSTONE_ASTAR_CAP", "100000"))
 
+# ponytail: 3D wires Attempt 1 (tiles stay flat). y=1 ground, y=2 ramp,
+# y=3 flyover. Level-change moves cost _STEPCOST vs flat 1 (priced, ground
+# preferred; seals pay for height). Ceiling: H=3, raise if a dump names a
+# sealer needing a higher deck.
+_H = 3
+_STEPCOST = 4
+# ponytail: 2 = ground-first passes (a net may only fly after every net has had
+# its flat attempt). 1 = fly as soon as a net is stuck. Env-switched because the
+# two orderings trade off against each other (see PONYTAIL-DEBT).
+_PASSES = int(_os.environ.get("REDSTONE_3D_PASSES", "2"))
 
-def astar(starts, goal, net, W, D, solid, rings, wires, junctions, margin=None, blocked=None, congest=None, guard=None):
-    """Maze route for one wire (multi-source: fanout taps nearest own wire).
-    None if blocked (loud fail, never silent wrong). Cells are (x, y, z);
-    rings/junctions/solid stay 2D (rings guard whole columns)."""
+
+def _support(cell, net, solid, wires, sup, reps, guard):
+    """Support under a y>=2 wire cell: None=reuse, (x,y,z)=stamp once,
+    False=infeasible. Never share foreign pillars (no refcounting), never
+    reuse torch-attached cobble (dust powers it, flips the tile torch),
+    never bury dust/diodes, never pillar directly under foreign dust
+    (that would create a link the search never assumed)."""
+    x, y, z = cell
+    if y <= 1:
+        return None
+    b = (x, y - 1, z)
+    if b in sup:
+        return None if sup[b] == net else False
+    if b in wires or b in reps:
+        return False
+    if b[1] == 1:
+        k = solid.get((b[0], b[2]))
+        if k is not None:
+            if k[0] != "cobble" or (b[0], b[2]) in guard:
+                return False
+            return None
+    w = wires.get((b[0], b[1] + 1, b[2]))
+    if w is not None and w != net:
+        return False
+    return b
+
+
+def _straight3(a, b, c):
+    """Three collinear cells at one level (booster/repeater sites). Ground and
+    pillars alike: a repeater on a pillar is legal physics (the route already
+    stamped the support) and sim's repeater/cobble rules are y-generic."""
+    return a[1] == b[1] == c[1] and (a[0] == b[0] == c[0] or a[2] == b[2] == c[2])
+
+
+def _cover_gap(path, i):
+    """Backward booster cover: cheapest straight triple within 14 of path[i],
+    or False. Dust dies after 15, so a run with no straight triple inside that
+    window is unboostable (long pure-elevated flight) and the route is refused.
+    Total order by (len, path) so builds compare across processes."""
+    cands = [j for j in range(max(1, i - 14), min(i - 1, len(path) - 1) + 1)
+             if _straight3(path[j - 1], path[j], path[j + 1])]
+    return min(cands) if cands else False
+
+
+def _has_support(cell, sup, solid):
+    """Can a repeater stand at `cell`? y=1 rides the ground/stone floor; y>=2
+    needs a solid block directly under it (route pillar or tile cobble).
+    Loud False, never a floating repeater."""
+    if cell[1] <= 1:
+        return True
+    b = (cell[0], cell[1] - 1, cell[2])
+    if b in sup:
+        return True
+    return solid.get((b[0], b[2]), (None,))[0] == "cobble"
+
+
+def astar(starts, goal, net, W, D, solid, rings, wires, junctions, margin=None, blocked=None, congest=None, guard=None, sup=None, reps=None, cob3=None, flat_only=False, aircells=frozenset()):
+    """6-dir maze route for one wire (multi-source: fanout taps nearest own wire).
+    None if blocked (loud fail, never silent wrong). Cells are (x, y, z),
+    y in 1.._H; starts/goal are y=1 tile ports. Guards are per-level: y=1
+    keeps solid/ring/torch-hug rules, y>=2 ignores tile columns (overflight)
+    and couples only via true slope links (support + no lid, sim's rule).
+    Supports are feasibility-checked here, stamped once by route()."""
+    if sup is None:
+        sup = {}
+    if reps is None:
+        reps = {}
+    if guard is None:
+        guard = set()
     if isinstance(starts, tuple):
         starts = [starts]
     starts = list(dict.fromkeys(starts))
@@ -27,32 +102,102 @@ def astar(starts, goal, net, W, D, solid, rings, wires, junctions, margin=None, 
         x1 = min(W - 1, max(max(s[0] for s in starts), goal[0]) + margin)
         z0 = max(0, min(min(s[2] for s in starts), goal[2]) - margin)
         z1 = min(D - 1, max(max(s[2] for s in starts), goal[2]) + margin)
+    # every conductive block (tile cobble, bridge support, stamped pillar) —
+    # passed in pre-joined by route() so this is O(1) per call, not a rebuild
+    cob = cob3 if cob3 is not None else set(sup)
+    # O(1) replacements for the per-candidate distance test: `near` is every
+    # cell within Chebyshev 2 of the goal or a start (the port exemption),
+    # `gexp` is the torch-hug guard grown by one cell, `air` is maintained by
+    # the layout (a y=1 cell can only couple upward if some elevated dust
+    # exists at all). Was: a generator + abs/max per candidate, plus an
+    # O(len(wires)) scan per call.
+    near = set()
+    for cx, cz in [(goal[0], goal[2])] + [(s[0], s[2]) for s in starts]:
+        for ax in range(cx - 2, cx + 3):
+            for az in range(cz - 2, cz + 3):
+                near.add((ax, az))
+    gexp = set(guard)
+    for gx0, gz0 in list(guard):
+        gexp.update(((gx0 + 1, gz0), (gx0 - 1, gz0), (gx0, gz0 + 1), (gx0, gz0 - 1)))
+    air = aircells
+    # Elevated dust is rare (a handful of flights per build) but every flat
+    # candidate used to pay 8 vertical-coupling lookups for it. `airstrip` is
+    # those cells dilated by one in x/z: a y=1 cell can only couple upward if
+    # it is IN the strip, so 1 lookup replaces 8 for everyone else.
+    airstrip = set()
+    for ax, ay, az in air:
+        airstrip.update(((ax + 1, az), (ax - 1, az), (ax, az + 1), (ax, az - 1)))
+    def lid(cell):
+        return cell in cob  # any pillar: tile, bridge, or stamped
     def ok(cell):
         x, y, z = cell
-        if not (x0 <= x <= x1 and z0 <= z <= z1):
+        if not (x0 <= x <= x1 and z0 <= z <= z1 and 1 <= y <= _H):
             return False
         if cell == goal:
             return True
-        if y == 1 and (x, z) in junctions and net in junctions[(x, z)]:
-            return True
-        if y == 1 and (x, z) in solid:
-            return False
-        if (x, z) in rings and net not in rings[(x, z)]:
-            return False
         if cell in wires and wires[cell] != net:
             return False
+        if y == 1:
+            if (x, z) in junctions and net in junctions[(x, z)]:
+                return True
+            if (x, z) in solid:
+                return False
+            if (x, z) in rings and net not in rings[(x, z)]:
+                return False
+            if (x, 1, z) in sup:
+                return False
+        elif cell in cob:
+            return False  # inside a pillar (tile/bridge/stamped): no dust here
         return True
     def touches_foreign(cell, prev):
+        # same-y side touch couples; diagonal +-1 couples only via a true
+        # slope link (support under upper + no lid over lower). Stacked or
+        # unsupported y-adjacency never links, so overflight stays legal.
+        # Hot path (millions of calls): local refs, no generators.
+        x, y, z = cell
+        wg = wires.get
+        jn = junctions
+        up = y > 1 or (air and (x, z) in airstrip)   # any vertical coupling left?
         for dx, dz in DIRS:
-            m = (cell[0] + dx, cell[1], cell[2] + dz)
-            if m == prev or m in starts:
+            m = (x + dx, y, z + dz)
+            if m != prev and m not in starts:
+                w = wg(m)          # cheap first: no foreign dust, no junction work
+                if w is not None and w != net:
+                    j = jn.get((m[0], m[2]))
+                    if not (j and net in j):   # OR junction: wired-OR is the gate
+                        if blocked is not None:
+                            if y == 1:
+                                # blame the ring, exactly as the 2D code did:
+                                # a closed loop far from the goal seals just as
+                                # dead as a wall on the goal itself.
+                                for dx2, dz2 in DIRS:
+                                    k = (m[0] + dx2, 1, m[2] + dz2)
+                                    if k != cell and k in wires and wires[k] != net:
+                                        blocked.add(k)
+                            else:
+                                blocked.add(m)
+                        return True
+            if not up:
                 continue
-            if m == goal and (m[0], m[2]) in junctions and net in junctions[(m[0], m[2])]:
-                continue  # OR junction: wired-OR is the gate
-            if m in wires and wires[m] != net and not ((m[0], m[2]) in junctions and net in junctions[(m[0], m[2])]):
-                return True
+            for dy in (1, -1):
+                f = (x + dx, y + dy, z + dz)
+                if f == prev or f in starts or f == goal:
+                    continue
+                w = wg(f)
+                if w is None or w == net:
+                    continue
+                if dy == 1:
+                    if (f[0], f[1] - 1, f[2]) in cob and (x, y + 1, z) not in cob:
+                        if blocked is not None:
+                            blocked.add(f)
+                        return True
+                elif y > 1 and (f[0], y, f[2]) not in cob:
+                    # support below own cell is guaranteed by move legality
+                    if blocked is not None:
+                        blocked.add(f)
+                    return True
         return False
-    open_h = [(abs(s[0] - goal[0]) + abs(s[2] - goal[2]), 0, (s[0], s[2]), s, None) for s in starts]
+    open_h = [(abs(s[0] - goal[0]) + abs(s[2] - goal[2]), 0, s, s, None) for s in starts]
     heapq.heapify(open_h)
     came, cost = {s: None for s in starts}, {s: 0 for s in starts}
     n = 0
@@ -67,42 +212,49 @@ def astar(starts, goal, net, W, D, solid, rings, wires, junctions, margin=None, 
                 c = came[c]
                 path.append(c)
             return path[::-1]
+        x, y, z = cell
         for dx, dz in DIRS:
-            m = (cell[0] + dx, 1, cell[2] + dz)
-            if not ok(m):
-                continue
-            if m == goal and (m[0], m[2]) in junctions and net in junctions[(m[0], m[2])]:
-                pass  # OR junction: wired-OR is the gate
-            elif touches_foreign(m, cell):
-                if blocked is not None:
-                    # sealed-pocket ripup: record the exact wire cells whose
-                    # touch rejects this step (a closed loop far from the goal
-                    # seals just as dead as a wall on the goal itself).
-                    for dx2, dz2 in DIRS:
-                        k = (m[0] + dx2, 1, m[2] + dz2)
-                        if k != cell and k in wires and wires[k] != net:
-                            blocked.add(k)
-                continue
-            ng = g + 1
-            if congest:
-                # ponytail: negotiated congestion (lite). Ripped corridors
-                # stay expensive, so retries explore new lanes instead of
-                # cycling the same blame pair. Zero when nothing failed.
-                ng += congest.get(m, 0)
-            if guard and m != goal:
-                # ponytail: no hugging solids mid-run. A wire beside a
-                # torch block powers it (wrong values); beside a lit torch
-                # it gets back-powered into a ring oscillator. Ports live
-                # within 2 of goal/start, so only drive-bys are refused.
-                if max(abs(m[0] - goal[0]), abs(m[2] - goal[2])) > 2 and all(
-                        max(abs(m[0] - s[0]), abs(m[2] - s[2])) > 2
-                        for s in starts):
-                    if any((m[0] + dx, m[2] + dz) in guard
-                           for dx, dz in DIRS):
+            ups = () if (flat_only or y >= _H) else (((x + dx, y + 1, z + dz), _STEPCOST),)
+            dns = () if (flat_only or y <= 1) else (((x + dx, y - 1, z + dz), _STEPCOST),)
+            for m, step in (((x + dx, y, z + dz), 1),) + ups + dns:
+                if not ok(m):
+                    continue
+                mx, my, mz = m
+                if my != y:
+                    # level change: support under the upper endpoint (stamped
+                    # once by route(), never during search) + lid over the
+                    # lower endpoint clear, else the slope never conducts.
+                    if my >= 2 and _support(m, net, solid, wires, sup, reps, guard) is False:
                         continue
-            if ng < cost.get(m, 1e9):
-                cost[m], came[m] = ng, cell
-                heapq.heappush(open_h, (ng + abs(m[0] - goal[0]) + abs(m[2] - goal[2]), ng, (m[0], m[2]), m, cell))
+                    lo = cell if my > y else m
+                    if lid((lo[0], lo[1] + 1, lo[2])):
+                        continue
+                elif my >= 2 and _support(m, net, solid, wires, sup, reps, guard) is False:
+                    continue
+                if m == goal and (m[0], m[2]) in junctions and net in junctions[(m[0], m[2])]:
+                    pass  # OR junction: wired-OR is the gate
+                elif touches_foreign(m, cell):
+                    continue
+                ng = g + step
+                if congest:
+                    # ponytail: negotiated congestion (lite). Ripped corridors
+                    # stay expensive, so retries explore new lanes instead of
+                    # cycling the same blame pair. Zero when nothing failed.
+                    ng += congest.get(m, 0)
+                if gexp and my == 1 and m != goal and (mx, mz) not in near and (mx, mz) in gexp:
+                    # ponytail: no hugging solids mid-run. A wire beside a
+                    # torch block powers it (wrong values); beside a lit torch
+                    # it gets back-powered into a ring oscillator. Ports live
+                    # within 2 of goal/start (the `near` exemption), so only
+                    # drive-bys are refused. (y>=2 is immune: sim couples
+                    # torches same-y only.)
+                    continue
+                if ng < cost.get(m, 1e9):
+                    cost[m], came[m] = ng, cell
+                    # (f, g, (x,z), cell, prev): the 2D projection first keeps
+                    # the flat tie-break exactly as the 2D code had it, the 3D
+                    # cell then makes the order total (no hash-order anywhere).
+                    heapq.heappush(open_h, (ng + abs(mx - goal[0]) + abs(mz - goal[2]), ng, (mx, mz), m, cell))
     return None
 
 
@@ -135,12 +287,14 @@ def bridge_free(wires, solid, repeaters, guard, W, D, fx, fz, axis, net):
             return False
         if wires.get((x, y, z)) not in (None, net):
             return False
+        if wires.get((x, y + 1, z)) not in (None, net):
+            return False  # 3D: no pillaring under / dust over foreign wire
     for x, y, z in supports:
         if y == 1 and (x, z) in solid:
             return False
-        if (x, z) in repeaters:
+        if (x, y, z) in repeaters:
             return False
-    if solid.get((fx, fz)) is not None or (fx, fz) in repeaters:
+    if solid.get((fx, fz)) is not None or (fx, 1, fz) in repeaters:
         return False  # center column must hold only victim dust
     if wires.get((fx, 4, fz)) is not None:
         return False  # air above the hop
@@ -149,7 +303,7 @@ def bridge_free(wires, solid, repeaters, guard, W, D, fx, fz, axis, net):
             return False
         if wires.get((x, y, z)) not in (None, net):
             return False
-        if (x, z) in solid or (x, z) in repeaters:
+        if (x, z) in solid or (x, 1, z) in repeaters:
             return False
     return True
 
@@ -214,7 +368,9 @@ def layout(recipe, seed=None, grow=0):
     W = min(int(W * (1.5 ** grow)), 20000)
     D = min(int(D * (1.5 ** grow)), 4000)
     blocks = []  # (x, y, z, block-id [+state])
-    solid, rings, wires, junctions, repeaters, paths = {}, {}, {}, {}, {}, []
+    solid, rings, wires, junctions, repeaters, paths, sup = {}, {}, {}, {}, {}, [], {}
+    # sup: (x,y,z) -> net stamped 3D support pillars (cobble). Tile cobbles
+    # stay in 2D solid; sup holds only route-stamped pillars (all levels).
     FLOOR = "minecraft:stone"
 
     def own(*nets):
@@ -223,40 +379,129 @@ def layout(recipe, seed=None, grow=0):
     def ring(x, z, nets):
         rings.setdefault((x, z), set()).update(nets)
 
-    def stamp_wire(path, net):
+    def stamp_wire(path, net, ends=()):
         for cell in path:
             if len(cell) == 2:
                 cell = (cell[0], 1, cell[1])  # placement stubs are y=1
             flat = (cell[0], cell[2])
-            if cell[1] == 1 and flat in solid:
-                raise RuntimeError(f"wire {net} hits solid at {cell}")
+            if cell[1] == 1:
+                if flat in solid:
+                    raise RuntimeError(f"wire {net} hits solid at {cell}")
+            elif cell in sup:
+                raise RuntimeError(f"wire {net} hits pillar at {cell}")
+            # (tile columns never block y>=2 overflight: correction 1)
             if cell in wires and wires[cell] != net:
                 if cell[1] == 1 and flat in junctions and net in junctions[flat]:
                     continue  # OR junction: wired-OR is the gate
                 raise RuntimeError(f"wire {net} bridges {wires[cell]} at {cell}")
-            if flat in rings and net not in rings[flat]:
+            if cell[1] == 1 and flat in rings and net not in rings[flat]:
+                # astar exempts the ports (a tile port sits inside rings by
+                # construction and the router MUST start and end there), so
+                # stamping must agree — otherwise a legal route dies at its own
+                # endpoint. The ring overlap is a tile-placement artefact
+                # either way; sim is the selector for whether it miscomputes.
                 if cell[1] == 1 and flat in junctions and net in junctions[flat]:
+                    pass
+                elif flat in ends:
                     pass
                 else:
                     raise RuntimeError(f"wire {net} hits guarded {cell}")
             wires.setdefault(cell, net)
 
-    def route(a, b, net):
+    def route(a, b, net, use3d=True):
         # single source: every branch traces full-length to its driver.
         # (Tapping live-looking mid-wire cells caused decayed weak taps;
         #  connected-tap + shortest-first retries in 2026-09 also broke xor.)
+        # 3D Attempt 1 is an ESCAPE, not an optimizer: pass 1 is today's flat
+        # search verbatim (same cost, same routes, same failures) and is tried
+        # first, so green builds never touch the 3D search. Height is searched
+        # only when flat has NO route — the seal case 3D exists to dissolve.
+        # The 3D winner is re-checked against the FINAL pillar set (a flyover
+        # pillar can lid the path's own later slope: self-lid, invisible to
+        # the search) and against booster cover (dust dies after 15, so a run
+        # with no straight triple in the window — twisty or climbing — is dead
+        # and is refused; cover may sit on a pillar). Ceiling: one 3D pass, no
+        # research loop — the caller's rip-up/bridge/next-seed already retries.
+        CB = "minecraft:cobblestone"
         seen = set()
-        best = None
-        for margin in (12, 40, None):
-            path = astar([(a[0], 1, a[1])], (b[0], 1, b[1]), net, W, D, solid, rings, wires, junctions, margin, blocked=seen, congest=congest, guard=guard)
-            if path and (best is None or len(path) < len(best)):
-                best = path
-        path = best
+        # O(1): the conductive sets are maintained by the layout, so a route
+        # hands them straight through instead of re-joining them per search.
+
+        def _search(flat, margins):
+            # Candidates, shortest first. Stop as soon as a route hits the
+            # Manhattan lower bound: nothing can be shorter, so the wider
+            # windows would burn two more full-field A* passes for nothing.
+            out = []
+            lb = abs(a[0] - b[0]) + abs(a[1] - b[1])
+            for margin in margins:
+                cand = astar([(a[0], 1, a[1])], (b[0], 1, b[1]), net, W, D, solid,
+                             rings, wires, junctions, margin, blocked=seen,
+                             congest=congest, guard=guard, sup=sup, reps=repeaters,
+                             cob3=condg if flat else cond, flat_only=flat,
+                             aircells=aircells)
+                if cand:
+                    out.append(cand)
+                    if len(cand) == lb:
+                        break
+            # shortest wins; on a tie the earlier margin wins (stable sort over
+            # a fixed margin order) — same pick as the pre-3D code, and the
+            # order is fully specified (no set/dict iteration anywhere).
+            return [(i, p) for i, p in sorted(enumerate(out), key=lambda ip: (len(ip[1]), ip[0]))]
+
+        cands = _search(True, (12, 40, None))
+        path = cands[0][1] if cands else None
+        needs = []
+        if path is None and use3d:
+            # 3D: take the shortest candidate that survives support, self-lid
+            # and cover. One pass, no research loop.
+            why = None
+            for _i, cand in _search(False, (12, 40, None)):
+                needs = []
+                try:
+                    for cell in cand:
+                        if cell[1] < 2:
+                            continue
+                        r = _support(cell, net, solid, wires, sup, repeaters, guard)
+                        if r is False:
+                            raise RuntimeError("support sealed")
+                        if r is not None and r not in sup and r not in needs:
+                            needs.append(r)
+                    cobf = cond | set(needs)
+                    for u, v in zip(cand, cand[1:]):
+                        if u[1] == v[1]:
+                            continue
+                        lo, hi = (u, v) if u[1] < v[1] else (v, u)
+                        if (hi[0], hi[1] - 1, hi[2]) not in cobf or (lo[0], lo[1] + 1, lo[2]) in cobf:
+                            raise RuntimeError("self-lid")
+                    i = len(cand) - 1
+                    while i > 14:
+                        j = _cover_gap(cand, i)
+                        if j is False:
+                            raise RuntimeError("unboostable 3D")
+                        i = j
+                except RuntimeError as e:
+                    why = str(e)
+                    continue
+                path = cand
+                break
+            if path is None and why:
+                last_blocked[net] = seen
+                raise RuntimeError(f"no route for {net}: {a} -> {b} (3D: {why})")
         if not path:
             last_blocked[net] = seen
             raise RuntimeError(f"no route for {net}: {a} -> {b} (grid full, widen W)")
-        stamp_wire(path, net)
-        paths.append((path, net))
+        # Pillars go into the maintained sets now and into `blocks` once, after
+        # all routing (a rip-up used to rebuild the whole block list per rip).
+        for s_ in needs:
+            sup[s_] = net
+            cond.add(s_)
+            if s_[1] == 1:
+                condg.add(s_)
+        stamp_wire(path, net, (a, b))
+        for c in path:
+            if c[1] >= 2:
+                aircells.add(c)
+        paths.append((path, net, tuple(needs)))
         return path
 
     # maze: every used input gets one bank lever on the south edge; fanout
@@ -593,7 +838,7 @@ def layout(recipe, seed=None, grow=0):
                         if wires.get((_jx, 1, _jz)) != o:
                             raise RuntimeError(f"XOR diode spot holds {wires.get((_jx, 1, _jz), 'EMPTY')}")
                         del wires[(_jx, 1, _jz)]
-                        repeaters[(_jx, _jz)] = (o, "south")
+                        repeaters[(_jx, 1, _jz)] = (o, "south")
                     for lx, lz, ln in ((ox, gz + 3, a[0]), (ox, gz + 1, a[1])):
                         blocks.append((lx, 1, lz, "minecraft:lever"))
                         solid[(lx, lz)] = ("lever", ln)
@@ -731,6 +976,31 @@ def layout(recipe, seed=None, grow=0):
             dx, dz = TORCH_BACK[face]
             guard.add((x + dx, z + dz))
     pending = tasks[:]
+    # conductive blocks, maintained as tiles/bridges/pillars land: the search
+    # reads this instead of rebuilding it per astar call.
+    tilecob = {(x, 1, z) for (x, z), (k, _) in solid.items() if k == "cobble"}
+    coball = {(x, y, z) for x, y, z, bid in blocks
+              if bid.split("[")[0] == "minecraft:cobblestone"}
+    # Conductive sets are maintained, never rebuilt: a route only ever needs
+    # "is there a block here", and rebuilding per route/rip was O(routes x
+    # pillars). condg = ground level (what the flat search may stand on),
+    # cond = every level (what the 3D search may slope onto).
+    condg = set(tilecob)
+    cond = set(coball)
+    aircells = set()          # elevated wire cells: a y=1 cell can only
+
+    def _rip(sups, net):
+        """Drop a ripped path's own pillars: a stale cobble would roof a later
+        slope and a stale sup entry would block the ground column. Pillars are
+        NOT in `blocks` during routing, so this is O(pillars of the path) —
+        no O(blocks) rebuild per rip-up."""
+        gone = {c for c in sups if sup.get(c) == net}
+        for c in gone:
+            del sup[c]
+            cond.discard(c)
+            if c[1] == 1:
+                condg.discard(c)
+        return gone
     fails = {}
     bridged = set()  # (fx, fz, axis) already hopped; never retry
     def try_bridge(s, t, net):
@@ -753,8 +1023,10 @@ def layout(recipe, seed=None, grow=0):
                     if w is not None and w != net:
                         cands.append((c[0], c[2]))
         cands = list(dict.fromkeys(cands))
+        # total order (p last): bridge-candidate ties were hash-seed dependent,
+        # which made cross-process build diffs guesswork (handoff repro bug).
         cands.sort(key=lambda p: ((p[0], 1, p[1]) not in placed,
-                                  abs(p[0] - s[0]) + abs(p[1] - s[1]) + abs(p[0] - t[0]) + abs(p[1] - t[1])))
+                                  abs(p[0] - s[0]) + abs(p[1] - s[1]) + abs(p[0] - t[0]) + abs(p[1] - t[1]), p))
         prefer = ("ew", "ns") if abs(s[0] - t[0]) >= abs(s[1] - t[1]) else ("ns", "ew")
         for fx, fz in cands[:8]:
             for axis in prefer:
@@ -763,6 +1035,8 @@ def layout(recipe, seed=None, grow=0):
                 if not bridge_free(wires, solid, repeaters, guard, W, D, fx, fz, axis, net):
                     continue
                 feet = bridge_stamp(blocks, solid, wires, rings, placed, net, fx, fz, axis)
+                cond.update(bridge_plan(fx, fz, axis)[1])   # its cobble supports
+                condg.update((c for c in bridge_plan(fx, fz, axis)[1] if c[1] == 1))
                 fa, fb = sorted(feet, key=lambda f: abs(f[0] - s[0]) + abs(f[2] - s[1]))
                 try:
                     route(s, (fa[0], fa[2]), net)
@@ -777,61 +1051,85 @@ def layout(recipe, seed=None, grow=0):
                 tasks.extend([(s, (fa[0], fa[2]), net), ((fb[0], fb[2]), t, net)])
                 return True
         return False
+    # ponytail: two passes over the same task list. Pass 1 is flat-only, so
+    # every net that CAN route on the ground keeps today's exact route; only
+    # what pass 1 could not place at all reaches pass 2, where 3D is allowed.
+    # Interleaving instead (3D whenever a net is stuck) lets one long flight's
+    # pillars eat the ground columns a later flat net needed — the flight
+    # solved net A and killed net R (measured, latch_sr).
+    stuck = None
     try:
-        while pending:
-            s, t, net = pending.pop(0)
-            try:
-                route(s, t, net)
-                continue
-            except RuntimeError:
-                pass
-            # targeted ripup: nets physically sealing this wire get re-routed
-            # after us. Goal-side first (cheap, master-identical); driver-side
-            # only when goal rips are exhausted (drivers get entombed too).
-            def seal_nets(cell):
-                found = set()
-                for dx, dz in DIRS:
-                    for yy in (1, 2):
-                        A = (cell[0] + dx, yy, cell[1] + dz)
-                        for c in [A] + [(A[0] + qx, A[1], A[2] + qz) for qx, qz in DIRS]:
-                            w = wires.get(c)
-                            if w is not None and w != net and c not in placed:
-                                found.add(w)
-                return found
-            blockers = seal_nets(t)
-            for c in last_blocked.get(net, ()):
-                w = wires.get(c)
-                if w is not None and w != net and c not in placed:
-                    blockers.add(w)
-            block_tasks = [tk for tk in tasks if tk[2] in blockers]
-            key = (net, tuple(sorted(blockers)))
-            fails[key] = fails.get(key, 0) + 1
-            if not block_tasks or fails[key] > 2:
-                extra = (seal_nets(s) - blockers) if s is not None else set()
-                extra_tasks = [tk for tk in tasks if tk[2] in extra]
-                xkey = (net, tuple(sorted(blockers | extra)), "drv")
-                if extra_tasks and fails.get(xkey, 0) < 2:
-                    fails[xkey] = fails.get(xkey, 0) + 1
-                    for p, m in paths[:]:
-                        if m in extra:
-                            for c in p:
-                                if wires.get(c) == m and c not in placed:
-                                    del wires[c]
-                                    congest[c] = congest.get(c, 0) + 5
-                            paths.remove((p, m))
-                    pending = [(s, t, net)] + extra_tasks + pending
+        for use3d in ((False, True) if _PASSES == 2 else (True,)):
+            if not pending:
+                break
+            while pending:
+                s, t, net = pending.pop(0)
+                try:
+                    route(s, t, net, use3d)
                     continue
-                if try_bridge(s, t, net):
-                    continue
-                raise RuntimeError(f"no route for {net}: {s} -> {t} (grid full, widen W)")
-            for p, m in paths[:]:
-                if m in blockers:
-                    for c in p:
-                        if wires.get(c) == m and c not in placed:
-                            del wires[c]
-                            congest[c] = congest.get(c, 0) + 5
-                    paths.remove((p, m))
-            pending = [(s, t, net)] + block_tasks + pending
+                except RuntimeError as e:
+                    why = str(e)
+                # targeted ripup: nets physically sealing this wire get re-routed
+                # after us. Goal-side first (cheap, master-identical); driver-side
+                # only when goal rips are exhausted (drivers get entombed too).
+                def seal_nets(cell):
+                    found = set()
+                    for dx, dz in DIRS:
+                        # flat pass blames the two levels the 2D code blamed;
+                        # only the 3D pass counts elevated dust as a sealer
+                        for yy in ((1, 2, 3) if use3d else (1, 2)):
+                            A = (cell[0] + dx, yy, cell[1] + dz)
+                            for c in [A] + [(A[0] + qx, A[1], A[2] + qz) for qx, qz in DIRS]:
+                                w = wires.get(c)
+                                if w is not None and w != net and c not in placed:
+                                    found.add(w)
+                    return found
+                blockers = seal_nets(t)
+                for c in last_blocked.get(net, ()):
+                    w = wires.get(c)
+                    if w is not None and w != net and c not in placed:
+                        blockers.add(w)
+                block_tasks = [tk for tk in tasks if tk[2] in blockers]
+                key = (net, tuple(sorted(blockers)))
+                fails[key] = fails.get(key, 0) + 1
+                if not block_tasks or fails[key] > 2:
+                    extra = (seal_nets(s) - blockers) if s is not None else set()
+                    extra_tasks = [tk for tk in tasks if tk[2] in extra]
+                    xkey = (net, tuple(sorted(blockers | extra)), "drv")
+                    if extra_tasks and fails.get(xkey, 0) < 2:
+                        fails[xkey] = fails.get(xkey, 0) + 1
+                        for p, m, s_ in paths[:]:
+                            if m in extra:
+                                for c in p:
+                                    if wires.get(c) == m and c not in placed:
+                                        del wires[c]
+                                        congest[c] = congest.get(c, 0) + 5
+                                _rip(s_, m)
+                                paths.remove((p, m, s_))
+                        pending = [(s, t, net)] + extra_tasks + pending
+                        continue
+                    if try_bridge(s, t, net):
+                        continue
+                    stuck = (s, t, net, why)   # next pass may still fly it
+                    break
+                for p, m, s_ in paths[:]:
+                    if m in blockers:
+                        for c in p:
+                            if wires.get(c) == m and c not in placed:
+                                del wires[c]
+                                congest[c] = congest.get(c, 0) + 5
+                        _rip(s_, m)
+                        paths.remove((p, m, s_))
+                pending = [(s, t, net)] + block_tasks + pending
+            if stuck is None:
+                break                       # pass drained: nothing left to fly
+            if use3d:
+                break                       # last chance: keep stuck so it raises
+            pending.insert(0, stuck[:3])   # pass 2 retries with height allowed
+            stuck = None
+        if stuck is not None:
+            raise RuntimeError(f"no route for {stuck[2]}: {stuck[0]} -> {stuck[1]} "
+                               f"(grid full, widen W; last: {stuck[3]})")
     finally:
         # ponytail: permanent debug tap (debug.py reads it). Costs one env
         # check per layout; replaces every ad-hoc Temp probe.
@@ -842,37 +1140,35 @@ def layout(recipe, seed=None, grow=0):
     for name in recipe["outputs"]:
         pos[name]  # KeyError if output is undriven: loud, as before
 
+    # pillars into the block list, once: routing kept them in `sup`/`cond` only
+    for s_, n in sup.items():
+        blocks.append((s_[0], s_[1], s_[2], "minecraft:cobblestone"))
+
     # phase 2: maze stamp is done above (route stamps inline); lamps stay
     # after routing so their collision check dodges wires automatically.
 
     # repeaters: dust dies after 15 blocks. Backward cover from each goal:
     # every path cell ends within 14 of a booster-or-source behind it.
-    def is_straight(path, i):
-        if i <= 0 or i >= len(path) - 1:
-            return False
-        (x0, y0, z0), (x1, y1, z1), (x2, y2, z2) = path[i - 1], path[i], path[i + 1]
-        if not (y0 == y1 == y2 == 1):
-            return False
-        return (x0 == x1 == x2) or (z0 == z1 == z2)
-
     def place_rep(path, net, j):
-        (x0, _, z0), (x1, _, z1) = path[j - 1], path[j]
+        (x0, y0, z0), (x1, y1, z1) = path[j - 1], path[j]
         dx, dz = x1 - x0, z1 - z0
         facing = {(1, 0): "east", (-1, 0): "west", (0, 1): "south", (0, -1): "north"}[(dx, dz)]
-        for f in ((x1 + dx, 1, z1 + dz), (x1 - dx, 1, z1 - dz)):
+        if not _has_support((x1, y1, z1), sup, solid):
+            raise RuntimeError(f"repeater {net} at {(x1, y1, z1)} has no support under it")
+        for f in ((x1 + dx, y1, z1 + dz), (x1 - dx, y1, z1 - dz)):
             w = wires.get(f)
             if w is not None and w != net:
                 raise RuntimeError(f"repeater guard {net} vs {w} at {f}")
-        if wires.get((x1, 1, z1)) != net:
-            if (x1, z1) in repeaters and repeaters[(x1, z1)][0] == net:
+        if wires.get((x1, y1, z1)) != net:
+            if (x1, y1, z1) in repeaters and repeaters[(x1, y1, z1)][0] == net:
                 return  # shared fanout trunk: a sibling branch already boosted here
             raise RuntimeError(
-                f"repeater spot {net} at {(x1, 1, z1)} holds {wires.get((x1, 1, z1), 'EMPTY')} "
+                f"repeater spot {net} at {(x1, y1, z1)} holds {wires.get((x1, y1, z1), 'EMPTY')} "
                 f"(solid {solid.get((x1, z1), '-')})")
-        del wires[(x1, 1, z1)]
-        repeaters[(x1, z1)] = (net, facing)
+        del wires[(x1, y1, z1)]
+        repeaters[(x1, y1, z1)] = (net, facing)
 
-    for path, net in paths:
+    for path, net, _sups in paths:
         # cover the tile-stub tail past the goal too: same-net dust stamped
         # in phase 1 (ports, latch rows) decays exactly like routed wire, and
         # a latch S-row needs level 9 at the port to reach its block, while
@@ -897,11 +1193,9 @@ def layout(recipe, seed=None, grow=0):
         n = len(path)
         i = n - 1
         while i > 14:
-            cands = [j for j in range(max(1, i - 14), min(i - 1, n - 1) + 1)
-                     if is_straight(path, j)]
-            if not cands:
+            j = _cover_gap(path, i)
+            if j is False:
                 raise RuntimeError(f"unboostable gap on {net} near index {i} (twisty path)")
-            j = min(cands)
             place_rep(path, net, j)
             i = j
 
@@ -926,6 +1220,10 @@ def layout(recipe, seed=None, grow=0):
             raise RuntimeError(f"lamp spot taken for {name} at {(ox_, oz)}")
 
     # checker: no two nets may share/side-touch dust, except at OR junctions.
+    # Diagonal +-1 adjacency counts only via a true slope link (support +
+    # no lid, sim's rule): stacked/unsupported y-adjacency never couples,
+    # so legal overflight passes and real 3D shorts still fail loudly.
+    cob3 = {(x, y, z) for x, y, z, bid in blocks if bid.split("[")[0] == "minecraft:cobblestone"}
     for (x, y, z), net in wires.items():
         for dx, dz in DIRS:
             m = (x + dx, y, z + dz)
@@ -934,6 +1232,16 @@ def layout(recipe, seed=None, grow=0):
                 ok = ok or ((x, z) in junctions and wires[m] in junctions[(x, z)])
                 if not ok:
                     raise RuntimeError(f"SHORT: {net} touches {wires[m]} at {(x, y, z)}->{m}")
+            for dy in (1, -1):
+                f = (x + dx, y + dy, z + dz)
+                w = wires.get(f)
+                if w is None or w == net:
+                    continue
+                if dy == 1:
+                    if (f[0], f[1] - 1, f[2]) in cob3 and (x, y + 1, z) not in cob3:
+                        raise RuntimeError(f"SHORT3D: {net} slope-links {w} at {(x, y, z)}->{f}")
+                elif y >= 2 and (x, y - 1, z) in cob3 and (f[0], y, f[2]) not in cob3:
+                    raise RuntimeError(f"SHORT3D: {net} slope-links {w} at {(x, y, z)}->{f}")
     # checker 2 (opens): every wire must trace to a driver (lever feed, tie,
     # or torch-adjacent dust). Same-net steps, junctions merge, repeaters pass.
     # A routed-looking but unconnected net fails loudly instead of building dead.
@@ -972,10 +1280,10 @@ def layout(recipe, seed=None, grow=0):
                 if nm == n or ((c[0], c[2]) in junctions and nm in junctions[(c[0], c[2])]) or \
                    ((m[0], m[2]) in junctions and n in junctions[(m[0], m[2])]):
                     stack.append((m, nm if nm == n or (m[0], m[2]) not in junctions else n))
-            elif (m[0], m[2]) in repeaters and repeaters[(m[0], m[2])][0] == n:
+            elif m in repeaters and repeaters[m][0] == n:
                 stack.append((m, n))
             elif solid.get((m[0], m[2]), (None,))[0] == "repeater" and solid[(m[0], m[2])][1] == n:
-                stack.append((m, n))  # boosters + OR diodes stamp solid-only
+                stack.append((m, n))  # OR diodes stamp solid-only
             # ponytail: slope links use sim's rule (support below, no lid
             # above); without this every bridge reads as unconnected dust.
             up = (c[0] + dx, c[1] + 1, c[2] + dz)
@@ -1003,15 +1311,15 @@ def layout(recipe, seed=None, grow=0):
     rings = {(x - minx, z - minz): v for (x, z), v in rings.items()}
     junctions = {(x - minx, z - minz): v for (x, z), v in junctions.items()}
     pos = {n: (x - minx, z - minz) for n, (x, z) in pos.items()}
-    repeaters = {(x - minx, z - minz): v for (x, z), v in repeaters.items()}
+    repeaters = {(x - minx, y, z - minz): v for (x, y, z), v in repeaters.items()}
     W, D = maxx - minx + 1, maxz - minz + 1
     out = list(blocks)
     for (x, y, z), net in wires.items():
         out.append((x, y, z, "minecraft:redstone_wire"))
-    for (x, z), (net, facing) in repeaters.items():
-        out.append((x, 1, z, f"minecraft:repeater[facing={facing},delay=1]"))
-    # ponytail: stone only where a component sits on it (flat worlds have
-    # ground already); a full pad was 98% of the file.
+    for (x, y, z), (net, facing) in repeaters.items():
+        out.append((x, y, z, f"minecraft:repeater[facing={facing},delay=1]"))
+    # ponytail: stone only where a ground component sits (flat worlds have
+    # ground already); a full pad was 98% of the file. y>=2 rides pillars.
     for x, z in sorted({(x, z) for x, y, z, bid in out if y == 1}):
         out.append((x, 0, z, "minecraft:stone"))
     io = {"levers": {c: n for c, (k, n) in solid.items() if k == "lever"},
@@ -1092,4 +1400,21 @@ if __name__ == "__main__":
                      {"out": "Bout", "op": "AND", "args": ["B", "B"]}]}
     _sv(_xr, _xb, _xio, quiet=True)
     print("bridge ok: ns hop crosses live wire, sim green both ways")
+    # ponytail: 3D Attempt 1 rules — support assert FIRES on a bad case, cover
+    # accepts a pillar run and refuses a long pure-elevated one. No fixture:
+    # hand-built cells, the same helpers route() uses.
+    assert _has_support((4, 1, 4), {}, {}) is True, "ground needs no block"
+    assert _has_support((4, 2, 4), {}, {}) is False, "floating repeater allowed!"
+    assert _has_support((4, 2, 4), {(4, 1, 4): "n"}, {}) is True
+    assert _has_support((4, 2, 4), {}, {(4, 4): ("cobble", "n")}) is True
+    assert _has_support((4, 3, 4), {(4, 1, 4): "n"}, {}) is False, "y=3 on a y=1 pillar"
+    _p = [(x, 1, 0) for x in range(6)] + [(x, 2, 0) for x in range(6, 10)]
+    assert _cover_gap(_p, len(_p) - 1) == 1, "cover should back off to the last straight run"
+    _pillar = [(x, 2, 0) for x in range(20)]  # straight flight: cover sits on a pillar
+    assert _cover_gap(_pillar, 19) == 5, "pillar cover not used"
+    _fly = [(0, 1, 0)] + [(x, 3, 0) for x in range(1, 21)]  # 20 at y=3, no support
+    assert _cover_gap(_fly, len(_fly) - 1) is not False, "straight run is boostable"
+    _twist = [(x, 1, 0) if x % 2 else (x, 2, 0) for x in range(21)]  # no straight triple
+    assert _cover_gap(_twist, 20) is False, "unboostable twisty run should be refused"
+    print("3d ok: support assert fires, cover takes pillars, refuses dead flights")
 

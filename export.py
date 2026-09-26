@@ -92,10 +92,10 @@ def export_html(blocks, size, path, label="build", extra=None):
             f = bid.split("facing=")[1].rstrip("]") if "facing=" in bid else "east"
             d = fdir[f]
             torchinfo[(x, z)] = {"f": list(d), "m": 1 if (x - d[0], z - d[1]) in mountxy else 0}
-        elif y == 1 and b == "minecraft:repeater":
+        elif b == "minecraft:repeater":
             f = bid.split("facing=")[1].split(",")[0] if "facing=" in bid else "east"
             dl = bid.split("delay=")[1].split(",")[0].rstrip("]") if "delay=" in bid else "1"
-            repinfo[(x, z)] = {"f": list(fdir[f]), "dl": max(1, min(4, int(dl)))}
+            repinfo[(x, y, z)] = {"f": list(fdir[f]), "dl": max(1, min(4, int(dl)))}
         if b == "minecraft:comparator":
             f = bid.split("facing=")[1].split(",")[0] if "facing=" in bid else "east"
             v = fdir[f]
@@ -106,7 +106,8 @@ def export_html(blocks, size, path, label="build", extra=None):
             t = torchinfo[(d["p"][0], d["p"][2])]
             d["f"], d["m"] = t["f"], t["m"]
         elif d["b"] == "minecraft:repeater":
-            r = repinfo[(d["p"][0], d["p"][2])]
+            # 3D: repeaters may stand on a pillar, so key on (x,y,z)
+            r = repinfo[(d["p"][0], d["p"][1], d["p"][2])]
             d["f"], d["dl"] = r["f"], r["dl"]
         elif d["b"] == "minecraft:comparator":
             d["f"] = cmpinfo[(d["p"][0], d["p"][1], d["p"][2])]["f"]
