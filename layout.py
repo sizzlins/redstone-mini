@@ -692,6 +692,15 @@ def layout(recipe, seed=None, grow=0):
         random.Random(seed + 1).shuffle(_names)
     _oi = {n: i for i, n in enumerate(_names)}
     tasks.sort(key=lambda t: (0, _oi[t[2]], 0 if t == _far[t[2]] else 1, _dist(t)) if t[2] in _ins else (1, 0, 0, 0))
+    placed = set()  # bridge_stamp needs a set during compile; snapshot below
+    guard = set()  # torch cells + their attach blocks: the only solids a
+    for x, y, z, bid in blocks:  # routed wire must never hug (oscillators).
+        if "wall_torch" in bid:  # lever/lamp coupling settles merely wrong
+            guard.add((x, z))  # (no loop possible); sim catches it instead.
+            face = bid.split("facing=")[1].rstrip("]")
+            dx, dz = TORCH_BACK[face]
+            guard.add((x + dx, z + dz))
+    bridged = set()  # (fx, fz, axis) already hopped; never retry
     def is_straight(path, i):
         if i <= 0 or i >= len(path) - 1:
             return False
@@ -752,19 +761,51 @@ def layout(recipe, seed=None, grow=0):
         _trunk = [(_tx, 1, _z) for _z in range(_bz - 1, _laneZ[_net] - 1, -1)]
         stamp_wire(_trunk, _net)
         _boost(_trunk, _net)
-    placed = set(wires)  # stubs/outs/ties stay; routed paths may be ripped up
+    _tx_of = {n: pos[n][0] for n in _names}
+    for _net in _names:
+        _tx, _bz = pos[_net]
+        _lz = _laneZ[_net]
+        _west = sorted([_lx for _lx, _ly in netspec[_net]["loads"] if _lx < _tx], reverse=True)
+        _east = sorted([_lx for _lx, _ly in netspec[_net]["loads"] if _lx > _tx])
+        for _stops in ([_tx] + _west, [_tx] + _east):
+            if len(_stops) < 2:
+                continue
+            _run = [(_tx, 1, _lz)]
+            _x = _tx
+            _end = _stops[-1]
+            _step = 1 if _end > _tx else -1
+            _cross = sorted([_cx for _nx, _cx in _tx_of.items() if _nx != _net and min(_x, _end) < _cx < max(_x, _end)], reverse=(_step < 0))
+            for _cx in _cross:
+                if (_cx, _lz, "ew") not in bridged:
+                    if len(bridged) >= 24:
+                        raise RuntimeError(f"bridge budget exhausted on {_net} (raise cap, see Task 5)")
+                    if not bridge_free(wires, solid, repeaters, guard, W, D, _cx, _lz, "ew", _net):
+                        raise RuntimeError(f"no hop for {_net} over trunk {_cx} (lane blocked)")
+                    bridge_stamp(blocks, solid, wires, rings, placed, _net, _cx, _lz, "ew")
+                    bridged.add((_cx, _lz, "ew"))
+                _feet = bridge_plan(_cx, _lz, "ew")[0]
+                _fa, _fb = sorted(_feet, key=lambda _f: abs(_f[0] - _x))
+                _seg = [(_xx, 1, _lz) for _xx in range(_x, _fa[0], _step)] + [(_fa[0], 1, _fa[2])]
+                stamp_wire(_seg, _net)
+                _dusts = sorted(bridge_plan(_cx, _lz, "ew")[2], key=lambda _c: _step * _c[0])
+                _run = _run + _seg[1:] + _dusts
+                _x = _fb[0]
+            _lim = _end
+            if _step * (_x - _end) > 0:
+                _lim = _x + 3 * _step
+            elif any(abs(_cx - _end) <= 2 for _cx in _cross):
+                _lim = _end + 3 * _step
+            if not (0 <= _lim < W):
+                raise RuntimeError(f"transit overruns field for {_net}")
+            _tail = [(_xx, 1, _lz) for _xx in range(_x, _lim, _step)] + [(_lim, 1, _lz)]
+            stamp_wire(_tail, _net)
+            _run = _run + _tail[1:] if _run[-1] == _tail[0] else _run + _tail
+            _boost(_run, _net)
+    placed = set(wires)  # stubs/outs/ties/lanes stay; routed paths may be ripped up
     last_blocked = {}  # net -> wire cells whose touch sealed its last failure
     congest = {}  # wire cell -> extra cost after a rip (lanes stay shared)
-    guard = set()  # torch cells + their attach blocks: the only solids a
-    for x, y, z, bid in blocks:  # routed wire must never hug (oscillators).
-        if "wall_torch" in bid:  # lever/lamp coupling settles merely wrong
-            guard.add((x, z))  # (no loop possible); sim catches it instead.
-            face = bid.split("facing=")[1].rstrip("]")
-            dx, dz = TORCH_BACK[face]
-            guard.add((x + dx, z + dz))
     pending = tasks[:]
     fails = {}
-    bridged = set()  # (fx, fz, axis) already hopped; never retry
     def try_bridge(s, t, net):
         # ponytail: last-resort hop over sealing dust with one pre-proven
         # bridge, then two 2D segments (no 3D search). Green builds never
