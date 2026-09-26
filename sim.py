@@ -66,6 +66,7 @@ def _run_vec(vec, init, ctx, until=None):
         for c, v in init.get("o", {}).items():
             con[c] = v
     pending, tsched, rsched, ksched, seq, ticks, steps = [], set(), set(), set(), [0], [0], [0]
+    flips = {}  # cell -> value changes; the churn set is the oscillator core
 
     def sched(tick, kind, cell):
         seq[0] += 1
@@ -231,13 +232,39 @@ def _run_vec(vec, init, ctx, until=None):
         now, _, kind, c = _hq.heappop(pending)
         steps[0] += 1
         if now > 500 or steps[0] > 20000:
+            # ponytail: name the OSCILLATOR, not the leftovers. `live` is
+            # whatever happened to be lit at timeout — on a ring oscillator
+            # that is an ordinary powered run (a monotone decay gradient),
+            # which names nothing. `churn` is the cells that kept changing
+            # after everything else settled, i.e. the loop's own members.
             live = {x: v for x, v in pw.items() if v}
-            raise RuntimeError(f"sim not settling on {vec}. live: {sorted(live.items())} torches: {tl} ron: {ron}")
+            churn = sorted((c for c, k in flips.items() if k >= 3),
+                           key=lambda c: (-flips[c], str(c)))
+            tloop = sorted(c for c in churn if c in torch)
+            # The class question: a loop closed only by same-level edges is a
+            # router topology fault; one that needs a y+-1 edge is riding the
+            # chip/slope coupling rule. Count both, and the level histogram.
+            cset = set(churn)
+            lv = {}
+            same = slope = 0
+            for c in churn:
+                lv[c[1]] = lv.get(c[1], 0) + 1
+                for dx, dz in DIRS:
+                    if (c[0] + dx, c[1], c[2] + dz) in cset:
+                        same += 1
+                    if (c[0] + dx, c[1] + 1, c[2] + dz) in cset:
+                        slope += 1
+            raise RuntimeError(
+                f"sim not settling on {vec}. churn={len(churn)} levels={lv} "
+                f"edges: same-level={same} slope={slope} "
+                f"loop_torches: {tloop[:6]} "
+                f"top: {[(c, pw.get(c, 0), flips[c]) for c in churn[:6]]}")
         ticks[0] = max(ticks[0], now)
         if kind == "d":
             v = dust_lvl(c)
             if pw.get(c, 0) != v:
                 pw[c] = v
+                flips[c] = flips.get(c, 0) + 1
                 wake(now, c)
         elif kind == "c":
             v, s = cob_state(c)
@@ -253,6 +280,7 @@ def _run_vec(vec, init, ctx, until=None):
             v = not pb.get(torch[c], False)
             if tl.get(c, False) != v:
                 tl[c] = v
+                flips[c] = flips.get(c, 0) + 1
                 wake(now, c)
         elif kind == "r":
             if rep_on(c) != ron.get(c, False) and c not in rsched:
