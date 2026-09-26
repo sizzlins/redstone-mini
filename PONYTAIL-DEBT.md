@@ -42,6 +42,10 @@ anti-rot devices themselves, listed for completeness.
   ceiling: 100k pops/call. upgrade: `REDSTONE_ASTAR_CAP` if a verified build trips it.
 - layout.py:126, single bridge shape (no 3D search).
   ceiling: one pre-proven hop. upgrade: full 3D search if hops dominate.
+- layout.py:267, median-band bank levers (short north runs, not west marathons).
+  ceiling: colliding medians run east, may go out of bounds (loud). upgrade: input fanout chaining (recipe.py still excludes inputs).
+- layout.py:679, panel inputs ride first (gates detour thin input tips).
+  ceiling: fanout-dense inputs may still seal (micro1: south-bank driver can't enter dense tile rows). upgrade: input fanout chaining, or wider band pitch for input corridors.
 - layout.py:721, last-resort bridge hops.
   ceiling: 24 hops/build. upgrade: raise cap or 3D search if dense builds need more.
 - layout.py:963, slope-link open-check (check-helper, not a shortcut). `no-trigger`
@@ -79,5 +83,8 @@ anti-rot devices themselves, listed for completeness.
 4. Preview textures need network at view time. (export.py:13)
 5. A* pop cap 100k/call bounds search; long detours need the env knob. (layout.py:10)
 6. Bridges are one fixed shape, max 24/build; denser needs full 3D. (layout.py:126,721)
+7. Panel inputs ride first from a median-band bank; dense tile rows still
+   seal (micro1 red). Upgrade is input fanout chaining or wider band
+   pitch. (layout.py:267,679)
 
-29 markers, 23 with no trigger.
+31 markers, 23 with no trigger.
