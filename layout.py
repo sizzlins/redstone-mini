@@ -1176,8 +1176,14 @@ def layout(recipe, seed=None, grow=0):
                         continue
                     if try_bridge(s, t, net):
                         continue
-                    stuck = (s, t, net, why)   # next pass may still fly it
-                    break
+                    # ponytail: defer, do not abandon. `break` here ended the
+                    # WHOLE pass, so exactly one task per layout ever reached
+                    # the 3D pass — measured on alu1: 7 route attempts over 2
+                    # nets, 1 three-D search, the other ~25 nets in the spec
+                    # never attempted at all. Collect and keep going; the next
+                    # pass (or the raise) decides.
+                    deferred.append((s, t, net, why))
+                    continue
                 for p, m, s_ in paths[:]:
                     if m in blockers:
                         for c in p:
@@ -1187,15 +1193,17 @@ def layout(recipe, seed=None, grow=0):
                         _rip(s_, m)
                         paths.remove((p, m, s_))
                 pending = [(s, t, net)] + block_tasks + pending
-            if stuck is None:
+            if not deferred:
                 break                       # pass drained: nothing left to fly
             if use3d:
-                break                       # last chance: keep stuck so it raises
-            pending.insert(0, stuck[:3])   # pass 2 retries with height allowed
-            stuck = None
+                stuck = deferred[0]          # last chance: keep it so it raises
+                break
+            pending = [d[:3] for d in deferred] + pending   # pass 2: height allowed
+            deferred = []
         if stuck is not None:
             raise RuntimeError(f"no route for {stuck[2]}: {stuck[0]} -> {stuck[1]} "
-                               f"(grid full, widen W; last: {stuck[3]})")
+                               f"(grid full, widen W; last: {stuck[3]}; "
+                               f"{len(deferred) + 1} task(s) unroutable)")
     finally:
         # ponytail: permanent debug tap (debug.py reads it). Costs one env
         # check per layout; replaces every ad-hoc Temp probe.
