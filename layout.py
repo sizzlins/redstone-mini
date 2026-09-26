@@ -663,35 +663,14 @@ def layout(recipe, seed=None, grow=0):
         for (lx, lz) in spec['loads']:
             if (lx, lz) in orbbs:
                 continue  # OR diode-back: batch-1 lever feeds it via the junction
-            stamp_wire([(lx, lz)], name)  # port dust (tile input); lever touch powers it
-            feeds.add((lx, 1, lz))
-            for (px, pz) in ((lx - 1, lz), (lx + 1, lz), (lx, lz - 1), (lx, lz + 1)):
-                if not (0 <= px < W and 0 <= pz < D):
-                    continue
-                if (px, pz) in solid or (px, 1, pz) in wires:
-                    continue
-                break
-            else:
-                raise RuntimeError(f"bus lever blocked for {name} at {(lx, lz)}")
-            blocks.append((px, 1, pz, "minecraft:lever"))
-            solid[(px, pz)] = ("lever", name)
-            for dx, dz in DIRS:
-                ring(px + dx, pz + dz, own(name))
-        # (same-net duplicate levers are wired-OR, harmless — XOR precedent)
-    # ponytail: input loads already touch their own lever feed need no
-    # route; without this every fanout load spans the field (master filter).
-    ins = set(recipe["inputs"])
+    # ponytail: inputs ride the router like gate nets (single-lever panel);
+    # fanout cost is real routing now. Loud fail if a dense input seals.
     tasks = []
     for net, spec in netspec.items():
         if net == "0":
             continue  # dark stubs read 0
         drv = spec['drv'] if spec['drv'] is not None else pos.get(net)
         for cell in spec['loads']:
-            if net in ins and ((cell[0], 1, cell[1]) in feeds or any(
-                    ((cell[0] + dx, 1, cell[1] + dz) in feeds and
-                     wires.get((cell[0] + dx, 1, cell[1] + dz)) == net)
-                    for dx, dz in DIRS)):
-                continue
             tasks.append((drv, cell, net))
     tasks.sort(key=lambda t: -(abs(t[0][0] - t[1][0]) + abs(t[0][1] - t[1][1])))
     if seed is not None:
