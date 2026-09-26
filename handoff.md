@@ -87,14 +87,47 @@
   value can change many times as its neighbours settle, so churn is not
   evidence of oscillation. The traced 16-node ring is the LATCH's cross-coupled
   NOR pair — legitimate, and present in green `latch_sr` too.
-- **alu1 failure census (grow 0, seed None) — a LOWER BOUND, taken before the
-  deferral.** 31 of 42 loads route; 11 fail, each a single unreached load:
-  inputs `B, OP0, OP1` plus gates `AB, U, o1, o2, t0..t3`. Input B owns **275
-  of 758 wire cells (36%)** at x=20-40, while the `o*`/`t*` gate failures sit
-  at x=76-78, **40-50 cells away** — a separate zone, NOT B-collateral. **The
-  census must be re-run under `12dd3c9`** before Attempt 2's scope is written;
-  the owner's prediction that the failure set changes completely is consistent
-  with everything measured since.
+- **POST-deferral search-phase breakdown (re-taken; the old numbers are
+  void).** The pre-deferral "3D = 0.9%" was measured at 19:17, two hours
+  before `12dd3c9` made 3D reachable — it described a router that was not
+  trying. Re-measured: micro1 s0 266 searches (86.8% flat/post-rip, **1.9%
+  3D**), micro1 s1 147 (75.5%, **2.0%**), alu1 s0 **3842 searches in 300s
+  unfinished (98.6% flat/post-rip, 0.6% 3D)**. **Bounding the 3D escalation
+  would buy ~1%** — the cost is flat re-litigation after rip-ups.
+- **Search budget added** (`3862eee`, `REDSTONE_SEARCH_CAP`, default OFF so no
+  behaviour change). Raises the NORMAL error, so the debug dump still lands and
+  a census can read it. Makes a dense attempt bounded: alu1 seed 1 goes from
+  >300s to **18.3s** at cap 700; micro1 (147 searches) is unaffected.
+- **alu1 census, bounded, 6 samples at grow 0 (~20s each) — and the deferral
+  did NOT change the failure set** (the owner's prediction that it would
+  "change completely" is NOT supported):
+  | seed | routed | unreached | failing nets (first 6) |
+  |---|---|---|---|
+  | 0 | 34 | 8 | A, B, OP0, o1, o2, t0 |
+  | 1 | 32 | 10 | A, AB, OP0, U, o1, o2 |
+  | 2 | 33 | 9 | A, B, OP0, U, o1, t0 |
+  | 3 | 33 | 9 | AB, B, OP0, U, o2, t0 |
+  | 4 | 33 | 9 | AB, B, OP0, U, o1, o2 |
+  | 5 | 32 | 10 | A, AB, B, U, o1, o2 |
+  Totals **197 loads routed / 55 unreached**, all 6 seeds hitting the cap, so
+  these are **lower bounds**. Stable across seeds: `OP0` 6/6, `o1` 5/6,
+  `o2` 5/6, `U` 4/6, `B` 4/6, `AB` 3/6, `A` 3/6. **Gate nets fail as
+  stably as input nets** (`o1`, `o2`, `U`, `AB`, `t0`), and they overlap the
+  pre-deferral census — so **spine-on-top as an input-only mechanism still
+  does not cover alu1.** Attempt 2's scope must either generalise the spine to
+  any net, or be two mechanisms.
+- **micro1's oscillator: the kicker is TILE geometry, not the router.**
+  Traced via the churn set (after `9508bda` made it block-aware): a 16-node
+  cycle through the LATCH's cross-coupled NOR pair, torch (78,15) <-> (81,14),
+  attaches (77,15)/(81,15). Their neighbourhoods hold foreign nets **R at
+  (76,15)** and **S at (81,16)** — but `(81,1,16)` is the latch's OWN `Sdust`
+  stub (`[(ox+4,gz+3),(ox+4,gz+2),(ox+4,gz+1)]` with ox=77, gz=15), not a
+  routed wire. **No search constraint could refuse it.** The ring is the
+  victim; the real oscillator is upstream (whatever makes S toggle). Four
+  router-constraint attempts were made and all four were apparatus bugs or
+  mis-framed hypotheses (no-op; too broad — cost 5 seeds and 6 flat blocks;
+  1-cell walk; 2-tuple vs 3-tuple compare). Reverted. **Do not attempt a
+  fifth without a new hypothesis** — the constraint belongs in the tiles.
 - alu4 / ctrl_decode / cpu4: **never measured.** Stage-1 reads are ~2s each.
 
 ## Method note (the part worth keeping)
