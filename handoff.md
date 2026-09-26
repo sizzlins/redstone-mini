@@ -16,24 +16,64 @@
    legal on pillars.
 
 ## Current state
-- **Branch `phase2-design`** (ahead 17, behind 1 — sync still needs a force
-  decision). Tracked tree: `layout.py` + `export.py` modified, UNCOMMITTED
-  (3D Attempt 1 + perf refactor). Everything else reverted/clean as before.
-- **Suite green** (re-verified this session): `recipe.py`, `sim.py`,
+- **Branch `phase2-design`** (ahead 22, behind 1 — sync still needs a force
+  decision). Tracked tree CLEAN; everything below is committed.
+- **Commit chain this session:** `b0e4788` handoff → `33f3f2a` 3D Attempt 1
+  (6-dir A* escape router, per-level guards, priced level changes, pillar
+  cover, SHORT3D, perf, determinism) → `f49061e` bridge slope guard →
+  `c213e2b` handoff correction → `558ea86` single window on post-rip retries →
+  `b0f0867` un-stamp a failed bridge hop → `2c03602` cover pass walks a chain.
+- **Suite green** (re-verified after every commit): `recipe.py`, `sim.py`,
   `serve.py --check` (demo 246), `layout.py` (ports / or-lever / panel /
-  bridge / **3d ok** — new check).
-- **Small .txt all green, single lever per input** (XOR keeps its two tile
-  side-levers, exempt by geometry): `example_and` 0.1s, `example_2gates` 0.2s,
-  `latch_sr` 0.2s, `example_xor` 0.2s.
-- **Flat byte-identity PROVEN**: build hashes for the 4 small recipes are
-  identical to pre-3D baseline (`b1896abd3762dd99`, `777948c5fc963e20`,
-  `7525f9fd37ae316e`) and identical across 3 separate processes. This is the
-  safety property everything else leans on — keep it.
-- **Dense still red**: micro1 single-shot now dies at `T0 (108,13)->(122,14)`
-  (it used to die at `T1 (126,12)->(196,12)`). T1 and Q — the two goals the
-  handoff recorded as sealed — now route, via 3D. alu1/alu4/cpu4/ctrl_decode
-  not re-measured this session (background ladder only got micro1 + alu1
-  start before it was killed).
+  bridge / **3d ok**).
+- **Small .txt all green, single lever per input**: `example_and` 0.1s/156,
+  `example_2gates` 0.2s/246, `latch_sr` 0.2s/216, `example_xor` 0.2s/164.
+- **Flat byte-identity still holds** after every commit:
+  `b1896abd3762dd99` / `777948c5fc963e20` / `7525f9fd37ae316e`, identical to
+  pre-3D baseline and across processes.
+- **LADDER VERDICT (the gating number): 3D finishes NO dense build yet.**
+  - **micro1: RED.** 36/36 attempts now produce a *complete* build
+    (1963–3035 blocks) — the router no longer fails to route — but **every one
+    is rejected by the sim: `sim not settling`** (a live-wire loop; e.g.
+    `((5,1,12),13), ((5,1,13),14), ((5,1,14),15), ((6,1,12),12)…`). Different
+    failure class than before: this is an electrical defect with the evidence
+    printed, not a routing wall.
+  - **alu1: RED at routing** — `no route for B: (34,176) -> (30,30)`, a 146-cell
+    input run. This is the input-distribution wall (what Attempt 2 targets).
+  - alu4 / ctrl_decode / cpu4: still running in the ladder at handoff time.
+- **Perf, measured (quiet machine, micro1 single-shot, grow 0):** 2.3s/240
+  searches (flat baseline) → 3.2s/234 searches. Per-search cost is flat
+  (~10ms); the earlier "3x slower" was route-attempt count, and the two bug
+  fixes below removed most of it. **micro1's full 36-attempt budget: 540s →
+  113s.**
+
+## What changed (newest last)
+1. **Cover pass walks a chain, not a tree** (`2c03602`) — the stub-tail walk
+   appended cells in *discovery* order, so consecutive entries could be two
+   cells apart (`(114,1,13) -> (114,1,11)`). `_straight3` still calls that
+   triple collinear and `place_rep` died on `KeyError: (0,-2)`. Pre-existing
+   bug, newly reachable because 3D paths make the tail walk find cells.
+2. **A failed bridge now un-stamps itself** (`b0f0867`) — `try_bridge` relied
+   on the caller raising (discarding the layout). The two-pass loop keeps going
+   after a failed task, so half-placed elevated dust survived and the next pass
+   died on `OPEN (unconnected dust)`. That OPEN was making all 36 attempts
+   redundant: 540s → layouts that finish in ~3s.
+3. **Single window on post-rip retries** (`558ea86`) — windows are nested
+   (None ⊇ 40 ⊇ 12), so a narrower window finds a *shorter* path when it finds
+   one (12 won 16/17) but can find nothing. A retry needs room, so it takes the
+   single middle window. micro1 searches 642 → 234, route attempts 214 → 10.
+4. **Bridge slope guard** (`f49061e`) — `bridge_free` never checked slope
+   coupling, so a hop could lay elevated dust that slope-links a foreign ground
+   wire (`SHORT3D: W slope-links S`). Additive, three self-check asserts.
+5. Earlier 3D work: 6-dir A\* (`_H=3`, `_STEPCOST=4`), flat-first two-pass
+   scheduling (`_PASSES=2`, env `REDSTONE_3D_PASSES`), per-level guards,
+   slope-only coupling, supports stamped once on the winner, booster cover on
+   straight runs at any level, repeaters keyed (x,y,z) with a support assert,
+   SHORT3D checker, `stamp_wire` port exemption, `export.py` repeater (x,y,z),
+   determinism pins (A\* heap key, margin order, bridge candidate `p` tiebreak),
+   perf refactor (`near`/`gexp` sets, maintained `cond`/`condg`/`aircells`,
+   no O(blocks) rebuild per rip).
+
 - **Known red with a named cause, now FIXED**: `SHORT3D: W slope-links S at
   (53,1,15)->(53,2,16)`. `bridge_free` never checked slope coupling, so a
   bridge could lay elevated dust that slope-links a foreign ground wire. Fixed
@@ -124,29 +164,28 @@
 - **Not committed by policy:** the 4 untracked plans, all of `scratch/`.
 
 ## What next (in order)
-1. **Committed next, in this order, measuring between:**
-   a. `bridge_free` slope guard — additive only, reject a bridge whose dust
-      slope-couples a foreign net. Do not touch bridge emission or the dust
-      plan (flat byte-identity depends on it). Measure: micro1 single-shot +
-      suite.
-   b. Window the 3D pass — window sized from the flat pass's blocking frontier
-      bounding box + generous margin (NOT a fixed radius; measured escapes are
-      24–40 elevated cells). One pass, not the 12/40/None ladder. Keep-or-
-      revert: if a seal full-field 3D solved becomes unroutable, revert and
-      report which sealer.
-2. **Measure before optimizing** (owner question, still open): where do the
-   1740 searches actually go — flat-first attempts vs 3D attempts vs
-   re-attempts after rip-up? If every re-route re-proves "flat can't do this"
-   from scratch, memoizing that per (net, source, goal) may dwarf the window
-   win. Count by phase first.
-3. **Then Attempt 2** (spine-on-top) as its own attempt/diff — do not fold it
-   into Attempt 1.
-4. **Sync remote** — branch diverged (ahead 17, behind 1); needs explicit
-   force-with-lease approval. Nothing at risk locally either way.
+1. **micro1's blocker is now the sim, not the router: `sim not settling`** on
+   builds that route completely. That is a live-wire loop and the sim already
+   prints the cells — cheapest possible evidence. Name the loop before
+   building anything: is it a 3D flight adjacent to a torch block, a
+   powered-pillar loop, or a same-net wire ring? **Do this before Attempt 2** —
+   it is the last blocker between the router and a green micro1, and it is one
+   investigation, not a mechanism.
+2. **Attempt 2 (spine-on-top placement)** for the *other* blocker, alu1's
+   `no route for B: (34,176) -> (30,30)` — a 146-cell input run. Own
+   attempt/diff, keep-or-revert as always.
+3. **Perf is parked.** Two structural bugs were found and fixed by reading the
+   failures, not by tuning: the orphaned bridge hop and the cover-pass chain.
+   That is where the 540s → 113s came from. Optimizing further before a dense
+   build is green is premature (measured: the 3D pass is 0.9% of searches; the
+   margin ladder was 2/3 and is now gone on retries). Revisit only if a build
+   is green and still too slow to iterate on.
+4. **Sync remote** — ahead 22, behind 1; needs explicit force-with-lease
+   approval. Nothing at risk locally.
 5. **Do NOT:** change shipping `layout_retry` defaults (12×3 is a product
-   decision); fold spine into the 3D diff; run dense builds in the foreground
-   (background + 600s-silence kill, `cmd /c start /b ... > log 2>&1`);
-   compare builds across processes without the pinned candidate order (done
-   now, keep it); trust mental tile coordinates (`debug.py` + dumps); merge
-   `scratch/` or the untracked plans; compare speed across runs that die at
-   different walls.
+   decision — the *ladder harness* uses 1×1 then 12×3, which is a test choice);
+   fold spine into the 3D diff; run dense builds in the foreground; compare
+   builds across processes without the pinned candidate order; compare timings
+   across runs that die at different walls, or on a loaded machine (both
+   retracted errors live in this file); merge `scratch/` or the untracked plans.
+
