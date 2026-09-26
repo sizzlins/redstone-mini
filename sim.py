@@ -269,6 +269,17 @@ def _run_vec(vec, init, ctx, until=None):
             live = {x: v for x, v in pw.items() if v}
             churn = sorted((c for c, k in flips.items() if k >= 3),
                            key=lambda c: (-flips[c], str(c)))
+            if _os.environ.get("REDSTONE_CHURN"):
+                # Full churn set for offline tracing. The message above only
+                # carries the top few; a feedback edge cannot be named from a
+                # sample. Keyed "x,y,z" so the file round-trips as JSON.
+                import json as _json
+                _ck = lambda c: f"{c[0]},{c[1]},{c[2]}"
+                _json.dump({"vec": {str(k): bool(v) for k, v in vec.items()},
+                            "steps": steps[0], "max_gap": max_gap[0],
+                            "churn": {_ck(c): flips[c] for c in churn},
+                            "live": {_ck(c): v for c, v in live.items()}},
+                           open(_os.environ["REDSTONE_CHURN"], "w"))
             tloop = sorted(c for c in churn if c in torch)
             # The class question: a loop closed only by same-level edges is a
             # router topology fault; one that needs a y+-1 edge is riding the
@@ -299,6 +310,11 @@ def _run_vec(vec, init, ctx, until=None):
             v, s = cob_state(c)
             if pb.get(c, False) != v or pbs.get(c, False) != s:
                 pb[c], pbs[c] = v, s
+                # ponytail: blocks count as churn too. A torch's attach block
+                # IS a cobble, so without this the loop's block members were
+                # structurally invisible to the churn set — the indicator could
+                # not contain a real cycle, let alone name its edge.
+                flips[c] = flips.get(c, 0) + 1
                 mark(); wake(now, c)
         elif kind == "t":
             if (not pb.get(torch[c], False)) != tl.get(c, False) and c not in tsched:
