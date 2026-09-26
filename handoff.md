@@ -40,7 +40,34 @@
     printed, not a routing wall.
   - **alu1: RED at routing** — `no route for B: (34,176) -> (30,30)`, a 146-cell
     input run. This is the input-distribution wall (what Attempt 2 targets).
-  - alu4 / ctrl_decode / cpu4: still running in the ladder at handoff time.
+    Its stage-2 full retry is **computationally out of reach**: grown fields
+    (grow 1/2) ran a single attempt >15 min; killed on the 600s-silence rule
+    at 17 min of silence. alu4 / ctrl_decode / cpu4 were never reached.
+  - **micro1's real blocker is a ring oscillator in the ROUTER's topology, not
+    a sim artifact** (measured, see `4fba2bd`'s diagnostic): churn set is 485
+    cells (397 at y=1, 37 at y=2, 51 at y=3) with **854 same-level edges vs 10
+    slope edges** among them. The loop is closed by ordinary same-level
+    feedback; the chip/slope coupling rule is not what holds it up. So the fix
+    is a router constraint (no edge closing a cycle back into its own net's
+    driver), NOT a sim change. The 6 churning loop torches are tile-internal
+    (AND's NOR torch, LATCH cross-coupling) — they flip because their inputs
+    churn. Which adjacency closes the loop is NOT yet traced; per the owner's
+    cap, untraced = not a single guard = stop, go to Attempt 2.
+
+## Method note (the part worth keeping)
+- **540s → 113s came from fixing two real bugs, NOT from the margin trim.**
+  `try_bridge` left orphaned elevated dust when a hop failed (the OPEN that
+  made all 36 attempts redundant), and the cover pass walked a tree while
+  assuming a chain. Both were found by reading failures, not by tuning.
+  "Read the failures, don't tune" is the method that worked.
+- **A diagnostic that prints leftovers is not a diagnostic.** The original
+  `sim not settling` message dumped `live` — whatever was lit at timeout, which
+  on a ring oscillator is a monotone decay gradient naming nothing. The user's
+  correction was right and is now enforced in code: the raise reports the
+  churn set (cells that kept changing after everything settled) plus the
+  same-level/slope edge split, which is what makes the class question
+  answerable at all.
+
 - **Perf, measured (quiet machine, micro1 single-shot, grow 0):** 2.3s/240
   searches (flat baseline) → 3.2s/234 searches. Per-search cost is flat
   (~10ms); the earlier "3x slower" was route-attempt count, and the two bug
