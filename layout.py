@@ -692,7 +692,9 @@ def layout(recipe, seed=None, grow=0):
         random.Random(seed + 1).shuffle(_names)
     _oi = {n: i for i, n in enumerate(_names)}
     tasks.sort(key=lambda t: (0, _oi[t[2]], 0 if t == _far[t[2]] else 1, _dist(t)) if t[2] in _ins else (1, 0, 0, 0))
-    placed = set()  # bridge_stamp needs a set during compile; snapshot below
+    placed = set(wires)  # stubs/outs/ties stay; routed paths may be ripped up
+    last_blocked = {}  # net -> wire cells whose touch sealed its last failure
+    congest = {}  # wire cell -> extra cost after a rip (lanes stay shared)
     guard = set()  # torch cells + their attach blocks: the only solids a
     for x, y, z, bid in blocks:  # routed wire must never hug (oscillators).
         if "wall_torch" in bid:  # lever/lamp coupling settles merely wrong
@@ -700,112 +702,9 @@ def layout(recipe, seed=None, grow=0):
             face = bid.split("facing=")[1].rstrip("]")
             dx, dz = TORCH_BACK[face]
             guard.add((x + dx, z + dz))
-    bridged = set()  # (fx, fz, axis) already hopped; never retry
-    def is_straight(path, i):
-        if i <= 0 or i >= len(path) - 1:
-            return False
-        (x0, y0, z0), (x1, y1, z1), (x2, y2, z2) = path[i - 1], path[i], path[i + 1]
-        if not (y0 == y1 == y2 == 1):
-            return False
-        return (x0 == x1 == x2) or (z0 == z1 == z2)
-
-    def place_rep(path, net, j):
-        (x0, _, z0), (x1, _, z1) = path[j - 1], path[j]
-        dx, dz = x1 - x0, z1 - z0
-        facing = {(1, 0): "east", (-1, 0): "west", (0, 1): "south", (0, -1): "north"}[(dx, dz)]
-        for f in ((x1 + dx, 1, z1 + dz), (x1 - dx, 1, z1 - dz)):
-            w = wires.get(f)
-            if w is not None and w != net:
-                raise RuntimeError(f"repeater guard {net} vs {w} at {f}")
-        if wires.get((x1, 1, z1)) != net:
-            if (x1, z1) in repeaters and repeaters[(x1, z1)][0] == net:
-                return  # shared fanout trunk: a sibling branch already boosted here
-            raise RuntimeError(
-                f"repeater spot {net} at {(x1, 1, z1)} holds {wires.get((x1, 1, z1), 'EMPTY')} "
-                f"(solid {solid.get((x1, z1), '-')})")
-        del wires[(x1, 1, z1)]
-        repeaters[(x1, z1)] = (net, facing)
-
-    # ponytail: deterministic input lanes (spec 2026-09-26-deterministic-
-    # input-lanes-design). Claim one free E-W lane per input, stamp N-S
-    # trunks straight (no search) in free field, boost deterministically.
-    # E-W + stubs follow in later tasks. Lanes land in `placed` via the
-    # snapshot below (unrippable: gates detour tips or bridge dust).
-    # Ceiling: lanes consume free field + bridge budget (Task 5 measures).
-    def _boost(_cells, _net):
-        # forward cover every 6 from the source end (bridge-dust spots
-        # skipped: worst gap 11, endpoint level >= 4). Uniform spacing covers
-        # like the booster pass on straight runs.
-        for _i in range(6, len(_cells) - 1, 6):
-            if _cells[_i][1] != 1:
-                continue
-            place_rep(_cells, _net, _i)
-            solid[(_cells[_i][0], _cells[_i][2])] = ("repeater", _net)
-    _laneZ, _usedZ = {}, set()
-    _rowMax = max([_z for (_x, _z) in solid if _z < D - 2] + [12])
-    for _net in _names:
-        _lz = None
-        for _z in range(_rowMax + 2, D - 2):
-            if _z in _usedZ:
-                continue
-            if all((_x, _zz) not in solid and (_x, 1, _zz) not in wires
-                   for _zz in (_z - 1, _z, _z + 1) for _x in range(2, W - 2)):
-                _lz = _z
-                break
-        if _lz is None:
-            raise RuntimeError(f"no free lane for {_net} (field full, widen W)")
-        _laneZ[_net] = _lz
-        _usedZ.add(_lz)
-    for _net in _names:
-        _tx, _bz = pos[_net]
-        _trunk = [(_tx, 1, _z) for _z in range(_bz - 1, _laneZ[_net] - 1, -1)]
-        stamp_wire(_trunk, _net)
-        _boost(_trunk, _net)
-    _tx_of = {n: pos[n][0] for n in _names}
-    for _net in _names:
-        _tx, _bz = pos[_net]
-        _lz = _laneZ[_net]
-        _west = sorted([_lx for _lx, _ly in netspec[_net]["loads"] if _lx < _tx], reverse=True)
-        _east = sorted([_lx for _lx, _ly in netspec[_net]["loads"] if _lx > _tx])
-        for _stops in ([_tx] + _west, [_tx] + _east):
-            if len(_stops) < 2:
-                continue
-            _run = [(_tx, 1, _lz)]
-            _x = _tx
-            _end = _stops[-1]
-            _step = 1 if _end > _tx else -1
-            _cross = sorted([_cx for _nx, _cx in _tx_of.items() if _nx != _net and min(_x, _end) < _cx < max(_x, _end)], reverse=(_step < 0))
-            for _cx in _cross:
-                if (_cx, _lz, "ew") not in bridged:
-                    if len(bridged) >= 24:
-                        raise RuntimeError(f"bridge budget exhausted on {_net} (raise cap, see Task 5)")
-                    if not bridge_free(wires, solid, repeaters, guard, W, D, _cx, _lz, "ew", _net):
-                        raise RuntimeError(f"no hop for {_net} over trunk {_cx} (lane blocked)")
-                    bridge_stamp(blocks, solid, wires, rings, placed, _net, _cx, _lz, "ew")
-                    bridged.add((_cx, _lz, "ew"))
-                _feet = bridge_plan(_cx, _lz, "ew")[0]
-                _fa, _fb = sorted(_feet, key=lambda _f: abs(_f[0] - _x))
-                _seg = [(_xx, 1, _lz) for _xx in range(_x, _fa[0], _step)] + [(_fa[0], 1, _fa[2])]
-                stamp_wire(_seg, _net)
-                _dusts = sorted(bridge_plan(_cx, _lz, "ew")[2], key=lambda _c: _step * _c[0])
-                _run = _run + _seg[1:] + _dusts
-                _x = _fb[0]
-            _lim = _end
-            if _step * (_x - _end) > 0:
-                _lim = _x + 3 * _step
-            elif any(abs(_cx - _end) <= 2 for _cx in _cross):
-                _lim = _end + 3 * _step
-            if not (0 <= _lim < W):
-                raise RuntimeError(f"transit overruns field for {_net}")
-            _tail = [(_xx, 1, _lz) for _xx in range(_x, _lim, _step)] + [(_lim, 1, _lz)]
-            stamp_wire(_tail, _net)
-            _run = _run + _tail[1:] if _run[-1] == _tail[0] else _run + _tail
-            _boost(_run, _net)
-    placed = set(wires)  # stubs/outs/ties/lanes stay; routed paths may be ripped up
-    last_blocked = {}  # net -> wire cells whose touch sealed its last failure
-    congest = {}  # wire cell -> extra cost after a rip (lanes stay shared)
     pending = tasks[:]
     fails = {}
+    bridged = set()  # (fx, fz, axis) already hopped; never retry
     def try_bridge(s, t, net):
         # ponytail: last-resort hop over sealing dust with one pre-proven
         # bridge, then two 2D segments (no 3D search). Green builds never
@@ -920,6 +819,31 @@ def layout(recipe, seed=None, grow=0):
 
     # repeaters: dust dies after 15 blocks. Backward cover from each goal:
     # every path cell ends within 14 of a booster-or-source behind it.
+    def is_straight(path, i):
+        if i <= 0 or i >= len(path) - 1:
+            return False
+        (x0, y0, z0), (x1, y1, z1), (x2, y2, z2) = path[i - 1], path[i], path[i + 1]
+        if not (y0 == y1 == y2 == 1):
+            return False
+        return (x0 == x1 == x2) or (z0 == z1 == z2)
+
+    def place_rep(path, net, j):
+        (x0, _, z0), (x1, _, z1) = path[j - 1], path[j]
+        dx, dz = x1 - x0, z1 - z0
+        facing = {(1, 0): "east", (-1, 0): "west", (0, 1): "south", (0, -1): "north"}[(dx, dz)]
+        for f in ((x1 + dx, 1, z1 + dz), (x1 - dx, 1, z1 - dz)):
+            w = wires.get(f)
+            if w is not None and w != net:
+                raise RuntimeError(f"repeater guard {net} vs {w} at {f}")
+        if wires.get((x1, 1, z1)) != net:
+            if (x1, z1) in repeaters and repeaters[(x1, z1)][0] == net:
+                return  # shared fanout trunk: a sibling branch already boosted here
+            raise RuntimeError(
+                f"repeater spot {net} at {(x1, 1, z1)} holds {wires.get((x1, 1, z1), 'EMPTY')} "
+                f"(solid {solid.get((x1, z1), '-')})")
+        del wires[(x1, 1, z1)]
+        repeaters[(x1, z1)] = (net, facing)
+
     for path, net in paths:
         # cover the tile-stub tail past the goal too: same-net dust stamped
         # in phase 1 (ports, latch rows) decays exactly like routed wire, and
