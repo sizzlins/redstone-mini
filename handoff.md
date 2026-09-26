@@ -34,11 +34,14 @@
   handoff recorded as sealed — now route, via 3D. alu1/alu4/cpu4/ctrl_decode
   not re-measured this session (background ladder only got micro1 + alu1
   start before it was killed).
-- **Known red with a named cause**: `SHORT3D: W slope-links S at
+- **Known red with a named cause, now FIXED**: `SHORT3D: W slope-links S at
   (53,1,15)->(53,2,16)`. `bridge_free` never checked slope coupling, so a
-  pre-existing bridge can lay elevated dust that slope-links a foreign ground
-  wire. The new SHORT3D checker catches it; the search does not. Fix approved
-  (additive guard in `bridge_free`, not yet written).
+  bridge could lay elevated dust that slope-links a foreign ground wire. Fixed
+  additively in `bridge_free` (`cond=` param + one guard loop) with three
+  self-check asserts that fire on hand-built cases. Consequence: micro1's wall
+  moved from `T0` to `Q (73,14)->(124,12)` — the T0 and Q "escapes" existed
+  only by shorting, so they were never valid builds (sim would have failed
+  them). Correctness kept, no valid build lost.
 
 ## What changed (newest last)
 1. **3D Attempt 1, uncommitted**: 6-dir A\* (`_H=3`, level change costs
@@ -75,16 +78,27 @@
 ## What failed (with evidence, no theory)
 - **Flat dense delivery: still exhausted, unchanged** (handoff item 4). 3D is
   the only direction tried; it moves walls but does not close micro1.
-- **The 3D router is much slower, not faster.** Controlled, same session:
-  micro1 single-shot baseline **2.4s / 240 A\* searches** vs 3D **103.9s /
-  1740 searches** (10ms → 60ms per search). The 4 small builds are unchanged
-  (0.053s → 0.045s, 36 searches both) because they never leave the ground.
-  The constant-factor wins did not change the asymptotics: 3× the cells per
-  search, and 7× more searches because 3D solves seals that then get ripped
-  and re-litigated. **My earlier "2.5–3× faster per unit work" claim was
-  wrong** — it compared two different failure points, not one workload.
-- **A retracted inference, recorded so it isn't repeated**: comparing runs
-  that die at different walls says nothing about speed.
+- **The 3D router is ~3x slower, and NOT because searches got expensive.**
+  Controlled, same session, quiet machine: micro1 single-shot baseline **2.3s
+  / 240 A\* searches** vs 3D **6.9s / 642 searches**. Per-search cost is
+  essentially flat (9.6ms → 10.7ms, +11%). The whole 3x is **route attempts:
+  80 → 214**. The 4 small builds are unchanged (0.049s → 0.045s, 36 searches
+  both) because they never leave the ground.
+- **Search breakdown (the number that matters), micro1 single-shot:**
+  214 route() attempts × 3 margin passes = 642 searches —
+  **94.4% flat/post-rip, 4.7% flat/first-attempt, 0.9% 3D.** So the 3D pass
+  is ~1% of the work, and the margin ladder burns 2 of every 3 searches
+  (the Manhattan early-exit essentially never fires in a maze).
+  **Consequence: windowing the 3D pass can win at most ~1%.** The real cost is
+  flat searches re-run from scratch after every rip-up — there is no
+  memoization of "flat cannot do this (net, src, dst)".
+- **RETRACTED, do not repeat**: an earlier handoff revision said the 3D router
+  was "43x slower" (103.9s vs 2.4s). That measurement was taken on a loaded
+  machine (a background process was still alive). The real ratio is 3.0x. Also
+  retracted: "2.5-3x faster per unit work" — that compared two runs that died
+  at different walls, which says nothing about speed. **Never compare timings
+  across runs that die at different walls, and check for stray load first.**
+
 - **Bridge slope coupling**: `bridge_free` checks wires/guard/solid/repeaters
   but not dy-coupling, so bridges can create shorts the 3D checker rejects.
   Caught live as `SHORT3D: W slope-links S`.
