@@ -41,10 +41,11 @@ def layout_retry(recipe, tries=12, verify=False, grows=3):
 
 
 
-def _run_vec(vec, init, ctx):
+def _run_vec(vec, init, ctx, until=None):
     """Tick-settled physics for one input vector (shared by verify/sequence).
     init carries live/torch/repeater state across phases (memory!); None
-    starts blank. Returns (lamps, live, torches, ticks, repeaters)."""
+    starts blank. until caps the run at a tick (for sim_pulse timelines).
+    Returns (lamps, live, torches, ticks, repeaters)."""
     dust, torch, lampat, rep, rblk, cob, repdelay, lever, lampnet, attach_rev, comp = ctx
     # tick-accurate vanilla timing: dust/cobble settle instantly each tick,
     # torch outputs flip 1 tick after their block changes, repeaters flip
@@ -226,7 +227,7 @@ def _run_vec(vec, init, ctx):
     for c in comp:
         sched(0, "k", c)
 
-    while pending:
+    while pending and (until is None or pending[0][0] <= until):
         now, _, kind, c = _hq.heappop(pending)
         steps[0] += 1
         if now > 500 or steps[0] > 20000:
@@ -405,6 +406,22 @@ def sim_sequence(recipe, blocks, io, phases):
         carry = {"w": live, "t": tlive, "r": rlive, "o": _conc}
 
 
+def sim_pulse(recipe, blocks, io, schedule):
+    """Drive a timed input schedule with state carried across segments.
+    schedule is [(vec, dwell_ticks)]; dwell >= 1 (loud otherwise). A button
+    press is just [({B: 1}, 20), ({B: 0}, n)]. Returns [(lamps, elapsed)]
+    per segment. Lamp trailing edge stays unmodeled (2-tick-off gap)."""
+    P = _parse_build(blocks, io)
+    carry, out = None, []
+    for vec, dwell in schedule:
+        if dwell < 1:
+            raise ValueError(f"bad dwell {dwell} (use >= 1 tick)")
+        got, live, tlive, _, rlive, _conc = _run_vec(vec, carry, P, until=dwell)
+        out.append((got, dwell))
+        carry = {"w": live, "t": tlive, "r": rlive, "o": _conc}
+    return out
+
+
 if __name__ == "__main__":
     # ponytail: one runnable check — delay-4 chain must settle at exactly tick 4.
     _blocks = [(1, 1, 0, "minecraft:repeater[facing=east,delay=4]"),
@@ -420,6 +437,22 @@ if __name__ == "__main__":
     assert _tk == 4, _tk
     assert _st["vectors"]["0"]["lamps"] == {"3,1,0": 0}, _st["vectors"]["0"]
     print("tick ok: delay-4 settles at tick 4")
+    # ponytail: timed-press proof — stone-20 press lights through delay-4,
+    # release holds 1 tick (repeater delay) then drops dark with the dust.
+    _pb = [(0, 1, 0, "minecraft:lever")] + _blocks
+    _pio = {"levers": {(0, 0): "a"}, "lamps": {(3, 0): "y"}, "nets": {}}
+    _pr = {"inputs": ["a"], "outputs": ["y"],
+           "gates": [{"out": "y", "op": "OR", "args": ["a", "a"]}]}
+    _pt = sim_pulse(_pr, _pb, _pio, [({"a": 1}, 20), ({"a": 0}, 1), ({"a": 0}, 4)])
+    assert _pt[0][0].get("y", False) is True, _pt[0]
+    assert _pt[1][0].get("y", False) is True, _pt[1]
+    assert _pt[2][0].get("y", True) is False, _pt[2]
+    try:
+        sim_pulse(_pr, _pb, _pio, [({"a": 1}, 0)])
+        assert False, "dwell 0 should raise"
+    except ValueError:
+        pass
+    print("pulse ok: press-20 lights, holds 1, drops by 5; dwell guarded")
     from export import export_html
     _blocks = [(0, 1, 0, "minecraft:lever"),
                (1, 1, 0, "minecraft:repeater[facing=east,delay=4]"),
