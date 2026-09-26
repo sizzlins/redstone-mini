@@ -64,6 +64,16 @@
   Verdict: single south-bank driver can't enter dense tile rows on the
   flat y=1 mesh. Small builds unaffected (suite green incl. panel check).
   Full data: `scratch/panel-micro1-report.md` (gitignored).
+- **CPU delivery rounds 1–4 (parked 2026-09-26, tree green):** spine-fed
+  trees (sim-dark orphaned branches; arbitration exceeds bridge budget),
+  port corridors (self-seal: west rays cross sibling lanes, bank-ward rays
+  die in tiles, 1-gate AND went dark), west-bank spike (even 25-cell
+  parallel runs seal — the row itself is airtight; reverted same turn),
+  deterministic lanes (trunks + E-W + stubs deliver inputs green, but gate
+  marathons no longer fit the row; reverted). Standing truth: the row fits
+  gates xor delivery, not both. Next thesis (unproven): placement reform
+  (reserved boxes pin tiles to columns, so local parking can't collapse
+  marathons today). Specs kept as history; plans + probes gitignored.
 - **alu1 standing wall:** gate-fed OR diode-backs buried 1 cell inside
   their own OR's diode/exit cluster (dump-proven, seed=1: t1→(78,14)).
   Neither order, rip-up, nor 1-hop bridges dissolve it — placement
