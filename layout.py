@@ -447,6 +447,13 @@ def layout(recipe, seed=None, grow=0):
         seen = set()
         # O(1): the conductive sets are maintained by the layout, so a route
         # hands them straight through instead of re-joining them per search.
+        # Margin ladder: windows are nested (None ⊇ 40 ⊇ 12), so a narrower one
+        # finds a SHORTER path when it finds one — 12 won 16/17 and 40/None
+        # never beat it — but it can also find nothing. A retry (post-rip) needs
+        # room to escape the congestion it just caused, so it takes the single
+        # middle window instead of three: measured 17/17 on micro1, and it turns
+        # 94% of all searches (flat/post-rip) from 3 passes into 1.
+        margins = (40,) if congest else (12, 40, None)
 
         def _search(flat, margins):
             # Candidates, shortest first. Stop as soon as a route hits the
@@ -469,14 +476,14 @@ def layout(recipe, seed=None, grow=0):
             # order is fully specified (no set/dict iteration anywhere).
             return [(i, p) for i, p in sorted(enumerate(out), key=lambda ip: (len(ip[1]), ip[0]))]
 
-        cands = _search(True, (12, 40, None))
+        cands = _search(True, margins)
         path = cands[0][1] if cands else None
         needs = []
         if path is None and use3d:
             # 3D: take the shortest candidate that survives support, self-lid
             # and cover. One pass, no research loop.
             why = None
-            for _i, cand in _search(False, (12, 40, None)):
+            for _i, cand in _search(False, margins):
                 needs = []
                 try:
                     for cell in cand:
