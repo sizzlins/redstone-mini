@@ -1,8 +1,9 @@
 # Staircase lanes for micro1 (2026-09-26)
 
-Status: design (approved in chat). One mechanism attempt to green `micro1`
-with one lever per input. Ladder `micro1→alu1→alu4→cpu4`; this spec covers
-micro1 only.
+Status: SUPERSEDED (2026-09-26, construction review): the lane→port leg
+is unfillable flat for 2-load inputs (order-isomorphism argument — see
+handoff). Kept as history, do not implement. Active attempt:
+bridges-as-primary on micro1 (bounded: 3 reds or 600s silence → park).
 
 ## Problem
 

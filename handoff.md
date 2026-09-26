@@ -40,7 +40,13 @@
   (4) remote sync — force approval pending.
 
 ## What changed (newest last)
-1. Input relay disproven (`recipe.py` reverted): 2+-load inputs chained
+1. Bridge-primary disproven, PARKED (`layout.py` reverted): bridge-first +
+   try-all-candidates with rollback; single-shot still `no route for Q`
+   (dump: goal ringed by tile solids `T0` cobble + `T1` repeater, zero
+   foreign wire — no hoppable seal exists); background full-retry hit the
+   600s-silence bound with empty log. Suite green after revert.
+2. Staircase spec SUPERSEDED (`fd5a428` stands as history): lane→port leg
+   unfillable flat for 2-load inputs (order-isomorphism).
    via installed `buf_of` (census x2 + `outidx` guard); micro1 full-retry
    exceeded 600s silent (baseline completes red) — 10→18 gates adds
    obstacles + marathons. Suite green after revert.
@@ -84,8 +90,9 @@
   west bank (parallel lanes airtight), lanes (row fits gates xor
   delivery), bus trunks (full-width wire walls the suite: `S/a` no-route,
   reverted), input relay (10→18 gates, >600s silent vs baseline that
-  completes, reverted). Dump-proven per goal (foreign/ring/solid on all
-  sides). Verdict: only interleaved lanes / routine bridges untested —
+  completes, reverted), bridge-primary (rollback over all candidates:
+  tile-solid seals hold no hoppable wire; full-retry 600s silent,
+  reverted). Dump-proven per goal (foreign/ring/solid on all sides). Verdict: only interleaved lanes / routine bridges untested —
   owner picks, no blind patches.
 - **alu1 OR-cluster wall (pre-existing):** gate-fed diode-backs buried in
   their own OR cluster (seed=1: t1→(78,14)). Untouched by all rounds.
