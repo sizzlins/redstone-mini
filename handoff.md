@@ -132,7 +132,60 @@
   pre-deferral census — so **spine-on-top as an input-only mechanism still
   does not cover alu1.** Attempt 2's scope must either generalise the spine to
   any net, or be two mechanisms.
-- **PERF: router is 1.7x faster (`812c464`, `7626779`, `c3db58a`)** — three
+- **KNOWN DEFECT (shipping-blocking, confirmed, NOT fixed): the export writes
+  no redstone-wire blockstate.** Measured on the shipped demo:
+  `build.mcfunction` has **106 `redstone_wire` lines, 0 with a blockstate**,
+  and the `.schem` palette holds the bare string `minecraft:redstone_wire` for
+  every one of them. Repeaters and comparators DO carry theirs
+  (`facing=north,delay=1`, `mode=subtract`), so the exporter passes state
+  through correctly — the defect is upstream, at `layout.py:1548`, which emits
+  a bare id while `layout.py:1550` gives repeaters `facing`/`delay`.
+  - **Why it matters:** wire's state IS its pointing
+    (`east/north/south/west ∈ {none, side, up}` + `power`). A schematic entry
+    with no properties loads the block's defaults — all-`none`, `power=0` —
+    which is a **dot that powers nothing sideways**. So the connection shape
+    never reaches the world, and it is the same concept the sim is missing
+    (see `dust_points` below). One fix, two consumers.
+  - **Why the sim cannot catch it:** the sim verifies `layout.py`'s internal
+    `wires` dict and never reads the exported file, so the whole
+    `layout -> sim -> green` chain is blind to what the world receives. A
+    pasted dot may or may not re-configure on load depending on whether the
+    game fires wire updates for those cells; the FILE does not encode it, and
+    the standing requirement is 100% vanilla compatibility.
+  - **The check that would have caught it:** an export round-trip — export,
+    read the `.schem` back, assert every wire cell's states match the shape
+    `dust_points` says it should have. Add it with the fix.
+- **ROOT CAUSE of "not 100% vanilla": there was no external oracle.** The sim
+  and the layout encode no pointing rule *at all*, so they agreed with each
+  other: layout stamps an end cell beside a block, `cob_state` says "adjacent
+  dust powers it", the tile verifies green, and both are wrong the same way.
+  Note the asymmetry — the **sim has a wrong model** (assumes every cell is a
+  cross), the **layout has no model**, so the sim needs a rule ADDED while the
+  layout needs a GEOMETRY change. `dust_points()` (`9512d23`) is the shared
+  table, asserted against the wiki for all five shapes, and is deliberately
+  NOT yet consumed by either side.
+- **GATE on the pointing work: the in-game end-cell test, not yet run.** Run a
+  north–south 2-dust wire that ENDS due west of a block, torch on that block,
+  lever on the wire. Torch off ⇒ dust does power a side-adjacent block, the
+  sim is right, the AND tile is fine. Torch stays on ⇒ the pointing model is
+  right, and the AND tile's `~a` stub (ends at `(9,1,4)`, whose only dust
+  neighbour is north, so it points north/south and never east at the NOR
+  cobble `(10,1,4)`) is broken in vanilla — `example_and` and
+  `example_2gates` currently pass only because `cob_state` over-powers.
+  Measured consequence of the pointing model: both flip to `SIM MISMATCH` on
+  `a=0,b=1`. Do not change the sim or the tiles before this test.
+- **CENSUS DISCIPLINE (learned the hard way this session): the census records
+  WHICH nets fail, never WHY.** A symptom table got read as a diagnosis three
+  times — twice by me, once by the owner, and the OR-cluster "wall" theory
+  traced back to the very first handoff of this project was simply wrong. The
+  measured truth: micro1 is TILE GEOMETRY (the latch's own `Sdust` stub at
+  `(81,16)` beside its Q-side torch attach — no router constraint can refuse
+  it), while alu1/alu4/cpu4 are SEARCH-BUDGET EXHAUSTION (A, B, OP0 searched
+  200–360x each at 40–75% failure eat the budget, so later nets are never
+  placed — the "OR drivers fail" pattern is POSITIONAL downstream damage, not
+  a junction defect; the junctions are real and fine). `scratch/census_cause.py`
+  now prints a CAUSE per unreached net (solid / ringed / never-attempted /
+  exhausted-searches). Run that, not `census_capped.py`, for any diagnosis.
   hoists, all verified behaviour-preserving, not just faster:
   | what | why it was slow | now |
   |---|---|---|
