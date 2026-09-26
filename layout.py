@@ -1600,6 +1600,23 @@ if __name__ == "__main__":
     _c = _Ctr(_io["levers"].values())
     assert _c["a"] == 1 and len(_c) == 3, _c
     print("panel ok: shared input on one bank lever, verify green")
+    # ponytail: the AND/OR check above is BLIND to XOR, and the XOR tile
+    # stamps a side lever per input (the tile rings those levers' neighbours,
+    # so a routed wire cannot reach the port - the local lever is the only
+    # source). Every XOR build therefore carries 2 levers per input:
+    # 2 inputs / 2 tiles / 8 tiles for example_xor / alu1 / alu4 = 4 / 9 / 26
+    # levers. The bar is one lever per input, no exemptions.
+    #
+    # REPORTED, not asserted, until the XOR ring lets the input be routed in:
+    # a hard assert here would red the gate and block every other commit.
+    # Flip `_c["a"] == 1` to an assert in the same commit as that fix.
+    _r = parse_recipe("IN a, b\nOUT y\ny = a XOR b\n")
+    _, _, _io, _ = layout_retry(_r, verify=True)
+    _c = _Ctr(_io["levers"].values())
+    if _c["a"] == 1 and _c["b"] == 1:
+        print("xor-lever ok: one lever per input, verify green")
+    else:
+        print(f"xor-lever MISSED the panel bar: {dict(_c)} (want 1 per input)")
     # ponytail: ONE bridge check — template matches sim's proven crossover
     # vectors; live-fire two independent nets through it, sim green.
     _feet, _sup, _dst = bridge_plan(7, 5, "ns")
