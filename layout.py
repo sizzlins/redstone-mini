@@ -300,6 +300,16 @@ def layout(recipe, seed=None, grow=0):
         stamp_wire([(W - 2, 3)], "1")
         pos["1"] = (W - 2, 3)
 
+    # ponytail: bus lanes pre-claim (spec 2026-09-26-dense-panel-green).
+    # Straight E-W claims south of tiles; tiles dodge via spot_free.
+    # Lanes saturate -> maze detours (no new search).
+    used_ins = {a for g in gates for a in g["args"]} & set(recipe["inputs"])
+    lanes = {}
+    for idx, name in enumerate(recipe["inputs"]):
+        if name not in used_ins:
+            continue
+        lz = (D - 4) - idx * 2
+        lanes[name] = {(x, lz) for x in range(1, W - 1)}
     # phase 1: place all tiles (solids+rings+outs) so routes see the full obstacle field.
     # AND = fixed torch compound (hand-verified layout, checker-guarded):
     #   two NOTs feed a NOR; internal wires fixed, only ports route globally.
@@ -390,6 +400,9 @@ def layout(recipe, seed=None, grow=0):
         fp = footprint(op, ox, gz)
         if not fp.isdisjoint(others_reserved[i]):
             return False
+        for cells in lanes.values():
+            if not fp.isdisjoint(cells):
+                return False
         return all((x, z) not in solid and (x, 1, z) not in wires for x, z in fp)
 
     def gridrows(ox, gz):
