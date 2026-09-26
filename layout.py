@@ -676,14 +676,22 @@ def layout(recipe, seed=None, grow=0):
     tasks.sort(key=lambda t: -(abs(t[0][0] - t[1][0]) + abs(t[0][1] - t[1][1])))
     if seed is not None:
         random.Random(seed).shuffle(tasks)
-    # ponytail: panel inputs ride FIRST (stable: keeps distance/shuffle order
-    # within each phase). Inputs are thin south-anchored runs; gate marathons
-    # detour around their tips cheaply. The reverse (gates first) entombs
-    # input ports inside the east-west gate-wire wall (micro1 OP: 11-26s
-    # seals, grow-proof). Ceiling: fanout-dense inputs may still need help;
-    # upgrade is input fanout chaining (recipe.py still excludes inputs).
+    # ponytail: spine-first per input (spec 2026-09-26-spine-fed-input-
+    # distribution-design). Bank->farthest load routes once (the spine);
+    # remaining loads tap it nearest-first. Input groups shuffle per seed
+    # on a separate stream so the gate shuffle above is byte-identical.
+    # Gates share key (1,0,0,0): stable sort keeps today's relative order.
     _ins = set(recipe["inputs"])
-    tasks.sort(key=lambda t: t[2] not in _ins)
+    _dist = lambda t: abs(t[0][0] - t[1][0]) + abs(t[0][1] - t[1][1])
+    _far = {}
+    for _t in tasks:
+        if _t[2] in _ins and (_t[2] not in _far or _dist(_t) > _dist(_far[_t[2]])):
+            _far[_t[2]] = _t
+    _names = [n for n in recipe["inputs"] if n in _ins]
+    if seed is not None:
+        random.Random(seed + 1).shuffle(_names)
+    _oi = {n: i for i, n in enumerate(_names)}
+    tasks.sort(key=lambda t: (0, _oi[t[2]], 0 if t == _far[t[2]] else 1, _dist(t)) if t[2] in _ins else (1, 0, 0, 0))
     placed = set(wires)  # stubs/outs/ties stay; routed paths may be ripped up
     last_blocked = {}  # net -> wire cells whose touch sealed its last failure
     congest = {}  # wire cell -> extra cost after a rip (lanes stay shared)
