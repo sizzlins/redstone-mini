@@ -1063,14 +1063,37 @@ def layout(recipe, seed=None, grow=0):
                 if not bridge_free(wires, solid, repeaters, guard, W, D, fx, fz, axis, net, cond=cond):
                     continue
                 feet = bridge_stamp(blocks, solid, wires, rings, placed, net, fx, fz, axis)
-                cond.update(bridge_plan(fx, fz, axis)[1])   # its cobble supports
-                condg.update((c for c in bridge_plan(fx, fz, axis)[1] if c[1] == 1))
+                _sup, _dst = bridge_plan(fx, fz, axis)[1:]
+                cond.update(_sup)
+                condg.update(c for c in _sup if c[1] == 1)
                 fa, fb = sorted(feet, key=lambda f: abs(f[0] - s[0]) + abs(f[2] - s[1]))
                 try:
                     route(s, (fa[0], fa[2]), net)
                     route((fb[0], fb[2]), t, net)
                 except RuntimeError:
-                    return False  # caller raises; this layout try is discarded
+                    # ponytail: undo the hop. This used to rely on the caller
+                    # raising (which discards the whole layout), but the
+                    # two-pass loop keeps going after a failed task — so a
+                    # half-placed arch survived as orphaned elevated dust and
+                    # the next pass died on `OPEN`. Un-stamp here instead.
+                    for c in _dst:
+                        wires.pop(c, None)
+                        placed.discard(c)
+                        aircells.discard(c)
+                    for c in _sup:
+                        solid.pop((c[0], c[2]), None)
+                        cond.discard(c)
+                        if c[1] == 1:
+                            condg.discard(c)
+                        blocks[:] = [b for b in blocks if (b[0], b[1], b[2]) != c]
+                    for c in _sup + [(fx, 1, fz)]:
+                        for dx, dz in DIRS:
+                            _r = rings.get((c[0] + dx, c[2] + dz))
+                            if _r is not None:
+                                _r.discard(net)
+                                if not _r:
+                                    del rings[(c[0] + dx, c[2] + dz)]
+                    return False
                 bridged.add((fx, fz, axis))
                 try:
                     tasks.remove((s, t, net))
