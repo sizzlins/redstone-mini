@@ -1223,23 +1223,33 @@ def layout(recipe, seed=None, grow=0):
         # cover the tile-stub tail past the goal too: same-net dust stamped
         # in phase 1 (ports, latch rows) decays exactly like routed wire, and
         # a latch S-row needs level 9 at the port to reach its block, while
-        # the endpoint alone is only guaranteed level 1. Bounded walk so a
-        # shared trunk never drags in a far sibling branch.
+        # the endpoint alone is only guaranteed level 1.
+        #
+        # ponytail: walk ONE chain, not a tree. The tree version appended in
+        # discovery order, so consecutive entries could be two cells apart
+        # (`(114,1,13) -> (114,1,11)`); _straight3 still calls that triple
+        # "collinear, same y" and hands the index to place_rep, which died on
+        # `KeyError: (0,-2)`. A chain is always adjacent (which is all cover
+        # and place_rep assume) and is less code. Bounded so a shared trunk
+        # never drags in a far sibling branch.
         cells = list(path)
         seen = set(cells)
-        g = cells[-1]
-        stack = [g]
-        while stack:
-            c = stack.pop()
+        g = c = cells[-1]
+        while True:
+            nxt = None
             for dx, dz in DIRS:
                 m = (c[0] + dx, 1, c[2] + dz)
                 if m in seen or wires.get(m) != net:
                     continue
                 if abs(m[0] - g[0]) + abs(m[2] - g[2]) > 12:
                     continue
-                seen.add(m)
-                cells.append(m)
-                stack.append(m)
+                nxt = m
+                break
+            if nxt is None:
+                break
+            seen.add(nxt)
+            cells.append(nxt)
+            c = nxt
         path = cells
         n = len(path)
         i = n - 1
