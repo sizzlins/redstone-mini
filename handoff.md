@@ -116,6 +116,41 @@
   pre-deferral census — so **spine-on-top as an input-only mechanism still
   does not cover alu1.** Attempt 2's scope must either generalise the spine to
   any net, or be two mechanisms.
+- **PERF: router is 1.7x faster (`812c464`, `7626779`, `c3db58a`)** — three
+  hoists, all verified behaviour-preserving, not just faster:
+  | what | why it was slow | now |
+  |---|---|---|
+  | coupling predicate | re-probed ~12 neighbours per **candidate** (10.1M calls, 63M `dict.get` on alu1 = the entire layout cost) though it depends only on the cell + wires + support | one `forb` set per search, built from the **foreign** side |
+  | `ok()` | probed solid + rings + sup (3-6 lookups) to reach three `return False` exits | one `hard` set; coupling test inlined (was 10M calls) |
+  | `forb` build | scanned every foreign wire in the build (790 builds, 7.5M `set.add`, 12% of layout) | windowed to the search's own margin box ±1 |
+
+  | workload | before | after | |
+  |---|---|---|---|
+  | alu1 s1 (cap 700) | 18.3s | **10.65s** | 1.72x |
+  | micro1 s1 | 1.10s | **0.63s** | 1.75x |
+  | `layout_retry(micro1, 3 tries, verify)` | 8.70s | **5.59s** | 1.56x |
+
+  **`REDSTONE_XCHECK=1` is the proof, and it earns its keep**: it runs the old
+  predicate beside the hoisted one on *every* candidate and asserts
+  biconditional equality. It caught three inversion bugs I would otherwise
+  have shipped — the support cell belongs UNDER the foreign upper, the y=1
+  candidate sits at `cy-1`, and the junction gate reads the **foreign**
+  column. Green on micro1 s0/s1 + alu1 s1. Keep it green when touching `forb`.
+- **PERF: measured, then declined.** A settling `sim_verify` is **0.03s**
+  (example_2gates, 4412 `dust_lvl` calls) — the sim is irrelevant next to a
+  multi-second router, so `dust_lvl`'s ~32 tuple allocations per call were NOT
+  worth touching. micro1's 1.8s vector is 300k steps of oscillation, a
+  symptom of the bug, not a hot path. Space: `flips` is keyed by cell, so it
+  is O(cells) not O(steps) — no memory win available either.
+- **PERF: one hoist tried and REVERTED** (`7626779`): building `forb` per route
+  instead of per search gained nothing (11.13 -> 11.17s) because the flat
+  post-rip phase that is 98.6% of all searches uses a single margin window,
+  so there is nothing to share. Kept out on purpose.
+- **The next speed lever is algorithmic, not constant-factor**: 790 searches
+  x ~12.8k candidates for 42 loads, 98.6% of them flat post-rip re-litigation.
+  Cutting that means fewer searches (path reuse on retry) or smaller windows
+  (a stronger admissible heuristic) — both change *which* path wins a tie, so
+  they break flat byte-identity. Needs an explicit call, not a drive-by.
 - **micro1's oscillator: the kicker is TILE geometry, not the router.**
   Traced via the churn set (after `9508bda` made it block-aware): a 16-node
   cycle through the LATCH's cross-coupled NOR pair, torch (78,15) <-> (81,14),
