@@ -23,6 +23,43 @@ _STEPCOST = 4
 # two orderings trade off against each other (see PONYTAIL-DEBT).
 _PASSES = int(_os.environ.get("REDSTONE_3D_PASSES", "2"))
 
+_OPP = {(1, 0): (-1, 0), (-1, 0): (1, 0), (0, 1): (0, -1), (0, -1): (0, 1)}
+
+
+def dust_points(cell, dust):
+    """The directions a dust cell points, i.e. where it can power a SIDE block.
+
+    Vanilla (minecraft.wiki, Redstone Dust -> Placement / Behavior): powered
+    dust weakly powers a conductive block only when it is ON TOP of it or
+    POINTING at it. Pointing is a per-direction property of the cell's
+    connection shape, which the game stores in its block states
+    (east/north/south/west in {none, side, up}, "side can also mean down"):
+
+      cross  (no dust neighbour) -> all four ways
+      end    (one link)          -> "a line pointing both at the neighbor and
+                                     away from it" = that axis, both ways
+      line   (two opposite links)-> its own axis
+      corner / T (2 adjacent / 3)-> the links it has
+      dot    (right-clicked cross)-> nothing sideways (layouts never stamp one)
+
+    A block is therefore powered by dust sitting on it, or by dust whose
+    `dust_points` contains the direction from the dust to the block. Nothing
+    else — notably a wire merely running PAST a block does not power it.
+
+    ponytail: this lives here because layout owns the net map that defines the
+    shape, and sim.py already imports from here, so the sim's block-power test
+    and the exporter's blockstate writer share one table and cannot drift.
+    Not yet consumed by either: wiring it into the sim changes verdicts, and
+    that waits on the in-game end-cell test (see handoff).
+    """
+    live = [d for d in DIRS
+            if (cell[0] + d[0], cell[1], cell[2] + d[1]) in dust]
+    if not live:
+        return frozenset(DIRS)                             # cross
+    if len(live) == 1:
+        return frozenset((live[0], _OPP[live[0]]))         # end: its own axis
+    return frozenset(live)                                 # line / corner / T
+
 
 def _support(cell, net, solid, wires, sup, reps, guard):
     """Support under a y>=2 wire cell: None=reuse, (x,y,z)=stamp once,
@@ -1617,6 +1654,29 @@ if __name__ == "__main__":
         print("xor-lever ok: one lever per input, verify green")
     else:
         print(f"xor-lever MISSED the panel bar: {dict(_c)} (want 1 per input)")
+    # ponytail: the POINTING table, asserted straight from
+    # minecraft.wiki/Redstone_Dust. This is the only external oracle in the
+    # project: everything else is the sim agreeing with the layout, which is
+    # how a wrong model passes itself. Asserted here because the sim's
+    # block-power test and the exporter's blockstate writer both consume
+    # dust_points(), and the in-game end-cell test has not been run yet.
+    _D = {(0, 1, 0), (0, 1, 1), (0, 1, 2), (0, 1, 3)}          # N-S line
+    assert dust_points((5, 1, 5), {(5, 1, 5)}) == frozenset(DIRS), \
+        "cross points all four"
+    assert dust_points((0, 1, 3), _D) == frozenset({(0, 1), (0, -1)}), \
+        "end cell points along its own axis, both ways"
+    assert dust_points((0, 1, 1), _D) == frozenset({(0, 1), (0, -1)}), \
+        "line points along its own axis"
+    _E = {(0, 1, 0), (1, 1, 0), (2, 1, 0)}                     # E-W line
+    assert dust_points((1, 1, 0), _E) == frozenset({(1, 0), (-1, 0)}), \
+        "a wire running PAST a block does not point at it"
+    _C = {(0, 1, 0), (1, 1, 0), (1, 1, 1)}                     # corner
+    assert dust_points((1, 1, 0), _C) == frozenset({(-1, 0), (0, 1)}), \
+        "corner points at its links only"
+    _T = {(0, 1, 0), (1, 1, 0), (2, 1, 0), (1, 1, 1)}          # T
+    assert dust_points((1, 1, 0), _T) == frozenset({(-1, 0), (1, 0), (0, 1)}), \
+        "T points at its three links"
+    print("pointing ok: cross/end/line/corner/T per wiki Redstone Dust")
     # ponytail: ONE bridge check — template matches sim's proven crossover
     # vectors; live-fire two independent nets through it, sim green.
     _feet, _sup, _dst = bridge_plan(7, 5, "ns")
