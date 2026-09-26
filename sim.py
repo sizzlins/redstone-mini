@@ -1,10 +1,18 @@
 """Simulation: redstone physics verifier plus generate-and-test retry."""
 
-import random
+import heapq
+import os as _os
 
 from core import DIRS, base
 from layout import layout
 from recipe import eval_net
+
+# ponytail: settling budget. A dense build is ~10x the cells of a small one, so
+# the old fixed 500 ticks / 20000 steps could expire on slow-but-finite
+# convergence and be reported as an oscillator. Env knobs, same idea as
+# REDSTONE_ASTAR_CAP: raise them when a build is big, lower them to fail fast.
+_TICK_CAP = int(_os.environ.get("REDSTONE_SIM_TICKS", "500"))
+_STEP_CAP = int(_os.environ.get("REDSTONE_SIM_STEPS", "20000"))
 
 
 def layout_retry(recipe, tries=12, verify=False, grows=3):
@@ -231,7 +239,7 @@ def _run_vec(vec, init, ctx, until=None):
     while pending and (until is None or pending[0][0] <= until):
         now, _, kind, c = _hq.heappop(pending)
         steps[0] += 1
-        if now > 500 or steps[0] > 20000:
+        if now > _TICK_CAP or steps[0] > _STEP_CAP:
             # ponytail: name the OSCILLATOR, not the leftovers. `live` is
             # whatever happened to be lit at timeout — on a ring oscillator
             # that is an ordinary powered run (a monotone decay gradient),
