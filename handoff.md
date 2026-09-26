@@ -6,8 +6,10 @@
    master boosters + bridges + astar cap + two-tier rip-up. PR #2 MERGED
    (`0e686a5`).
 3. Single-lever panel (DECIDED: ship with ceiling) → MERGED in PR #2.
-4. CPU builds (all 9 .txt green, single lever everywhere) → flat family
+4. CPU builds (all 9 .txt green) → flat family
    exhausted with data. Owner DECIDED 3D. No more flat mechanisms.
+   (The old "single lever everywhere" wording on this line was an
+   over-generalisation; XOR builds carry 2 per input — see below.)
 5. Sim correctness (shipped): lamp pointing rule + `sim_pulse` proofs.
 6. Mechanics research (done): `scratch/redstone-mechanics-report.md`.
 7. 3D router (IN PROGRESS, this session): Attempt 1 = 3D *wires* only, tiles
@@ -26,8 +28,22 @@
 - **Suite green** (re-verified after every commit): `recipe.py`, `sim.py`,
   `serve.py --check` (demo 246), `layout.py` (ports / or-lever / panel /
   bridge / **3d ok**).
-- **Small .txt all green, single lever per input**: `example_and` 0.1s/156,
+- **Small .txt all green**: `example_and` 0.1s/156,
   `example_2gates` 0.2s/246, `latch_sr` 0.2s/216, `example_xor` 0.2s/164.
+  **The "single lever per input" claim is CORRECT for AND/OR builds and WRONG
+  for XOR builds** — the canary at `layout.py:1607` used only
+  `y1 = a AND b / y2 = a AND c`, so XOR was never counted. The XOR tile
+  stamps a side lever per input (`layout.py:1020`) and rings those levers'
+  neighbours (`1023`), so a routed wire cannot reach the port and the local
+  lever is the only source. Result: **2 levers per input on every XOR
+  build** — 4 / 9 / 26 levers for example_xor / alu1 / alu4, i.e. the panel
+  promise is off by **2.6x** on alu4 (16 of its 26 levers are tile levers,
+  8 XOR tiles x 2 inputs; the parser does NOT constant-fold `X XOR 0`, so
+  `S0 = X0 XOR 0` emits a tile too). Removing the side levers was measured:
+  `SIM MISMATCH` on a=1,b=1, so they are load-bearing. Fixing this means
+  letting a routed wire reach the XOR input port (ring redesign), not
+  deleting a line. `layout.py` now PRINTS the miss every run (`xor-lever
+  MISSED the panel bar`); the assert comes with the fix.
 - **Flat byte-identity still holds** after every commit:
   `b1896abd3762dd99` / `777948c5fc963e20` / `7525f9fd37ae316e`, identical to
   pre-3D baseline and across processes.
