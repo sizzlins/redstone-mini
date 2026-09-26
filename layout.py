@@ -50,7 +50,7 @@ def _support(cell, net, solid, wires, sup, reps, guard):
     return b
 
 
-def _coupling_forb(wires, net, starts, goal, junctions, cob, air):
+def _coupling_forb(wires, net, starts, goal, junctions, cob, air, window=None):
     """Cells that would couple to a foreign net: a same-level side touch, or a
     true slope link (support under the upper + no lid over the lower, sim's
     rule). Built from the FOREIGN side, so each foreign wire visits 4
@@ -58,16 +58,32 @@ def _coupling_forb(wires, net, starts, goal, junctions, cob, air):
     instead of every candidate probing 12 neighbours.
 
     Depends only on the net, the wires, the junctions and the support set, so
-    one build serves a whole route (all three margin windows), not one search.
+    one build serves a whole search.
+
+    `window` (x0, x1, z0, z1) restricts the BUILD to foreign cells one step
+    outside it: a candidate inside the window can only couple to a neighbour
+    one step out, and `ok` already rejects candidates outside it, so the
+    result is identical for every cell the search can ask about. The margin
+    windows cover a fraction of a 20k-cell field, and the build was 12% of
+    layout time. `fwire` stays FULL so the blame set is unaffected.
     """
     airstrip = set()
     for ax, ay, az in air:
         airstrip.update(((ax + 1, az), (ax - 1, az), (ax, az + 1), (ax, az - 1)))
     fwire = {c for c, n in wires.items() if n != net}
+    if window is None:
+        near = fwire
+    else:
+        wx0, wx1, wz0, wz1 = window
+        wx0 -= 1
+        wx1 += 1
+        wz0 -= 1
+        wz1 += 1
+        near = {c for c in fwire if wx0 <= c[0] <= wx1 and wz0 <= c[2] <= wz1}
     forb = set()
     addforb = forb.add
     jget = junctions.get
-    for c in fwire:
+    for c in near:
         cx, cy, cz = c
         # every exemption in the per-candidate form is stated about the
         # FOREIGN cell (it can never be `prev`, but it CAN be a foreign-held
@@ -179,7 +195,8 @@ def astar(starts, goal, net, W, D, solid, rings, wires, junctions, margin=None, 
     # instead of every candidate probing 12 neighbours. Per search: ~1.3k
     # cheap ops instead of 12.8k x ~6 dict.gets (was 63M gets on alu1).
     _XCHECK = _os.environ.get("REDSTONE_XCHECK") == "1"
-    forb, fwire = _coupling_forb(wires, net, starts, goal, junctions, cob, air)
+    forb, fwire = _coupling_forb(wires, net, starts, goal, junctions, cob, air,
+                                 (x0, x1, z0, z1))
     def lid(cell):
         return cell in cob  # any pillar: tile, bridge, or stamped
     # Same hoist for the static obstacles: solid, rings-without-net and the
