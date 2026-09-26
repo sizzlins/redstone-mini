@@ -1,4 +1,4 @@
-# Handoff — redstone-mini (2026-09-26 night)
+# Handoff — redstone-mini (2026-09-26, 3D Attempt 1)
 
 ## Goal (evolved)
 1. Phase 1 port grid → DONE, PR #1 merged.
@@ -6,175 +6,133 @@
    master boosters + bridges + astar cap + two-tier rip-up. PR #2 MERGED
    (`0e686a5`).
 3. Single-lever panel (DECIDED: ship with ceiling) → MERGED in PR #2.
-   Small builds green and cheaper (demo 270→246); dense builds red (see
-   What failed).
 4. CPU builds (all 9 .txt green, single lever everywhere) → flat family
-   exhausted with data (see What failed). Owner DECIDED: implement 3D
-   (item 7). No more flat mechanisms.
-5. Sim correctness (shipped): lamp pointing rule + `sim_pulse`
-   timeline proofs. Suite green.
-6. Mechanics research (done): `scratch/redstone-mechanics-report.md`
-   (Wiki-sourced, sim cross-checked, video-triangulated).
-7. 3D router (DECIDED 2026-09-26, NEW): volumetric tiles, 6-dir A* with
-   priced level changes, sim verticals past slope-links, placement using
-   height. Design round first, micro1-first ladder, background-only dense
-   attempts. Only un-disproven direction; corroborated by RedstoneBuilder
-   comparison (3D P&R scales to a 242-gate ALU, nothing flat does).
+   exhausted with data. Owner DECIDED 3D. No more flat mechanisms.
+5. Sim correctness (shipped): lamp pointing rule + `sim_pulse` proofs.
+6. Mechanics research (done): `scratch/redstone-mechanics-report.md`.
+7. 3D router (IN PROGRESS, this session): Attempt 1 = 3D *wires* only, tiles
+   stay flat. Approved corrections: per-level guards, slope-only coupling,
+   supports stamped once on the winning path, repeaters keyed (x,y,z) and
+   legal on pillars.
 
 ## Current state
-- **Master:** PR #2 merged. Phase-2 router + panel + hardening all in.
-- **Branch `phase2-design`** (ahead 16 + this handoff, behind 1 — push
-  needs a force decision): Task-1 lanes (`e5afcb5`), dense-green spec +
-  plan (`9e4f803`, `1bf6e4b`), staircase spec as history (`fd5a428`),
-  XOR tile fix (`2fb620d`). Worktree clean (trunk/relay/bridge/BAND work
-  all reverted, suite green after each).
-- **Green (verified, re-run this session):** full suite — `recipe.py`,
-  `sim.py`, `serve.py --check` (demo 246), `layout.py` (ports, or-lever,
-  panel, bridge); `example_and/2gates`, `latch_sr`, `example_xor` (fixed
-  this session) verify green. Acceptance bar per owner: all 9 `.txt`
-  (`micro1, alu1, alu4, cpu4, ctrl_decode, example_and/2gates/xor,
-  latch_sr`) verify green + single lever per input (XOR keeps tile side-
-  levers by strong-side geometry; bank stays single).
-- **Red (standing):** micro1/alu1/alu4/cpu4 + ctrl_decode with panel.
-  Pre-panel micro1 was green (2s/1960) — panel inputs are the entire
-  delta. `example_xor` was red since the panel merged (never pinned by
-  suite) — FIXED this session, see What changed.
-- **Backlog (ponytail-sorted):** (1) 3D router — DECIDED, design round is
-  the next work; (2) timed sources — sim_pulse SHIPPED, plates/observers
-  open; (3) locking/burnout/containers/pistons-QC — YAGNI deferred, no
-  consumer; (4) remote sync — force approval pending.
+- **Branch `phase2-design`** (ahead 17, behind 1 — sync still needs a force
+  decision). Tracked tree: `layout.py` + `export.py` modified, UNCOMMITTED
+  (3D Attempt 1 + perf refactor). Everything else reverted/clean as before.
+- **Suite green** (re-verified this session): `recipe.py`, `sim.py`,
+  `serve.py --check` (demo 246), `layout.py` (ports / or-lever / panel /
+  bridge / **3d ok** — new check).
+- **Small .txt all green, single lever per input** (XOR keeps its two tile
+  side-levers, exempt by geometry): `example_and` 0.1s, `example_2gates` 0.2s,
+  `latch_sr` 0.2s, `example_xor` 0.2s.
+- **Flat byte-identity PROVEN**: build hashes for the 4 small recipes are
+  identical to pre-3D baseline (`b1896abd3762dd99`, `777948c5fc963e20`,
+  `7525f9fd37ae316e`) and identical across 3 separate processes. This is the
+  safety property everything else leans on — keep it.
+- **Dense still red**: micro1 single-shot now dies at `T0 (108,13)->(122,14)`
+  (it used to die at `T1 (126,12)->(196,12)`). T1 and Q — the two goals the
+  handoff recorded as sealed — now route, via 3D. alu1/alu4/cpu4/ctrl_decode
+  not re-measured this session (background ladder only got micro1 + alu1
+  start before it was killed).
+- **Known red with a named cause**: `SHORT3D: W slope-links S at
+  (53,1,15)->(53,2,16)`. `bridge_free` never checked slope coupling, so a
+  pre-existing bridge can lay elevated dust that slope-links a foreign ground
+  wire. The new SHORT3D checker catches it; the search does not. Fix approved
+  (additive guard in `bridge_free`, not yet written).
 
 ## What changed (newest last)
-1. 3D DECIDED + field survey: shallow-cloned RedstoneBuilder to temp
-   (outside repo) and mapped its P&R vs ours — 3D grid + volumetric
-   cells, negotiated-congestion PathFinder, SA placement, Steiner fanout;
-   no CPU anywhere (biggest proof: 8-bit ALU ~242 gates, slow/ignored;
-   biggest non-ignored green: 5-gate adder). Portable lesson:
-   history-kept congestion only (taps/diodes already mirror the rest);
-   the load-bearing gap is 3D. Their pipeline gaps noted too (placement
-   cost ignores Y; slab/glass crossing helpers test-only).
-2. micro1 BAND attempt (reverted): hand-banded `micro1.txt` datapath
-   order (6 bands, existing machinery, zero code change). Single-shot
-   died on a short hop (`R (36,27)->(52,12)`, goal enterable, tile mass
-   seals mid-path); background full-retry 600s silent, killed on bound.
-   Bands shorten distance, seals aren't distance. File reverted.
-3. XOR tile fixed (SIM-dark → green): routed rears arrive decayed (~4),
-   8-cell merge ate it; two south-facing merge diodes + 1-cell drv
-   extension (lamp feed is a tip again — C2's output cell sat beside it,
-   failing the pointing rule all 36 tries). `example_xor` verify green
-   (164 blocks); suite green.
-4. Bridge-primary disproven, PARKED (`layout.py` reverted): bridge-first +
-   try-all-candidates with rollback; single-shot still `no route for Q`
-   (dump: goal ringed by tile solids `T0` cobble + `T1` repeater, zero
-   foreign wire — no hoppable seal exists); background full-retry hit the
-   600s-silence bound with empty log. Suite green after revert.
-5. Staircase spec SUPERSEDED (`fd5a428` stands as history): lane→port leg
-   unfillable flat for 2-load inputs (order-isomorphism argument).
-6. Input relay disproven (`recipe.py` reverted): 2+-load inputs chained
-   via installed `buf_of` (census x2 + `outidx` guard); micro1 full-retry
-   exceeded 600s silent (baseline completes red) — 10→18 gates adds
-   obstacles + marathons. Suite green after revert.
-7. Bus trunk disproven (`layout.py` reverted to `e5afcb5`): full-width E-W
-   trunk wire is itself a wall — suite broke (`sim.py`: `no route for S
-   (7,81)->(5,16)`, `no route for a (7,81)->(4,12)`); stations don't open
-   crossings (solid cell + neighbour touch). Fixes tried inside the task:
-   bank→trunk jogs bridge sibling lanes (`W bridges D at (55,1,34)`),
-   levers-on-lanes hit own-lever solid. Suite green after revert.
-8. Task 1 shipped (`e5afcb5`): bus lanes pre-claim (`z=(D-4)-idx*2`,
-   E-W `1..W-1`) + `spot_free` dodge; suite green, micro1 still red
-   (`T1 (126,12)->(196,12)`, then `Q (73,14)->(124,12)` full-retry).
-9. Plan + spec committed (`1bf6e4b`, `9e4f803`): dense-green B+C
-   (lanes/trunk/taps/OR-dodge/acceptance); spine-first survey via 3
-   subagents; owner scope: all `.txt`, `layout.py`-first.
-10. `sim_pulse` + dwell guard (`e8c6880`): timed-press timeline proofs
-   (press-20 lights, holds 1, drops by 5). Buttons need no new blocks.
-11. Lamp pointing rule (`3077d1b`): lamps need pointing-at dust; exposed a
-   real layout bug (4 placement guards compared 2D cells to the 3D wire
-   map — always false): fixed lamp/OR-junction/OR-diode/bank overlap
-   checks, one line each. Suite green throughout after fix.
-12. Mechanics report: dust→pistons, Wiki + video sources, per-section
-   `[SIM OK]`/`[GAP]` vs `sim.py`. New gaps named, all out of build scope.
-13. Lanes round (reverted via `6dc34c2`): trunks + E-W + stubs delivered
-   inputs green (probes), but gate marathons lost the row; arbitration
-   trio (unrippable/placed-victims/bridge-first) fixed S, died on R.
-14. West-bank spike (reverted same turn): even 25-cell parallel runs seal —
-   the row itself is airtight.
-15. Corridor round (reverted): reservations self-seal (west rays cross
-   sibling lanes; bank-ward rays die in tiles; 1-gate AND went dark).
-16. Spine round (reverted): taps decay dark (sim-proven), rip orphans
-   branches, bridge arbitration exceeds budget (single-shot under-delivers,
-   chaining thrashes >300s).
-17. Panel shipped (median-band bank + inputs-first + Task-3 cleanup,
-   `6dd2b78`); PR #2 merged; handoff + debt updated.
+1. **3D Attempt 1, uncommitted**: 6-dir A\* (`_H=3`, level change costs
+   `_STEPCOST=4`), flat-first two-pass scheduling (`_PASSES=2`, env
+   `REDSTONE_3D_PASSES`), per-level guards (y≥2 ignores tile columns/rings/
+   torch-hug), slope-only coupling in both directions (`touches_foreign`),
+   supports feasibility-checked in search and stamped once on the winner,
+   `sup` pillar map, booster cover on straight runs at any level
+   (`_straight3`/`_cover_gap`), repeaters keyed (x,y,z) with a support assert
+   (`_has_support`), SHORT3D checker, OPEN trace slope rules, `stamp_wire`
+   port exemption, `export.py` repeater keyed (x,y,z).
+2. **Three bugs found and fixed while building it** (all mine, all caught by
+   diffing the route sequence against baseline, not by reading):
+   - Inverted torch-hug guard (`for/else` made it allow hugging and reject
+     clean cells) — this broke the flat path outright, latch_sr 0/26 green.
+   - `stamp_wire` ring-checked the router's own ports. `astar` must start and
+     end on tile ports, which sit inside rings by construction; stamping must
+     agree or a legal route dies at its own endpoint (`W hits guarded`,
+     `T0 hits guarded`).
+   - Per-route conductive-set rebuilds and per-rip `blocks` list rebuilds
+     (O(n²)) — see perf below.
+3. **Perf refactor (uncommitted)**: `far()` + 2 generators per candidate
+   (5.3M calls) → precomputed `near`/`gexp` set lookups; `air` flag
+   O(len(wires)) per search → maintained `aircells`; per-route conductive-set
+   unions → maintained `cond`/`condg`; rip-up no longer rebuilds `blocks`
+   (pillars live in `sup`, materialized once); 8 vertical-coupling lookups per
+   flat candidate → 1 `airstrip` lookup; `junctions` only consulted on a
+   confirmed foreign wire. dict.get 71.6M → 40M on micro1.
+4. **Determinism pinned** (was a handoff-known repro bug): A* heap key keeps
+   the 2D projection then the 3D cell; margin candidate order is an explicit
+   stable sort; `try_bridge` candidate sort gained `p` as final tiebreak.
+   Three processes now produce identical builds.
 
 ## What failed (with evidence, no theory)
-- **Dense delivery (flat, exhausted):** star (>290s), taps (sim-dark),
-  orderings (wall moves), grow (78s, local entombment), pitch (no
-  effect), bridges last-resort (feet inside walls), bridge-primary
-  (tile-solid seals hold no hoppable wire; full-retry 600s silent),
-  corridors (self-seal), west bank (airtight), lanes (gates xor
-  delivery), bus trunks (wall the suite), input relay (10→18 gates,
-  >600s silent), hand-BAND datapath order (short hops seal like
-  marathons; full-retry 600s silent). Dump-proven per goal
-  (foreign/ring/solid on all sides). Verdict: flat holds no mechanism;
-  3D is the only un-disproven direction.
-- **alu1 OR-cluster wall (pre-existing):** gate-fed diode-backs buried in
-  their own OR cluster (seed=1: t1→(78,14)). Untouched by all rounds.
-- **Attempt economics:** red attempts 55–408s capped, three runs >600s
-  silent (relay, bridge-primary, BAND — all killed per 600s rule);
-  36-combo retry is hours. Dense builds background + poll ONLY (two
-  foreground full-retries blocked 10 min and 7 min this session).
-  `Start-Process` lacks `-RedirectOutput` here — use
-  `cmd /c start /b ... > log 2>&1`. Single-shot `layout(r, seed=None,
-  grow=0)` fails fast and suffices for mechanism proofs.
-- **Reproducibility (NEW):** same-args builds differ across processes —
-  hash-seed iteration order of bridge-candidate ties (`cands` sort is
-  stable over randomized insertion). Same-process runs are identical.
-  Not fixed; pin with fully-sorted candidate keys when builds must be
-  compared across processes.
-- **Probe hygiene:** dump values are JSON lists — never compare to tuples
-  (silently vacuous; burned two probes). Inline `python -c` with multiline
-  recipes breaks on pwsh (use `scratch/*.py`). Cancelled subagents leave
-  runaways; inline execution only.
+- **Flat dense delivery: still exhausted, unchanged** (handoff item 4). 3D is
+  the only direction tried; it moves walls but does not close micro1.
+- **The 3D router is much slower, not faster.** Controlled, same session:
+  micro1 single-shot baseline **2.4s / 240 A\* searches** vs 3D **103.9s /
+  1740 searches** (10ms → 60ms per search). The 4 small builds are unchanged
+  (0.053s → 0.045s, 36 searches both) because they never leave the ground.
+  The constant-factor wins did not change the asymptotics: 3× the cells per
+  search, and 7× more searches because 3D solves seals that then get ripped
+  and re-litigated. **My earlier "2.5–3× faster per unit work" claim was
+  wrong** — it compared two different failure points, not one workload.
+- **A retracted inference, recorded so it isn't repeated**: comparing runs
+  that die at different walls says nothing about speed.
+- **Bridge slope coupling**: `bridge_free` checks wires/guard/solid/repeaters
+  but not dy-coupling, so bridges can create shorts the 3D checker rejects.
+  Caught live as `SHORT3D: W slope-links S`.
+- **Seeded retry cost is unchanged and untouched by request**: shipping
+  `layout_retry(verify=True)` = 12 seeds × 3 grows ≈ up to 36 layouts × ~100s
+  on dense. Probe harness uses `tries=3, grows=1` instead.
 
 ## Files touched
-- **Tracked:** `sim.py` (pointing rule + probes + `sim_pulse`), `layout.py`
-  (panel bank/routing/check + spine-first order + 4 overlap-guard fixes +
-  Task-1 lane pre-claim/dodge + XOR merge diodes/drv extension);
-  `PONYTAIL-DEBT.md` (panel-era ceiling rows; lane/spine/corridor/trunk/
-  relay/bridge work reverted before ledgering — only shipped rows stand);
-  specs `2026-09-26-{single-lever-panel,spine-fed-input-distribution,
-  input-port-corridors,deterministic-input-lanes,dense-panel-green,
-  staircase-lanes}-design.md` (all but panel/green: history, do not
-  implement); plan `docs/plans/2026-09-26-dense-panel-green.md` (tasks 2-5
-  blocked/superseded except Task 1 + Task 5 economics); `micro1.txt`
-  (BAND attempt, reverted — net zero); `handoff.md` (this file).
-- **Untracked (never merge):** `docs/plans/2026-09-26-{single-lever-panel,
-  spine-fed-input-distribution,input-port-corridors,
-  deterministic-input-lanes}.md`.
-- **Gitignored (never merge):** `scratch/` probes (`probe_*.py`, lane/corridor
-  dumps, `panel-micro1-report.md`, `redstone-mechanics-report.md`,
-  `raymap.py`, `latchlamp.py`); `*.log`; `build.*`.
-- **Outside repo (no cleanup needed):** temp clone of RedstoneBuilder +
-  `pre-lanes` worktree (both under `Temp/opencode`, worktree removed).
-- **Untouched:** `serve.py`, `core.py`, `recipe.py`, `export.py`, `debug.py`.
+- **Tracked, modified, UNCOMMITTED:** `layout.py` (3D Attempt 1 + perf +
+  determinism + `3d ok` self-check), `export.py` (repeater keyed (x,y,z) so a
+  pillar repeater renders; the 2D `repinfo` crashed with `KeyError`).
+- **Tracked, unchanged:** `sim.py`, `core.py`, `recipe.py`, `serve.py`,
+  `debug.py`, `PONYTAIL-DEBT.md`, all `.txt`, `handoff.md` (this file).
+  `PONYTAIL-DEBT.md` does **not** yet carry the 3D rows — the new ceilings
+  (`_H=3`, `_STEPCOST`, one 3D pass, `_PASSES`) are ledgered only here.
+- **Untracked (never merge):** `docs/plans/2026-09-26-{deterministic-input-
+  lanes,input-port-corridors,single-lever-panel,spine-fed-input-distribution}.md`.
+- **Gitignored probes (new this session, `scratch/`)**: `probe_3d_*.py`
+  (latch/open/seed/price/panel/micro1/phys/rep/why/route/h/prof),
+  `probe_determinism.py`, `probe_prof.py`, `probe_seq.py`, `bench.py`,
+  `ladder.py`, `ladder_dense.py`, `fix_loop.py`, `loop_orig.txt`,
+  `layout_head.py`, `seq_*.txt`, `ladder3d.log`.
+- **Not committed by policy:** the 4 untracked plans, all of `scratch/`.
 
 ## What next (in order)
-1. **3D router — design round first (DECIDED, funded by owner):** volumetric
-   tile cells, 6-dir A* with priced level changes, sim verticals past
-   slope-links (support/lid rules), placement using height. Micro1-first
-   ladder (`micro1→alu1→alu4→cpu4`), one mechanism per attempt with
-   keep-or-revert, background-only dense runs with the 600s-silence kill
-   rule. Gating bar: all 9 `.txt` verify green, single lever per input
-   (XOR tile sides exempt by geometry), suite green.
-2. **Sync remote** — branch diverged (ahead 16 + this handoff, behind 1);
-   needs explicit force-with-lease approval. Nothing at risk locally
-   either way.
-3. **Timed sources, continued** — plates/observers only if a build needs
-   them; locking/burnout/containers/pistons stay YAGNI until consumed.
-4. **Do NOT:** flat mechanisms of any kind (exhausted — needs a dump naming
-   a sealer that 3D wouldn't dissolve); trust mental tile coordinates
-   (`debug.py` + dump queries instead); merge `scratch/` or plans;
-   foreground dense retries; unattended long subagents; tuple-compare
-   JSON dump values; cross-process build diffs without pinned candidate
-   order.
+1. **Committed next, in this order, measuring between:**
+   a. `bridge_free` slope guard — additive only, reject a bridge whose dust
+      slope-couples a foreign net. Do not touch bridge emission or the dust
+      plan (flat byte-identity depends on it). Measure: micro1 single-shot +
+      suite.
+   b. Window the 3D pass — window sized from the flat pass's blocking frontier
+      bounding box + generous margin (NOT a fixed radius; measured escapes are
+      24–40 elevated cells). One pass, not the 12/40/None ladder. Keep-or-
+      revert: if a seal full-field 3D solved becomes unroutable, revert and
+      report which sealer.
+2. **Measure before optimizing** (owner question, still open): where do the
+   1740 searches actually go — flat-first attempts vs 3D attempts vs
+   re-attempts after rip-up? If every re-route re-proves "flat can't do this"
+   from scratch, memoizing that per (net, source, goal) may dwarf the window
+   win. Count by phase first.
+3. **Then Attempt 2** (spine-on-top) as its own attempt/diff — do not fold it
+   into Attempt 1.
+4. **Sync remote** — branch diverged (ahead 17, behind 1); needs explicit
+   force-with-lease approval. Nothing at risk locally either way.
+5. **Do NOT:** change shipping `layout_retry` defaults (12×3 is a product
+   decision); fold spine into the 3D diff; run dense builds in the foreground
+   (background + 600s-silence kill, `cmd /c start /b ... > log 2>&1`);
+   compare builds across processes without the pinned candidate order (done
+   now, keep it); trust mental tile coordinates (`debug.py` + dumps); merge
+   `scratch/` or the untracked plans; compare speed across runs that die at
+   different walls.
