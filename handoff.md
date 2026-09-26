@@ -124,9 +124,11 @@
    force-with-lease approval. Nothing at risk locally either way.
 2. **Timed sources, continued** — plates/observers only if a build needs
    them; locking/burnout/containers/pistons stay YAGNI until consumed.
-3. **CPU dense-green** — owner picks: (a) interleaved lanes, (b) routine
-   bridges, (c) park. Gating bar: all 8 `.txt` verify green, one lever
-   per input, suite green. Never a blind patch.
+3. **CPU dense-green** — PARKED (ponytail pick 2026-09-26: no consumer,
+   flat-field family exhausted with data). Reopen only for a real build
+   needing it, interleaved lanes first. Gating bar if reopened: all 8
+   `.txt` verify green, one lever per input, suite green. Never a blind
+   patch.
 4. **Do NOT:** add maze heuristics; trust mental tile coordinates
    (`debug.py` + dump queries instead); merge `scratch/` or plans;
    foreground dense retries; unattended long subagents; tuple-compare
