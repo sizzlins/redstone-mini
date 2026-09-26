@@ -38,21 +38,50 @@
     `((5,1,12),13), ((5,1,13),14), ((5,1,14),15), ((6,1,12),12)…`). Different
     failure class than before: this is an electrical defect with the evidence
     printed, not a routing wall.
-  - **alu1: RED at routing** — `no route for B: (34,176) -> (30,30)`, a 146-cell
-    input run. This is the input-distribution wall (what Attempt 2 targets).
-    Its stage-2 full retry is **computationally out of reach**: grown fields
-    (grow 1/2) ran a single attempt >15 min; killed on the 600s-silence rule
-    at 17 min of silence. alu4 / ctrl_decode / cpu4 were never reached.
-  - **micro1's real blocker is a ring oscillator in the ROUTER's topology, not
-    a sim artifact** (measured, see `4fba2bd`'s diagnostic): churn set is 485
-    cells (397 at y=1, 37 at y=2, 51 at y=3) with **854 same-level edges vs 10
-    slope edges** among them. The loop is closed by ordinary same-level
-    feedback; the chip/slope coupling rule is not what holds it up. So the fix
-    is a router constraint (no edge closing a cycle back into its own net's
-    driver), NOT a sim change. The 6 churning loop torches are tile-internal
-    (AND's NOR torch, LATCH cross-coupling) — they flip because their inputs
-    churn. Which adjacency closes the loop is NOT yet traced; per the owner's
-    cap, untraced = not a single guard = stop, go to Attempt 2.
+  - **LADDER VERDICT: 3D FINISHES micro1.** `micro1 GREEN 29.7s ticks=36
+  blocks=1963 field=(229,44) y>=2=90 inputs=4 dupInputLevers=none` — verifies
+  green, single lever per input, 90 elevated wire cells doing real work.
+  **This was never a router fault: the sim was lying.** See the retraction
+  below; the builds were correct for several commits and the verifier's fixed
+  settling budget was rejecting them.
+- **micro1's "sim not settling" was a BUDGET artifact, not an oscillator**
+  (measured, `6ae2a74`). The sim capped settling at 500 ticks / 20000 steps; a
+  dense build legitimately needs more (a 40-cell boosted run alone costs 40
+  ticks), so it expired mid-convergence and raised "not settling", which reads
+  like a topology fault. Raise the caps and the same build settles in 0.4s
+  with `ticks=36`. Caps are now env knobs defaulting to 5000 / 300000.
+- **RETRACTED — do not re-derive this.** I diagnosed micro1 as "a real ring
+  oscillator in the router's topology" from a churn heuristic (cells changing
+  value ≥3 times). That inference was **wrong**: in a converging system a cell's
+  value can change many times as its neighbours settle, so churn is not
+  evidence of oscillation. The traced 16-node ring is the LATCH's cross-coupled
+  NOR pair — a legitimate structure, present in green `latch_sr` too. No router
+  feedback loop was ever found.
+- **alu1: still RED at routing** — `no route for B: (34,176) -> (30,30)`, a
+  146-cell input run. This is the input-distribution wall and the target for
+  **Attempt 2 (spine-on-top)**. Its stage-2 full retry is computationally out of
+  reach: grown fields ran a single attempt >15 min; killed on the 600s-silence
+  rule. Do not pay for a grown field to discover that.
+- alu4 / ctrl_decode / cpu4: pending in the ladder at handoff time.
+
+## Method note (the part worth keeping)
+- **540s → 113s came from fixing two real bugs, NOT from the margin trim.**
+  `try_bridge` left orphaned elevated dust when a hop failed (the OPEN that
+  made all 36 attempts redundant), and the cover pass walked a tree while
+  assuming a chain. Both were found by reading failures, not by tuning.
+  "Read the failures, don't tune" is the method that worked.
+- **A diagnostic that prints leftovers is not a diagnostic — and a wrong
+  diagnostic is worse than none.** Three layers of this, in order:
+  1. `sim not settling` printed `live` (leftovers at timeout). On a
+     not-quite-settling build that is a monotone decay gradient naming nothing.
+  2. I "fixed" it to print the churn set + a same-level/slope edge split. That
+     is a better message and it still pointed at a phantom, because churn ≠
+     oscillation. A diagnostic must be validated against a case where you
+     already know the answer.
+  3. The actual fault was one layer up: the *budget* that decides "not
+     settling" was a constant sized for small builds. When a verdict is
+     "impossible", check the threshold before theorising about the system.
+
 
 ## Method note (the part worth keeping)
 - **540s → 113s came from fixing two real bugs, NOT from the margin trim.**
@@ -191,28 +220,25 @@
 - **Not committed by policy:** the 4 untracked plans, all of `scratch/`.
 
 ## What next (in order)
-1. **micro1's blocker is now the sim, not the router: `sim not settling`** on
-   builds that route completely. That is a live-wire loop and the sim already
-   prints the cells — cheapest possible evidence. Name the loop before
-   building anything: is it a 3D flight adjacent to a torch block, a
-   powered-pillar loop, or a same-net wire ring? **Do this before Attempt 2** —
-   it is the last blocker between the router and a green micro1, and it is one
-   investigation, not a mechanism.
-2. **Attempt 2 (spine-on-top placement)** for the *other* blocker, alu1's
-   `no route for B: (34,176) -> (30,30)` — a 146-cell input run. Own
-   attempt/diff, keep-or-revert as always.
-3. **Perf is parked.** Two structural bugs were found and fixed by reading the
-   failures, not by tuning: the orphaned bridge hop and the cover-pass chain.
-   That is where the 540s → 113s came from. Optimizing further before a dense
-   build is green is premature (measured: the 3D pass is 0.9% of searches; the
-   margin ladder was 2/3 and is now gone on retries). Revisit only if a build
-   is green and still too slow to iterate on.
-4. **Sync remote** — ahead 22, behind 1; needs explicit force-with-lease
+1. **Attempt 2 (spine-on-top placement)** — the only red left that is a routing
+   wall: alu1's `no route for B: (34,176) -> (30,30)`, a 146-cell input run.
+   Own attempt/diff, keep-or-revert as always. **Do not pay for a grown field
+   to discover that**: grow>=1 burned >15 min for one alu1 attempt, so measure
+   at grow 0 first and treat grow as the last resort it is.
+2. **Finish the ladder** for alu4 / ctrl_decode / cpu4 with the corrected sim
+   budget. micro1 is green; alu1 is the known wall; the other three are unknown
+   and one of them may already pass.
+3. **Perf is parked.** The 540s → 113s came from two real bugs, and the
+   remaining search cost is 0.9% 3D / rest flat re-litigation. Optimizing
+   before the ladder is complete is premature.
+4. **Sync remote** — ahead 27ish, behind 1; needs explicit force-with-lease
    approval. Nothing at risk locally.
 5. **Do NOT:** change shipping `layout_retry` defaults (12×3 is a product
-   decision — the *ladder harness* uses 1×1 then 12×3, which is a test choice);
-   fold spine into the 3D diff; run dense builds in the foreground; compare
-   builds across processes without the pinned candidate order; compare timings
-   across runs that die at different walls, or on a loaded machine (both
-   retracted errors live in this file); merge `scratch/` or the untracked plans.
+   decision — the ladder harness uses 1×1 then 12×3, a test choice); fold spine
+   into the 3D diff; run dense builds in the foreground; treat a "not
+   settling"/"impossible" verdict as a system fact without checking the
+   threshold that produced it; compare builds across processes without the
+   pinned candidate order; compare timings across runs that die at different
+   walls or on a loaded machine; merge `scratch/` or the untracked plans.
+
 
