@@ -1124,11 +1124,27 @@ def layout(recipe, seed=None, grow=0):
     # solved net A and killed net R (measured, latch_sr).
     stuck = None
     deferred = []
+    # ponytail: total search budget for one layout. Measured post-deferral:
+    # alu1 spends 98.6% of its searches re-searching flat after a rip (3D is
+    # 0.6%), and 3842 searches is >300s on a 20k-cell field — so bounding the
+    # *3D escalation* (the obvious suspect) would buy ~1%. Bound the effort
+    # instead, and raise the NORMAL error so the debug dump still lands (a
+    # census reads the dump, so an exotic exception would throw it away).
+    # Default 0 = unlimited, i.e. no behaviour change; set it to bound a
+    # runaway dense attempt.
+    _scap = int(_os.environ.get("REDSTONE_SEARCH_CAP", "0"))
+    _scount = [0]
     try:
         for use3d in ((False, True) if _PASSES == 2 else (True,)):
             if not pending:
                 break
             while pending:
+                if _scap and _scount[0] >= _scap:
+                    raise RuntimeError(
+                        f"search budget exceeded ({_scap} A* calls) with "
+                        f"{len(pending)} task(s) unrouted — raise "
+                        f"REDSTONE_SEARCH_CAP or narrow the build")
+                _scount[0] += 1
                 s, t, net = pending.pop(0)
                 try:
                     route(s, t, net, use3d)
