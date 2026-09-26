@@ -427,6 +427,20 @@ def layout(recipe, seed=None, grow=0):
                     pass
                 else:
                     raise RuntimeError(f"wire {net} hits guarded {cell}")
+            # ponytail: same-level adjacency guard. A* guarantees a routed path
+            # never side-touches a foreign net (touches_foreign), but every
+            # OTHER stamp goes through here with no search at all: output taps,
+            # bank stubs, tile port rows, XOR side wires, the cover tail. Those
+            # were checked only for "a foreign wire sits ON this cell", never
+            # "one sits next to it" — so a routed net could end up touching an
+            # output tap. Measured: `SHORT: m0 touches Y at (223,1,13)
+            # ->(222,1,13)`, Y's cell in no routed path at all.
+            for dx, dz in DIRS:
+                nb = wires.get((cell[0] + dx, cell[1], cell[2] + dz))
+                if nb is not None and nb != net and not (
+                        (cell[0] + dx, cell[2] + dz) in junctions
+                        and net in junctions[(cell[0] + dx, cell[2] + dz)]):
+                    raise RuntimeError(f"wire {net} touches {nb} beside {cell}")
             wires.setdefault(cell, net)
 
     def route(a, b, net, use3d=True):
@@ -1109,6 +1123,7 @@ def layout(recipe, seed=None, grow=0):
     # pillars eat the ground columns a later flat net needed — the flight
     # solved net A and killed net R (measured, latch_sr).
     stuck = None
+    deferred = []
     try:
         for use3d in ((False, True) if _PASSES == 2 else (True,)):
             if not pending:
@@ -1268,6 +1283,12 @@ def layout(recipe, seed=None, grow=0):
             if not (0 <= lx[0] < W and 0 <= lx[1] < D):
                 continue
             if lx in solid or (lx[0], 1, lx[1]) in wires or fx in solid or (fx[0], 1, fx[1]) in wires:
+                continue
+            # The tap is stamped after routing, so no route could avoid it —
+            # it has to dodge instead, and "occupied" now means a foreign wire
+            # BESIDE the tap as well as on it (stamp_wire's adjacency guard).
+            if any(wires.get((fx[0] + ax, 1, fx[1] + az)) not in (None, name)
+                   for ax, az in DIRS):
                 continue
             stamp_wire([fx], name)  # touches out stub: zero-wire tap
             blocks.append((lx[0], 1, lx[1], "minecraft:redstone_lamp"))
