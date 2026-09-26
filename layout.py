@@ -50,6 +50,51 @@ def _support(cell, net, solid, wires, sup, reps, guard):
     return b
 
 
+def _coupling_forb(wires, net, starts, goal, junctions, cob, air):
+    """Cells that would couple to a foreign net: a same-level side touch, or a
+    true slope link (support under the upper + no lid over the lower, sim's
+    rule). Built from the FOREIGN side, so each foreign wire visits 4
+    same-level neighbours (+8 slope partners when elevated dust exists)
+    instead of every candidate probing 12 neighbours.
+
+    Depends only on the net, the wires, the junctions and the support set, so
+    one build serves a whole route (all three margin windows), not one search.
+    """
+    airstrip = set()
+    for ax, ay, az in air:
+        airstrip.update(((ax + 1, az), (ax - 1, az), (ax, az + 1), (ax, az - 1)))
+    fwire = {c for c, n in wires.items() if n != net}
+    forb = set()
+    addforb = forb.add
+    jget = junctions.get
+    for c in fwire:
+        cx, cy, cz = c
+        # every exemption in the per-candidate form is stated about the
+        # FOREIGN cell (it can never be `prev`, but it CAN be a foreign-held
+        # port that sits in `starts`, and the goal may be foreign-owned).
+        x_exempt = c in starts
+        for dx, dz in DIRS:
+            nx, nz = cx + dx, cz + dz
+            if not x_exempt:
+                j = jget((cx, cz))       # OR junction: wired-OR is the gate
+                if not (j and net in j):
+                    addforb((nx, cy, nz))
+            if x_exempt or c == goal:
+                continue
+            # foreign c is the LOWER cell, candidate the upper one (own
+            # support comes from move legality, so only the lid over the
+            # foreign is tested).
+            if (cx, cy + 1, cz) not in cob:
+                addforb((nx, cy + 1, nz))
+            # foreign c is the UPPER cell, candidate the lower one. Support
+            # belongs UNDER the upper, the lid sits OVER the lower. A y=1
+            # candidate can only couple if it is in the elevated-dust strip.
+            if (cx, cy - 1, cz) in cob and (nx, cy, nz) not in cob:
+                if cy > 2 or (air and (nx, nz) in airstrip):
+                    addforb((nx, cy - 1, nz))
+    return forb, fwire
+
+
 def _straight3(a, b, c):
     """Three collinear cells at one level (booster/repeater sites). Ground and
     pillars alike: a repeater on a pillar is legal physics (the route already
@@ -133,40 +178,42 @@ def astar(starts, goal, net, W, D, solid, rings, wires, junctions, margin=None, 
     # same-level neighbours (+8 slope partners when elevated dust exists)
     # instead of every candidate probing 12 neighbours. Per search: ~1.3k
     # cheap ops instead of 12.8k x ~6 dict.gets (was 63M gets on alu1).
-    fwire = {c for c, n in wires.items() if n != net}
     _XCHECK = _os.environ.get("REDSTONE_XCHECK") == "1"
-    forb = set()
-    addforb = forb.add
-    jget = junctions.get
-    wg = wires.get
-    for c in fwire:
-        cx, cy, cz = c
-        # every exemption in the per-candidate form is stated about the
-        # FOREIGN cell (it can never be `prev`, but it CAN be a foreign-held
-        # port that sits in `starts`, and the goal may be foreign-owned).
-        x_exempt = c in starts
-        for dx, dz in DIRS:
-            nx, nz = cx + dx, cz + dz
-            if not x_exempt:
-                j = jget((cx, cz))       # OR junction: wired-OR is the gate
-                if not (j and net in j):
-                    addforb((nx, cy, nz))
-            if x_exempt or c == goal:
-                continue
-            # foreign c is the LOWER cell, candidate the upper one (own
-            # support comes from move legality, so only the lid over the
-            # foreign is tested).
-            if (cx, cy + 1, cz) not in cob:
-                addforb((nx, cy + 1, nz))
-            # foreign c is the UPPER cell, candidate the lower one. Support
-            # belongs UNDER the upper (sim's rule), the lid sits OVER the
-            # lower. A y=1 candidate can only couple if it is in the strip.
-            if (cx, cy - 1, cz) in cob and (nx, cy, nz) not in cob:
-                if cy > 2 or (air and (nx, nz) in airstrip):
-                    addforb((nx, cy - 1, nz))
+    forb, fwire = _coupling_forb(wires, net, starts, goal, junctions, cob, air)
     def lid(cell):
         return cell in cob  # any pillar: tile, bridge, or stamped
+    # Same hoist for the static obstacles: solid, rings-without-net and the
+    # stamped ground pillars are fixed for the search, and all three lead to
+    # the same `return False`, so they merge into ONE membership test. The
+    # junction allow-check stays a lookup because it can override them.
+    hard = {(x, 1, z) for (x, z) in solid}
+    for (x, z), v in rings.items():
+        if net not in v:
+            hard.add((x, 1, z))
+    for (sx, sy, sz) in sup:
+        if sy == 1:
+            hard.add((sx, 1, sz))
+    jget2 = junctions.get
+    wg2 = wires.get
     def ok(cell):
+        x, y, z = cell
+        if not (x0 <= x <= x1 and z0 <= z <= z1 and 1 <= y <= _H):
+            return False
+        if cell == goal:
+            return True
+        if wg2(cell) not in (None, net):
+            return False
+        if y == 1:
+            j = jget2((x, z))
+            if j is not None and net in j:
+                return True
+            if cell in hard:
+                return False
+        elif cell in cob:
+            return False  # inside a pillar (tile/bridge/stamped): no dust here
+        return True
+
+    def _unused_ok_reference(cell):
         x, y, z = cell
         if not (x0 <= x <= x1 and z0 <= z <= z1 and 1 <= y <= _H):
             return False
@@ -184,39 +231,8 @@ def astar(starts, goal, net, W, D, solid, rings, wires, junctions, margin=None, 
             if (x, 1, z) in sup:
                 return False
         elif cell in cob:
-            return False  # inside a pillar (tile/bridge/stamped): no dust here
-        return True
-    def touches_foreign(cell, prev):
-        # same-y side touch couples; diagonal +-1 couples only via a true
-        # slope link (support under upper + no lid over lower). Stacked or
-        # unsupported y-adjacency never links, so overflight stays legal.
-        #
-        # ponytail: ONE set lookup, not ~12 dict probes. The predicate depends
-        # only on the cell, the foreign wires and the support/lid sets — all
-        # fixed for the whole search — so `forb` is built once per search
-        # (O(foreign wires x 8)) and the per-candidate cost collapses from
-        # ~6 dict.gets to a single membership test. Measured on alu1: 10.1M
-        # calls / 63M dict.gets, i.e. the entire layout cost.
-        if cell not in forb:
             return False
-        if blocked is not None:
-            x, y, z = cell
-            for dx, dz in DIRS:
-                m = (x + dx, y, z + dz)
-                if m == prev or m not in fwire:
-                    continue
-                if y == 1:
-                    # blame the ring, exactly as the 2D code did: a closed
-                    # loop far from the goal seals just as dead as a wall on
-                    # the goal itself.
-                    for dx2, dz2 in DIRS:
-                        k = (m[0] + dx2, 1, m[2] + dz2)
-                        if k != cell and k in wires and wires[k] != net:
-                            blocked.add(k)
-                else:
-                    blocked.add(m)
         return True
-
     def _unused_touches_foreign_reference(cell, prev):
         # same-y side touch couples; diagonal +-1 couples only via a true
         # slope link (support under upper + no lid over lower). Stacked or
@@ -286,6 +302,8 @@ def astar(starts, goal, net, W, D, solid, rings, wires, junctions, margin=None, 
             dns = () if (flat_only or y <= 1) else (((x + dx, y - 1, z + dz), _STEPCOST),)
             for m, step in (((x + dx, y, z + dz), 1),) + ups + dns:
                 if not ok(m):
+                    if _XCHECK and ok(m) is not _unused_ok_reference(m):
+                        raise AssertionError(f"hard-set merge differs at {m}")
                     continue
                 mx, my, mz = m
                 if my != y:
@@ -302,15 +320,27 @@ def astar(starts, goal, net, W, D, solid, rings, wires, junctions, margin=None, 
                 if m == goal and (m[0], m[2]) in junctions and net in junctions[(m[0], m[2])]:
                     pass  # OR junction: wired-OR is the gate
                 else:
-                    _tf = touches_foreign(m, cell)
+                    _tf = m in forb
                     if _XCHECK and _tf is not _unused_touches_foreign_reference(m, cell):
                         # Set REDSTONE_XCHECK=1 to run the old predicate beside
                         # the hoisted one on every candidate (it caught three
-                        # inversion bugs: the support cell, the candidate's
-                        # y, and that the junction gate reads the FOREIGN
-                        # column). Keep it green when touching `forb`.
+                        # inversion bugs: the support cell, the candidate's y,
+                        # and that the junction gate reads the FOREIGN column).
+                        # Keep it green when touching `forb` or this test.
                         raise AssertionError(f"forb inversion differs at {m}")
                     if _tf:
+                        if blocked is not None:
+                            for dx, dz in DIRS:
+                                fm = (mx + dx, my, mz + dz)
+                                if fm == cell or fm not in fwire:
+                                    continue
+                                if my == 1:
+                                    for dx2, dz2 in DIRS:
+                                        k = (fm[0] + dx2, 1, fm[2] + dz2)
+                                        if k != m and k in wires and wires[k] != net:
+                                            blocked.add(k)
+                                else:
+                                    blocked.add(fm)
                         continue
                 ng = g + step
                 if congest:
