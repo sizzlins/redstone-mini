@@ -274,7 +274,7 @@ def bridge_plan(fx, fz, axis):
     return feet, supports, dusts
 
 
-def bridge_free(wires, solid, repeaters, guard, W, D, fx, fz, axis, net):
+def bridge_free(wires, solid, repeaters, guard, W, D, fx, fz, axis, net, cond=()):
     # ponytail: single bridge shape; any footprint collision -> no bridge,
     # the router detours instead. Full 3D search if hops ever dominate.
     if wires.get((fx, 1, fz)) in (None, net):
@@ -289,6 +289,27 @@ def bridge_free(wires, solid, repeaters, guard, W, D, fx, fz, axis, net):
             return False
         if wires.get((x, y + 1, z)) not in (None, net):
             return False  # 3D: no pillaring under / dust over foreign wire
+    # 3D slope guard: bridge dust is elevated, so it can slope-link a foreign
+    # wire diagonally beside it (sim couples exactly this way: support under
+    # the upper cell, no lid over the lower). The bridge's own supports count
+    # as that support, so a hop over one neighbour shorts the next. Caught
+    # live as `SHORT3D: W slope-links S` — the search never saw it because a
+    # bridge is stamped without consulting the coupling rules.
+    cond2 = set(cond) | set(supports)
+    for x, y, z in dusts:
+        for dx, dz in DIRS:
+            for dy in (1, -1):
+                w = wires.get((x + dx, y + dy, z + dz))
+                if w is None or w == net:
+                    continue
+                if dy == 1:      # foreign dust above ours: support under it,
+                    if ((x + dx, y, z + dz) in cond2     # no lid over ours
+                            and (x, y + 1, z) not in cond2):
+                        return False
+                else:            # foreign dust below ours: support under ours,
+                    if ((x, y - 1, z) in cond2           # no lid over theirs
+                            and (x + dx, y, z + dz) not in cond2):
+                        return False
     for x, y, z in supports:
         if y == 1 and (x, z) in solid:
             return False
@@ -1032,7 +1053,7 @@ def layout(recipe, seed=None, grow=0):
             for axis in prefer:
                 if (fx, fz, axis) in bridged:
                     continue
-                if not bridge_free(wires, solid, repeaters, guard, W, D, fx, fz, axis, net):
+                if not bridge_free(wires, solid, repeaters, guard, W, D, fx, fz, axis, net, cond=cond):
                     continue
                 feet = bridge_stamp(blocks, solid, wires, rings, placed, net, fx, fz, axis)
                 cond.update(bridge_plan(fx, fz, axis)[1])   # its cobble supports
@@ -1385,6 +1406,14 @@ if __name__ == "__main__":
     assert _pl == {(7, 2, 4), (7, 3, 5), (7, 2, 6)}, _pl
     assert bridge_free(_wi, _so, {}, set(), 40, 40, 7, 5, "ns", "C") is False
     assert bridge_free(_wi, _so, {}, set(), 40, 40, 7, 5, "ew", "C") is False
+    # 3D slope guard FIRES: the ns dust at (7,2,4) sits on support (7,1,4), so
+    # foreign dust one step beside it at (8,1,4) is slope-linked (sim steps
+    # one axis at a time) — that hop would be a short. Same footprint without
+    # the neighbour is fine, and a lid over the neighbour decouples it again.
+    assert bridge_free({(7, 1, 5): "A", (8, 1, 4): "C"}, {}, {}, set(), 40, 40, 7, 5, "ns", "B") is False
+    assert bridge_free({(7, 1, 5): "A"}, {}, {}, set(), 40, 40, 7, 5, "ns", "B") is True
+    assert bridge_free({(7, 1, 5): "A", (8, 1, 4): "C"}, {}, {}, set(), 40, 40, 7, 5, "ns", "B",
+                       cond={(8, 2, 4)}) is True, "a lid over the lower wire decouples it"
     from sim import sim_verify as _sv
     _W, _CB = "minecraft:redstone_wire", "minecraft:cobblestone"
     _xb = [(2, 1, 5, "minecraft:lever")] + [(x, 1, 5, _W) for x in range(3, 10)] + [(10, 1, 5, "minecraft:redstone_lamp")]
