@@ -15,6 +15,12 @@ from recipe import eval_net
 # REDSTONE_ASTAR_CAP, for builds that need more.
 _TICK_CAP = int(_os.environ.get("REDSTONE_SIM_TICKS", "5000"))
 _STEP_CAP = int(_os.environ.get("REDSTONE_SIM_STEPS", "300000"))
+# ponytail: stall window. Progress, not a bigger constant: stale queued events
+# drain for hundreds of steps (measured max_gap 444-662 on a real oscillator),
+# so "no value change for N steps" is a real, separate failure from "still
+# converging" and from "oscillating forever". A stall now reports as a stall
+# instead of masquerading as an oscillator, and fails fast.
+_STALL = int(_os.environ.get("REDSTONE_SIM_STALL", "5000"))
 
 
 def layout_retry(recipe, tries=12, verify=False, grows=3):
@@ -24,7 +30,7 @@ def layout_retry(recipe, tries=12, verify=False, grows=3):
     search, so ship the cheapest verified one.
     Field grows on failure (effectively infinite room, capped at 2000)."""
     last = None
-    for grow in range(grows):
+    for grow in range(grows or 1):
         out = None
         best = None
         for t in range(tries):
@@ -76,6 +82,14 @@ def _run_vec(vec, init, ctx, until=None):
         for c, v in init.get("o", {}).items():
             con[c] = v
     pending, tsched, rsched, ksched, seq, ticks, steps = [], set(), set(), set(), [0], [0], [0]
+    last_change, max_gap = [0], [0]
+
+    def mark():
+        g = steps[0] - last_change[0]
+        if g > max_gap[0]:
+            max_gap[0] = g
+        last_change[0] = steps[0]
+
     flips = {}  # cell -> value changes; the churn set is the oscillator core
 
     def sched(tick, kind, cell):
@@ -241,6 +255,11 @@ def _run_vec(vec, init, ctx, until=None):
     while pending and (until is None or pending[0][0] <= until):
         now, _, kind, c = _hq.heappop(pending)
         steps[0] += 1
+        if steps[0] - last_change[0] > _STALL:
+            raise RuntimeError(
+                f"sim STALLED on {vec}: no value change for "
+                f"{steps[0] - last_change[0]} steps at tick {now} "
+                f"({steps[0]} steps run) — wedged, not oscillating")
         if now > _TICK_CAP or steps[0] > _STEP_CAP:
             # ponytail: name the OSCILLATOR, not the leftovers. `live` is
             # whatever happened to be lit at timeout — on a ring oscillator
@@ -267,7 +286,7 @@ def _run_vec(vec, init, ctx, until=None):
             raise RuntimeError(
                 f"sim not settling on {vec}. churn={len(churn)} levels={lv} "
                 f"edges: same-level={same} slope={slope} "
-                f"loop_torches: {tloop[:6]} "
+                f"loop_torches: {tloop[:6]} max_gap={max_gap[0]} "
                 f"top: {[(c, pw.get(c, 0), flips[c]) for c in churn[:6]]}")
         ticks[0] = max(ticks[0], now)
         if kind == "d":
@@ -275,12 +294,12 @@ def _run_vec(vec, init, ctx, until=None):
             if pw.get(c, 0) != v:
                 pw[c] = v
                 flips[c] = flips.get(c, 0) + 1
-                wake(now, c)
+                mark(); wake(now, c)
         elif kind == "c":
             v, s = cob_state(c)
             if pb.get(c, False) != v or pbs.get(c, False) != s:
                 pb[c], pbs[c] = v, s
-                wake(now, c)
+                mark(); wake(now, c)
         elif kind == "t":
             if (not pb.get(torch[c], False)) != tl.get(c, False) and c not in tsched:
                 tsched.add(c)
@@ -291,7 +310,7 @@ def _run_vec(vec, init, ctx, until=None):
             if tl.get(c, False) != v:
                 tl[c] = v
                 flips[c] = flips.get(c, 0) + 1
-                wake(now, c)
+                mark(); wake(now, c)
         elif kind == "r":
             if rep_on(c) != ron.get(c, False) and c not in rsched:
                 rsched.add(c)
@@ -301,7 +320,7 @@ def _run_vec(vec, init, ctx, until=None):
             v = rep_on(c)
             if ron.get(c, False) != v:
                 ron[c] = v
-                wake(now, c)
+                mark(); wake(now, c)
         elif kind == "k":
             if comp_out(c) != con.get(c, 0) and c not in ksched:
                 ksched.add(c)
@@ -311,7 +330,7 @@ def _run_vec(vec, init, ctx, until=None):
             v = comp_out(c)
             if con.get(c, 0) != v:
                 con[c] = v
-                wake(now, c)
+                mark(); wake(now, c)
     def _lit(cell):
         # ponytail: lamps need pointing-at dust (vanilla arms). End-of-line
         # dust aims at the lamp beyond its tip; a straight run passing

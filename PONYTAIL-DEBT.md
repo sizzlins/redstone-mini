@@ -79,6 +79,18 @@ anti-rot devices themselves, listed for completeness.
   fast while a slow converger still gets its budget.
   trigger: revisit when a build legitimately needs >500 ticks, or when an
   oscillation costs more than the layout that produced it.
+- sim.py:20, stall verdict ("no value change for REDSTONE_SIM_STALL=5000
+  steps"). A progress signal, not another constant: stale queued events drain
+  for hundreds of steps (measured max_gap 444-662 on a real oscillator), so
+  stalling and oscillating are genuinely different failures. ceiling: the
+  threshold is NOT calibrated against a large *converging* build, because
+  there is not one to measure — micro1 is red under the deferral, so we have
+  no dense known-good build whose post-last-change backlog we could bound. A
+  false STALL is possible if a converging dense build leaves >5000 stale
+  queued events after its final change. upgrade: once a dense build settles,
+  measure its worst backlog and set the threshold from that.
+  trigger: revisit when micro1 (or any dense build) goes green again, or if a
+  STALLED verdict ever appears on a build that later settles.
 - sim.py:121, chip-layer dust link rule.
   ceiling: none named (researched physics). upgrade: none named. `no-trigger`
 - sim.py:162, back-to-back repeater chaining.
@@ -99,4 +111,4 @@ anti-rot devices themselves, listed for completeness.
    seal (micro1 red). Upgrade is input fanout chaining or wider band
    pitch. (layout.py:267,679)
 
-32 markers, 23 with no trigger.
+33 markers, 23 with no trigger.
