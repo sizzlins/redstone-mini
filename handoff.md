@@ -38,18 +38,45 @@
     `((5,1,12),13), ((5,1,13),14), ((5,1,14),15), ((6,1,12),12)…`). Different
     failure class than before: this is an electrical defect with the evidence
     printed, not a routing wall.
-  - **LADDER VERDICT: 3D FINISHES micro1.** `micro1 GREEN 29.7s ticks=36
-  blocks=1963 field=(229,44) y>=2=90 inputs=4 dupInputLevers=none` — verifies
-  green, single lever per input, 90 elevated wire cells doing real work.
-  **This was never a router fault: the sim was lying.** See the retraction
-  below; the builds were correct for several commits and the verifier's fixed
-  settling budget was rejecting them.
+  - **3D PROOF POINT — micro1 is GREEN.** `micro1 GREEN 41.9s ticks=36 blocks=1963
+  field=(229,44) y>=2=90 inputs=4 dupInputLevers=none`. 1963 blocks, **90
+  elevated wire cells**, all 4 inputs on a single lever each, sim ticks=36,
+  whole 12x3 ladder in ~42s. This is the number that justifies the whole 3D
+  direction — and it only appeared after the sim budget fix below, i.e. the
+  router was already capable and the *verifier* was wrong.
+- **alu1 failure census (grow 0, seed None) — do this before Attempt 2 next
+  time.** 31 of 42 loads route; **11 fail, and every one of them is a single
+  unreached load**: inputs `B, OP0, OP1` plus gates `AB, U, o1, o2, t0, t1,
+  t2, t3`. Input B alone owns **275 of 758 wire cells (36%)**, concentrated at
+  x=20-40. The `o*`/`t*` gate failures are at x=76-78, **40-50 cells from B's
+  wire** — so they are NOT collateral from B's footprint, they are a separate
+  zone. By the owner's decision rule ("if gate nets fail too, spine-on-top
+  won't touch those"), **spine-on-top alone does not cover alu1.**
+- **The census is a lower bound, and the reason is a second bug (named, fix
+  known, NOT shipped).** The routing loop sets `stuck` and `break`s the whole
+  pass the moment a task fails again, so **exactly one task per layout ever
+  reaches the 3D pass**. Measured on alu1: 7 route attempts over 2 nets, 1
+  three-D search, and the other ~25 nets in the spec **never attempted at
+  all** — which is why 8 gate "failures" are really "never tried". The fix is
+  ~6 lines (defer failures in a list, keep draining, raise at the end).
+- **That fix was tried and REVERTED (keep-or-revert).** It works as intended
+  (3 nets escalated, A alone 9 three-D searches) but it (a) exposes a
+  **ground-level SHORT** — `SHORT: W touches S at (47,1,15)->(47,1,16)`, input W
+  running east-west at z=15 crossing gate S running north-south at z=16, both
+  at y=1, so it is a same-level coupling hole, not a 3D/slope one — and (b)
+  makes each attempt ~8x slower (3.7s -> ~30s) with **no green micro1 in 28+
+  attempts**. Reverted; micro1 green restored immediately (41.9s). **The next
+  step is to name that SHORT** (both cells are plain ground wire: W at
+  (47,1,15) has W east/west and S south; S at (47,1,16) runs north to
+  (47,1,17)). Only then re-apply the deferral fix, and only then re-census
+  alu1 for Attempt 2's real scope.
 - **micro1's "sim not settling" was a BUDGET artifact, not an oscillator**
   (measured, `6ae2a74`). The sim capped settling at 500 ticks / 20000 steps; a
   dense build legitimately needs more (a 40-cell boosted run alone costs 40
   ticks), so it expired mid-convergence and raised "not settling", which reads
   like a topology fault. Raise the caps and the same build settles in 0.4s
-  with `ticks=36`. Caps are now env knobs defaulting to 5000 / 300000.
+  with `ticks=36`. Caps are now env knobs defaulting to 5000 / 300000, with
+  the cost ceiling ledgered in `PONYTAIL-DEBT.md`.
 - **RETRACTED — do not re-derive this.** I diagnosed micro1 as "a real ring
   oscillator in the router's topology" from a churn heuristic (cells changing
   value ≥3 times). That inference was **wrong**: in a converging system a cell's
@@ -57,12 +84,9 @@
   evidence of oscillation. The traced 16-node ring is the LATCH's cross-coupled
   NOR pair — a legitimate structure, present in green `latch_sr` too. No router
   feedback loop was ever found.
-- **alu1: still RED at routing** — `no route for B: (34,176) -> (30,30)`, a
-  146-cell input run. This is the input-distribution wall and the target for
-  **Attempt 2 (spine-on-top)**. Its stage-2 full retry is computationally out of
-  reach: grown fields ran a single attempt >15 min; killed on the 600s-silence
-  rule. Do not pay for a grown field to discover that.
-- alu4 / ctrl_decode / cpu4: pending in the ladder at handoff time.
+- alu4 / ctrl_decode / cpu4: **never measured.** The ladder was killed on
+  alu1's grown fields before reaching them. Cheap stage-1 reads are ~2s each;
+  run them before planning anything.
 
 ## Method note (the part worth keeping)
 - **540s → 113s came from fixing two real bugs, NOT from the margin trim.**
@@ -220,25 +244,27 @@
 - **Not committed by policy:** the 4 untracked plans, all of `scratch/`.
 
 ## What next (in order)
-1. **Attempt 2 (spine-on-top placement)** — the only red left that is a routing
-   wall: alu1's `no route for B: (34,176) -> (30,30)`, a 146-cell input run.
-   Own attempt/diff, keep-or-revert as always. **Do not pay for a grown field
-   to discover that**: grow>=1 burned >15 min for one alu1 attempt, so measure
-   at grow 0 first and treat grow as the last resort it is.
-2. **Finish the ladder** for alu4 / ctrl_decode / cpu4 with the corrected sim
-   budget. micro1 is green; alu1 is the known wall; the other three are unknown
-   and one of them may already pass.
-3. **Perf is parked.** The 540s → 113s came from two real bugs, and the
-   remaining search cost is 0.9% 3D / rest flat re-litigation. Optimizing
-   before the ladder is complete is premature.
-4. **Sync remote** — ahead 27ish, behind 1; needs explicit force-with-lease
+1. **Name the ground-level SHORT** (`W touches S at (47,1,15)->(47,1,16)`,
+   both y=1) before touching anything else. It is a same-level coupling hole,
+   not a slope/3D one, and it is what blocks the escalation fix. Cheapest next
+   probe: are those two cells both routed-path cells, or is one a phase-1 stub
+   or a cover-pass tail cell? That distinguishes "the search let it happen"
+   from "a stamp bypassed the search" — the fix location differs entirely.
+2. **Re-apply the deferral fix** (the ~6-line loop change, described above) once
+   the SHORT is fixed. Then **re-census alu1** — the current census is a lower
+   bound because 25 nets were never attempted, so Attempt 2's scope is still
+   unsettled. Do not start spine-on-top before that.
+3. **Stage-1 reads for alu4 / ctrl_decode / cpu4** (~2s each): one of them may
+   already pass, which would change the priority order.
+4. **Sync remote** — ahead ~28, behind 1; needs explicit force-with-lease
    approval. Nothing at risk locally.
 5. **Do NOT:** change shipping `layout_retry` defaults (12×3 is a product
-   decision — the ladder harness uses 1×1 then 12×3, a test choice); fold spine
-   into the 3D diff; run dense builds in the foreground; treat a "not
-   settling"/"impossible" verdict as a system fact without checking the
-   threshold that produced it; compare builds across processes without the
-   pinned candidate order; compare timings across runs that die at different
-   walls or on a loaded machine; merge `scratch/` or the untracked plans.
+   decision — the ladder harness uses 1×1 then 12×3, a test choice); run dense
+   builds in the foreground (a *fixed* alu1 attempt is ~30s and a grown one
+   >15 min); treat a "not settling"/"impossible" verdict as a system fact
+   without checking the threshold that produced it; build spine-on-top before
+   the census is re-done on a build that actually attempts every net; compare
+   timings across runs that die at different walls or on a loaded machine;
+   merge `scratch/` or the untracked plans.
 
 

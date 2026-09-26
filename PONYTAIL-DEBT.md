@@ -67,10 +67,22 @@ anti-rot devices themselves, listed for completeness.
 
 ## sim.py
 
+- sim.py:16, settling budget raised 500 ticks/20000 steps -> 5000/300000.
+  ceiling: a GENUINE non-settling build (a real oscillation) now costs 10-15x
+  more to detect than it used to — the budget is 15x, so a true oscillator
+  burns 15x the time before it is reported. Right trade (a dense build
+  legitimately needs it: a 40-cell boosted run alone costs 40 ticks, and the
+  old caps expired mid-convergence and misreported dense builds as
+  oscillators, which reads as a router fault and is not one). upgrade: lower
+  the defaults for a fast red-build signal, or detect "no new value for N
+  consecutive steps" instead of a step ceiling, so a real oscillator fails
+  fast while a slow converger still gets its budget.
+  trigger: revisit when a build legitimately needs >500 ticks, or when an
+  oscillation costs more than the layout that produced it.
 - sim.py:121, chip-layer dust link rule.
   ceiling: none named (researched physics). upgrade: none named. `no-trigger`
 - sim.py:162, back-to-back repeater chaining.
-  ceiling: none named. upgrade: none named. `no-trigger`
+  ceiling: none named (researched physics). upgrade: none named. `no-trigger`
 - sim.py:330, sim scope flat builds + chip-layer verticals, vanilla delays.
   ceiling: no full 3D. upgrade: none named. `no-trigger`
 - sim.py:399, delay-4 self-check (check-marker, not a shortcut). `no-trigger`
@@ -87,4 +99,4 @@ anti-rot devices themselves, listed for completeness.
    seal (micro1 red). Upgrade is input fanout chaining or wider band
    pitch. (layout.py:267,679)
 
-31 markers, 23 with no trigger.
+32 markers, 23 with no trigger.
