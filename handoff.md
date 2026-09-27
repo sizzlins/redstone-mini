@@ -1,4 +1,4 @@
-# Handoff — redstone-mini (2026-09-27, sensing unmirrored, s3 green, D-latch 7/7)
+# Handoff — redstone-mini (2026-09-27, vanilla gaps closed: lamp/comp/burnout)
 
 > **Read this section first.** It is the state of play; everything below is
 > the detailed history, kept for the evidence.
@@ -16,9 +16,10 @@ correct under those rules, (3) only then make the dense builds
 
 ## Current state
 
-Branch `phase2-design`, **71 ahead / 1 behind** `origin` (remote sync needs
-explicit approval). Tree clean apart from untracked plan docs. HEAD `7ee8faf`.
-Suite green: `recipe.py`, `sim.py` (now with the `dlatch` canary), `layout.py`,
+Branch `phase2-design`, **73 ahead / 1 behind** `origin` (remote sync needs
+explicit approval). Tree clean apart from untracked plan docs. HEAD `8da0cb1`.
+Suite green: `recipe.py`, `sim.py` (now with `dlatch`, `pointing-mirror`,
+`lamp-sources`, `comp-side-dust` and `torch-burnout` canaries), `layout.py`,
 `serve.py --check`.
 
 **Steps 1–4 of the 100%-vanilla plan are landed and committed** (four separable
@@ -49,8 +50,36 @@ oracle in place of the in-game test.
 | **Single-lever panel** | **VERIFIED, and now enforced electrically** (`c1fe1c5`). An input feeding N gates costs **1** lever: all 9 recipes, and the load is reachable from that one lever by walking the real net graph. Measured saving: alu4 43→10 levers, alu1 15→5, cpu4 30→7, ctrl_decode 12→3, micro1 8→4. The old bars counted *labels* only; the new one also proves no lever shorts a second net. Two negative controls fire. |
 | **One-circuit-per-net** | **ATTEMPTED AND REJECTED — the check does not discriminate** (see "What failed"). The idea is right; a probe implementation of it flags `example_xor`, which the suite accepts. The invariant belongs in `sim.py` beside `dust_lvl`, not in a probe that re-derives the coupling rules. |
 | Byte-identity canary | `e79bfa6d` / `b4a9cc9b` / `40730f4c` unchanged; xor **`8de8a1ef`→`59638d5c` (`32c54b6`, 332→344 blocks, y>=2 47→0)** — its old route crossed a tile repeater cell, now illegal, so it cascades flat (+12 blocks). Honest movement, same bug class. Bridge splice still fires on every D-latch seed, which the new `dlatch` canary locks. |
+| **Lamp sources — 3 gaps closed** | `_lit` only fired on end/isolated dust. Wiki (+cmc engine): dust on top lights, powered block beside lights, lit free torch lights. All three now in `_lit` (+rblk/lever same sentence), each with a canary. Passing-line stays dark (both agree). |
+| **Comparator sides — dust counts** | `comp_in` ignored side dust; vanilla/cmc count it at full level (subtract clock with dust sides works in-game). 3-line branch. Turned `example_xor` red on all 7 seeds (b-wire beside C2 south: side 5 ≥ rear 3 → out 0; vanilla agrees) — see layout fallout below. Side torch ignored by both ours and cmc; left alone. |
+| **Torch burnout — missing, now raised** | Hunts raised `not settling`; vanilla burns the torch dark (>8 OFF-toggles/60 game ticks = 30 sim ticks). Counter + loud `TORCH BURNOUT` raise; hunts terminate vanilla-identically (dark) instead of hanging. First version (all flips, 60-window) false-fired on a healthy latch settle — evidence forced OFF-only/30-tick correction. |
+| **XOR side-wall fallout — FIXED** | Layout parked b-wire beside C2's side on all 7 seeds (tile assumed "dust never counts"). All four comparator side cells now wall in `solid` as `cmpside`: search/bridge/taps route around, tile stamps already done. All 7 XOR seeds green, suite green, XCHECK green. |
 
 ## What changed
+
+### Vanilla gaps closed: lamp/comp/burnout (`d506b74` + `8da0cb1`)
+
+- **Method:** every claim reproduced minimally first (`scratch/vanilla_audit.py`,
+  kept gitignored); wiki + cmc engine (`src/core/redstone/engine.js`, fetched
+  read-only — no repo installed, not needed) as oracles. Side torch left
+  alone *because* cmc ignores it too; repeater locking/delays, comp delay-2,
+  containers skipped (never trigger in our builds — stated, not built).
+- **Lamp (3 real gaps, all safe-direction):** dust-on-top, powered-block-beside,
+  free-torch-beside all ignored. Each is a few lines in `_lit` + canary.
+  Passing-line stays dark (wiki agrees); cross/dot already worked.
+- **Comp sides (1 real gap, dangerous direction):** side dust ignored → false
+  green where vanilla suppresses. Fixed (3 lines); turned XOR red everywhere
+  (true coupling, proven by provenance: b-wire at C2 south, side 5 ≥ rear 3).
+- **Burnout (missing mechanic):** counter + `TORCH BURNOUT` raise. Corrected
+  pre-commit from all-flips/60 to OFF-only/30 ticks after evidence (healthy
+  latch settle flips 9× total but only 4 OFFs — vanilla would not burn it).
+- **Layout fallout (1 real bug, fixed):** all-four comparator side cells wall
+  as `cmpside` in `solid` (new kind, inert everywhere except search/stamp/
+  bridge/tap/placement walls). Exact cells only, no halo (halo would starve
+  the rear feed at (9,12)). All 7 XOR seeds green.
+- **Vindicated, no change:** repeater-loop latching (vanilla latches too —
+  burnout is torch-only), side torch (cmc agrees), weak-block feeding dust
+  (`pbs` is strong-only already), comparator formulas/facing (match wiki).
 
 ### Sensing unmirrored + tiles funnelled (`7ee8faf` — D-latch 7/7, s3 green)
 
@@ -596,6 +625,14 @@ commits above):
   untouched (a settling verify is 0.03s, so `dust_lvl` was measured and
   declined; verify timings re-measured after the pointing change and unchanged
   at 6–16 ms).
+- `sim.py` — **`d506b74` vanilla gaps (this session):** `_lit` gains dust-on-top,
+  powered-block, free-torch, rblk, lever branches + canaries; `comp_in` side
+  dust branch + canary; torch-burnout counter + loud raise + canary. Deliberately
+  NOT built: repeater locking/delays, comp delay-2, containers, side torch.
+- `layout.py` — **`8da0cb1` cmpside wall (this session):** the four comparator
+  side cells per XOR tile stamp `("cmpside", o)` in `solid` (new kind, inert
+  everywhere except the wall set). Exact cells, no halo (halo would starve the
+  rear feed).
 - `layout.py` — **`1d42c7b` the LATCH S-row repeater**, **`701ea5b` the bridge-hop
   splice**, **`c474ad3` its chain assert**, and **`c1fe1c5` the `panel-wire`
   canary** (this session). The first three are product changes; all three are
@@ -640,6 +677,12 @@ commits above):
   `probe_hold.py` (per-tick trace, transitions only; prints the S/R mutual
   exclusion), `probe_leak.py <seed>` (per-phase net breakdown; note two of its
   own labels are wrong, see the instrument traps).
+- **Vanilla-gap probes (this session).** `scratch/vanilla_audit.py` — the nine
+  known-answer cases (all pass now; keep as the oracle checklist).
+  `scratch/compdiag.py` + `scratch/compmap.py` — comparator side/rear anatomy
+  dumps. `scratch/xorscope.py` — XOR seeds × sim verdicts + b-pergola trace.
+  `scratch/burnphase.py`, `scratch/fliptime.py`, `scratch/fliptime2.py` —
+  torch flip timelines (until-stepped; no product edits needed for traces).
 
 ### Environment notes (cost me real time; do not relearn)
 
@@ -675,13 +718,18 @@ branches cost very differently. Items 1+ do not depend on the answer.
 2. **DONE — census re-run: corridor conclusion survives (67→61, NO-ATTEMPT
    pinned at 41).** The arrival fixes cost 0 corridor and moved no dense
    needle, as predicted.
-3. **DONE — s3 GREEN (first ever), export-rt open.** s5 1-mismatch and s4
-   OPEN T0 fragment are the next two walls (below). s0/s1/s2 need uncapped
-   re-measure post-mirror (their walls predate it).
+3. **DONE — s3 FULL BAR CLOSED (first green dense build).** Layout green +
+   verify green (ticks=42, 8 vectors) + export-rt green (1026/1026,
+   `scratch/s3export.py`). s5 1-mismatch and s4 OPEN T0 fragment remain.
 3b. **s5 1-mismatch (D1W1B1OP1, Y False want True)** and **s4 OPEN T0
    2-cell fragment ((173,12),(171,12))**: both new post-mirror, both small.
    Do these before any corridor work.
-3c. **alu4 at grows=2: 222 pending at 3k searches (measured pre-mirror).**
+3c. **Re-validate dense verdicts under the new sim.** Every SIM-FAIL below
+   predates this session (old sim ignored side dust and never burned):
+   s5/s4/s0/s1/s2 walls, micro1 seed sweep. Routing verdicts (census,
+   NO-ATTEMPT counts) are unaffected (search untouched). s3's bar was closed
+   pre-change; re-run `scratch/s3export.py` if touching export.
+3d. **alu4 at grows=2: 222 pending at 3k searches (measured pre-mirror).**
    Budget class; grows=3 not worth trying. Re-run post-mirror only if cheap.
 4. **DONE (hygiene) — all-or-nothing hops landed; S wall reclassified.**
    Feet guard tried and reverted (no effect). The pocket is real.
@@ -702,8 +750,8 @@ branches cost very differently. Items 1+ do not depend on the answer.
    only a mechanism that *creates* space. Discriminator unchanged: NO-ATTEMPT
    drops without no-search rising 1:1. Do **not** re-run any
    input-distribution variant — measured to relocate the starvation.
-10. **Housekeeping**: `origin` sync is **61 ahead / 1 behind** and still needs
-   explicit approval. The checked-in demo artifacts have been regenerated with
+10. **Housekeeping**: `origin` sync is **73 ahead / 1 behind** and still needs
+explicit approval. The checked-in demo artifacts have been regenerated with
    wire states (`build.mcfunction` 1317/1317, sampled `.schem` 49/49, 0 bare);
    `32c54b6` leaves them byte-identical (no repeater-cell routes in the demo).
 
