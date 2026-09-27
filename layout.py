@@ -1315,6 +1315,7 @@ def layout(recipe, seed=None, grow=0):
                 cond.update(_sup)
                 condg.update(c for c in _sup if c[1] == 1)
                 fa, fb = sorted(feet, key=lambda f: abs(f[0] - s[0]) + abs(f[2] - s[1]))
+                _npath = len(paths)
                 try:
                     pa = route(s, (fa[0], fa[2]), net)
                     pb = route((fb[0], fb[2]), t, net)
@@ -1343,6 +1344,17 @@ def layout(recipe, seed=None, grow=0):
                     paths[-2] = (_m, net, ())
                     paths.pop()
                 except RuntimeError:
+                    # ponytail: all-or-nothing hop. pa stamps inline, so a
+                    # failed pb left the approach path behind as litter that
+                    # seals later retries (micro1 S feet orphaned at (51,17),
+                    # (43,16), (55,17)). Unwind pa's entry while the hop is
+                    # reverted; no congest (its corridor is fine, pb failed).
+                    if len(paths) > _npath:
+                        _pp, _, _ps = paths.pop()
+                        for _c in _pp:
+                            if wires.get(_c) == net and _c not in placed:
+                                del wires[_c]
+                        _rip(_ps, net)
                     # ponytail: undo the hop. This used to rely on the caller
                     # raising (which discards the whole layout), but the
                     # two-pass loop keeps going after a failed task — so a
