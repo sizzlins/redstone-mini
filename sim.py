@@ -28,31 +28,39 @@ def layout_retry(recipe, tries=12, verify=False, grows=3):
     With verify, keep the fastest verified build (ticks first, blocks break
     ties): the sim is the selector, not just the guard; restarts are free
     search, so ship the cheapest verified one.
-    Field grows on failure (effectively infinite room, capped at 2000)."""
+    Field grows on failure (effectively infinite room, capped at 2000).
+    Tap reservation runs only as a second round after a lamp-spot failure:
+    always-on rings moved small builds into a slope short (measured twice),
+    so green trajectories never see it."""
     last = None
-    for grow in range(grows or 1):
-        out = None
-        best = None
-        for t in range(tries):
-            try:
-                out = layout(recipe, seed=None if t == 0 else t, grow=grow)
-            except RuntimeError as e:
-                last = e
-                continue
-            if not verify:
-                return out + (None,)
-            try:
-                st, ticks = sim_verify(recipe, out[0], out[2], quiet=True, collect=True)
-            except RuntimeError as e:
-                e.blocks, e.size, e.io = out[:3]
-                last = e
-                continue
-            score = (ticks, len(out[0]))
-            if best is None or score < best[0]:
-                best = (score, out + (st,))
-        if best is not None:
-            return best[1]
-        # nothing verified this grow: keep last error, grow the field
+    for _res in (False, True):
+        for grow in range(grows or 1):
+            out = None
+            best = None
+            for t in range(tries):
+                try:
+                    out = layout(recipe, seed=None if t == 0 else t, grow=grow,
+                                 reserve=_res)
+                except RuntimeError as e:
+                    last = e
+                    continue
+                if not verify:
+                    return out + (None,)
+                try:
+                    st, ticks = sim_verify(recipe, out[0], out[2], quiet=True, collect=True)
+                except RuntimeError as e:
+                    e.blocks, e.size, e.io = out[:3]
+                    last = e
+                    continue
+                score = (ticks, len(out[0]))
+                if best is None or score < best[0]:
+                    best = (score, out + (st,))
+            if best is not None:
+                return best[1]
+            # nothing verified this grow: keep last error, grow the field
+        if not _res and last is not None and "lamp spot taken" in str(last):
+            continue  # one reserve round, same tries x grows
+        break
     raise last
 
 

@@ -563,7 +563,10 @@ def bridge_stamp(blocks, solid, wires, rings, placed, net, fx, fz, axis):
 
 
 
-def layout(recipe, seed=None, grow=0):
+def layout(recipe, seed=None, grow=0, reserve=False):
+    """reserve=True rings each output driver's tap pocket (retry layer only:
+    always-on moved small builds' routes into a slope short, measured twice).
+    """
     gates = expand_gates(recipe["gates"], recipe["inputs"])
     banded = any(g.get("band") is not None for g in gates)
     if not banded:
@@ -744,10 +747,10 @@ def layout(recipe, seed=None, grow=0):
                 path = cand
                 break
             if path is None and why:
-                last_blocked[net] = seen
+                last_blocked[net] = seen | last_blocked.get(net, set())
                 raise RuntimeError(f"no route for {net}: {a} -> {b} (3D: {why})")
         if not path:
-            last_blocked[net] = seen
+            last_blocked[net] = seen | last_blocked.get(net, set())
             raise RuntimeError(f"no route for {net}: {a} -> {b} (grid full, widen W)")
         # Pillars go into the maintained sets now and into `blocks` once, after
         # all routing (a rip-up used to rebuild the whole block list per rip).
@@ -1271,7 +1274,11 @@ def layout(recipe, seed=None, grow=0):
     _oi = {n: i for i, n in enumerate(_names)}
     tasks.sort(key=lambda t: (0, _oi[t[2]], 0 if t == _far[t[2]] else 1, _dist(t)) if t[2] in _ins else (1, 0, 0, 0))
     placed = set(wires)  # stubs/outs/ties stay; routed paths may be ripped up
-    last_blocked = {}  # net -> wire cells whose touch sealed its last failure
+    last_blocked = {}  # net -> wire cells whose touch sealed its failures
+    # (accumulated, not just the last: a later 3D search's flyover touches
+    # would otherwise erase the flat corridor's seal sites, and try_bridge
+    # would hunt far away — micro1-s0 R chased x96 while the wall stood at
+    # x70. Stale cells are re-validated at use; the candidate sort is total.)
     congest = {}  # wire cell -> extra cost after a rip (lanes stay shared)
     guard = set()  # torch cells + their attach blocks: the only solids a
     for x, y, z, bid in blocks:  # routed wire must never hug (oscillators).
@@ -1291,6 +1298,26 @@ def layout(recipe, seed=None, grow=0):
             _d[_t] = _d.get(_t, 0) + 1
         return _d
     _pcount = _recount()
+    # ponytail: output-tap reservation (retry layer only — see layout_retry).
+    # Rings each output driver's four tap/lamp candidates plus tap clearance
+    # with the output's own family, so later routes cannot seal the pocket
+    # the lamp needs (micro1-s0/s1: nOP ringed Y's tap at (222,12) on all
+    # four sides). Phase-1 tiles are placed already; routes detour. No wire
+    # pre-seeding: that moved canaries and regressed the panel (v2).
+    if reserve:
+        for _on in recipe["outputs"]:
+            _drv = netspec.get(_on, {}).get("drv")
+            if _drv is None:
+                continue
+            for _dx, _dz in DIRS:
+                _lx = (_drv[0] + 2 * _dx, _drv[1] + 2 * _dz)
+                if not (0 <= _lx[0] < W and 0 <= _lx[1] < D):
+                    continue
+                _fx = (_drv[0] + _dx, _drv[1] + _dz)
+                ring(_fx[0], _fx[1], own(_on))
+                ring(_lx[0], _lx[1], own(_on))
+                for _ax, _az in DIRS:
+                    ring(_fx[0] + _ax, _fx[1] + _az, own(_on))
     # conductive blocks, maintained as tiles/bridges/pillars land: the search
     # reads this instead of rebuilding it per astar call.
     tilecob = {(x, 1, z) for (x, z), (k, _) in solid.items() if k == "cobble"}
