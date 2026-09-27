@@ -172,40 +172,81 @@ def _straight3(a, b, c):
     return a[1] == b[1] == c[1] and (a[0] == b[0] == c[0] or a[2] == b[2] == c[2])
 
 
+def _cover_triples(path, i):
+    """Straight-triple booster spots within 14 behind path[i]."""
+    return [j for j in range(max(1, i - 14), min(i - 1, len(path) - 1) + 1)
+            if _straight3(path[j - 1], path[j], path[j + 1])]
+
+
 def _cover_gap(path, i):
     """Backward booster cover: cheapest straight triple within 14 of path[i],
     or False. Dust dies after 15, so a run with no straight triple inside that
     window is unboostable (long pure-elevated flight) and the route is refused.
     Total order by (len, path) so builds compare across processes."""
-    cands = [j for j in range(max(1, i - 14), min(i - 1, len(path) - 1) + 1)
-             if _straight3(path[j - 1], path[j], path[j + 1])]
+    cands = _cover_triples(path, i)
     return min(cands) if cands else False
 
 
-def _loop_rep(wires, repeaters, dust):
-    """First repeater whose front joins its back via same-net dust (a
-    non-inverting loop: bistable in sim AND vanilla, the first transient
-    latches it forever — micro1-s2 S at (80,1,19)). None when clean. Cost is
-    one O(1) label check per repeater; BFS runs only on same-net pairs and
-    exits on the first loop. Flat adjacency only: a slope-closed loop misses.
+def _closes_loop(wires, repeaters, dust, cobble, net, cell):
+    """Does the repeater at cell (just placed for net) close a front~back
+    loop? One BFS from its front over same-net dust, crossing cobble (a
+    repeater fronting a block back-feeds through it into beside route dust —
+    the W-input latch class; assume the block powered: skips are cheap,
+    escaped loops burn whole layouts). Only the new pair can newly close:
+    placing removes dust, never joins it."""
+    _V = {"east": (1, 0), "west": (-1, 0), "south": (0, 1), "north": (0, -1)}
+    dx, dz = _V[repeaters[cell][1]]
+    front, back = (cell[0] + dx, cell[1], cell[2] + dz), (cell[0] - dx, cell[1], cell[2] - dz)
+    seen = {front}
+    stack = [front]
+    while stack:
+        u = stack.pop()
+        if u == back:
+            return True
+        for ox, oz in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            m = (u[0] + ox, u[1], u[2] + oz)
+            if m in seen:
+                continue
+            if m in dust and wires.get(m) == net:
+                seen.add(m)
+                stack.append(m)
+            elif m in cobble and u in dust:
+                seen.add(m)
+                stack.append(m)
+    return False
+
+
+def _loop_rep(wires, repeaters, dust, cobble):
+    """First repeater whose front joins its back (a non-inverting loop:
+    bistable in sim AND vanilla, the first transient latches it forever —
+    micro1-s2 S at (80,1,19), or repeater->block->route dust like the W-input
+    latch). Joins run over same-net dust, crossing cobble (assume powered:
+    safe direction). None when clean. Cost is one O(1) label check per
+    repeater; BFS runs only on same-net pairs and exits on the first loop.
+    Flat adjacency only: a slope-closed loop misses.
     """
     _V = {"east": (1, 0), "west": (-1, 0), "south": (0, 1), "north": (0, -1)}
     for (x, y, z), (net, facing) in repeaters.items():
         dx, dz = _V[facing]
         front, back = (x + dx, y, z + dz), (x - dx, y, z - dz)
         nf = wires.get(front)
-        if front not in dust or back not in dust or nf is None \
-                or wires.get(back) != nf:
-            continue
+        if nf is None or wires.get(back) != nf:
+            if back not in cobble and front not in cobble:
+                continue
         seen = {front}
         stack = [front]
         while stack:
             u = stack.pop()
             if u == back:
-                return (x, y, z), nf
+                return (x, y, z), (nf if nf is not None else net)
             for ox, oz in ((1, 0), (-1, 0), (0, 1), (0, -1)):
                 m = (u[0] + ox, u[1], u[2] + oz)
-                if m in dust and wires.get(m) == net and m not in seen:
+                if m in seen:
+                    continue
+                if m in dust and wires.get(m) == (nf if nf is not None else net):
+                    seen.add(m)
+                    stack.append(m)
+                elif m in cobble and u in dust:
                     seen.add(m)
                     stack.append(m)
     return None
@@ -847,6 +888,18 @@ def layout(recipe, seed=None, grow=0, reserve=False):
             ring(rx, rz, fam)
         stamp_wire([(ox - 2, gz), (ox - 1, gz)], A)
         stamp_wire([(ox - 2, gz + 3), (ox - 1, gz + 3)], B)
+        # ponytail: funnel the input stubs with cobble (no repeaters: a
+        # repeater fronting a block back-feeds its own supply through the
+        # block into route dust beside it — a permanent latch once kicked).
+        # Straight dust reads identically mirrored or correct, so the tile
+        # behaves exactly like its verified-green era; the funnels only keep
+        # joins straight (router must arrive E-W, cannot hug parallel and
+        # corner the stub dead). Footprints already cover these cells.
+        for _fx, _fz in ((ox - 2, gz - 1), (ox - 1, gz - 1),
+                         (ox - 2, gz + 1), (ox - 1, gz + 1),
+                         (ox - 2, gz + 2), (ox - 1, gz + 2),
+                         (ox - 2, gz + 4), (ox - 1, gz + 4)):
+            stamp_cobble(_fx, _fz, O)
         # ponytail: ~A must APPROACH the NOR host along the axis it points at.
         # Vanilla: powered dust powers a block only when it is on top of it or
         # POINTING at it, and pointing comes from the connection shape
@@ -931,10 +984,13 @@ def layout(recipe, seed=None, grow=0, reserve=False):
     def _snap():
         return (len(blocks), dict(wires), dict(solid),
                 {k: set(v) for k, v in rings.items()},
-                dict(pos), dict(junctions), len(recs))
+                dict(pos), dict(junctions), len(recs), dict(repeaters))
 
     def _restore(s):
-        nb, w, so, ri, p, jn, nr = s
+        # ponytail: repeaters ride along — a failed tile placement used to
+        # leave its input repeaters behind as phantom circuits (no tile, live
+        # back/front). dict.copy both ways; O(tile) like the rest.
+        nb, w, so, ri, p, jn, nr, rp = s
         del blocks[nb:]
         wires.clear(); wires.update(w)
         solid.clear(); solid.update(so)
@@ -942,6 +998,7 @@ def layout(recipe, seed=None, grow=0, reserve=False):
         pos.clear(); pos.update(p)
         junctions.clear(); junctions.update(jn)
         del recs[nr:]
+        repeaters.clear(); repeaters.update(rp)
 
     for i, g in enumerate(gates):
         ox, gz = gridpos[i]
@@ -1069,6 +1126,13 @@ def layout(recipe, seed=None, grow=0, reserve=False):
                     # Q/Qb loop itself is untouched.
                     del wires[(ox + 1, 1, gz + 4)]
                     repeaters[(ox + 1, 1, gz + 4)] = (a[0], "east")
+                    # ponytail: funnel the R stub like the AND/NOT inputs (a
+                    # repeater here would front the A-block and back-feed its
+                    # supply the same permanent way). Straight dust reads
+                    # identically mirrored or correct.
+                    for _fx, _fz in ((ox - 2, gz - 1), (ox - 1, gz - 1),
+                                     (ox - 2, gz + 1), (ox - 1, gz + 1)):
+                        stamp_cobble(_fx, _fz, o)
                     for cx_, cz_ in set([(ox, gz), (ox + 1, gz), (ox + 4, gz),
                                          (ox + 4, gz - 1)] + Sdust + Rdust + Qdust + Qbdust):
                         for dx, dz in DIRS:
@@ -1186,7 +1250,14 @@ def layout(recipe, seed=None, grow=0, reserve=False):
                     # N/S that never powered the host. This E-W stub ends at
                     # (bx-1,bz), which points east into the host no matter where
                     # the router reaches the open load (bx-2,bz) from.
+                    # ponytail: funnel like the AND inputs (a repeater here
+                    # back-feeds its supply through the host block — permanent
+                    # latch; reverted). Straight dust reads identically either
+                    # convention.
                     stamp_wire([(bx - 2, bz), (bx - 1, bz)], a[0])
+                    for _fx, _fz in ((bx - 2, bz - 1), (bx - 1, bz - 1),
+                                     (bx - 2, bz + 1), (bx - 1, bz + 1)):
+                        stamp_cobble(_fx, _fz, o)
                     if (bx + 2, 1, bz) in wires:
                         raise RuntimeError(f"out cell blocked at {(bx + 2, bz)}")
                     stamp_wire([(bx + 2, bz)], o)
@@ -1661,13 +1732,52 @@ def layout(recipe, seed=None, grow=0, reserve=False):
             c = nxt
         path = cells
         n = len(path)
+        # ponytail: the goal end gets the nearest booster, the rest march
+        # cheap. min-j everywhere starves endpoints (goal gets ~1, then tile
+        # interiors eat it: D-latch D arrived dark at the S tile, T0 ports
+        # read 2/0). First placement tries nearest-first so the goal arrives
+        # hot; interior gaps stay <=14 either way. A placement closing a
+        # front~back loop is skipped (next-best wins); all-looping or
+        # guard-failing placements raise loud. dust tracked incrementally
+        # (O(1) per place/unwind, not O(V) rebuilds).
+        _cdust = {c for c in wires if c not in repeaters}
+        _ccob = {c[:3] for c in blocks if c[3].split("[")[0] == "minecraft:cobblestone"}
+        _ccob |= {c for c in sup}
         i = n - 1
+        _first = True
         while i > 14:
-            j = _cover_gap(path, i)
-            if j is False:
+            _js = _cover_triples(path, i)
+            if not _js:
                 raise RuntimeError(f"unboostable gap on {net} near index {i} "
                                    f"(twisty path): head={path[0]}")
-            place_rep(path, net, j)
+            _js = sorted(_js, reverse=_first)
+            _placed, _loopcell = False, None
+            for j in _js:
+                _jc = (path[j][0], path[j][1], path[j][2])
+                _had = _jc in repeaters
+                try:
+                    place_rep(path, net, j)
+                except RuntimeError:
+                    continue
+                _cdust.discard(_jc)
+                if _closes_loop(wires, repeaters, _cdust, _ccob, net, _jc):
+                    if _had:
+                        raise RuntimeError(f"repeater loop on {net} at {_jc}: "
+                                           f"pre-existing join (fail fast)")
+                    del repeaters[_jc]
+                    wires[_jc] = net
+                    _cdust.add(_jc)
+                    _loopcell = _jc
+                    continue
+                _placed = True
+                break
+            if not _placed:
+                if _loopcell is not None:
+                    raise RuntimeError(f"repeater loop on {net} at {_loopcell}: "
+                                       f"every triple closes it")
+                raise RuntimeError(f"unboostable gap on {net} near index {i} "
+                                   f"(twisty path): head={path[0]}")
+            _first = False
             i = j
 
     for name in recipe["outputs"]:
@@ -1798,10 +1908,11 @@ def layout(recipe, seed=None, grow=0, reserve=False):
     # holds itself lit across phases (D-latch seeds 4/5). The world gets one
     # block, so the sim must see one.
     dust = set(wires) - set(repeaters)
-    _loop = _loop_rep(wires, repeaters, dust)
+    _cob = {x[:3] for x in out if x[3].split("[")[0] == "minecraft:cobblestone"}
+    _loop = _loop_rep(wires, repeaters, dust, _cob)
     if _loop is not None:
         raise RuntimeError(f"repeater loop on {_loop[1]} at {_loop[0]}: front "
-                           f"joins back via dust (bistable; first transient latches it)")
+                           f"joins back (bistable; first transient latches it)")
     for (x, y, z), net in wires.items():
         if (x, y, z) in repeaters:
             continue
@@ -1829,22 +1940,33 @@ if __name__ == "__main__":
     from recipe import parse_recipe
     from sim import layout_retry
     _r = parse_recipe("IN a\nOUT n\nn = NOT a\n")
-    _, _, _io, _ = layout_retry(_r, verify=True)
+    _nb, _, _io, _ = layout_retry(_r, verify=True)
     _lamps = [c for c, v in _io["lamps"].items() if v == "n"]
     assert len(_lamps) == 1, _io["lamps"]
     _lx, _lz = _lamps[0]
     _nets = _io["nets"]
     assert _nets.get((_lx - 2, 1, _lz)) == "n", "NOT out drifted"
-    assert _nets.get((_lx - 5, 1, _lz)) == "a", "NOT port drifted"
+    _nw = _nets.get((_lx - 5, 1, _lz))
+    _nrb = [b for x, y, z, b in _nb
+            if (x, z) == (_lx - 5, _lz) and b.startswith("minecraft:repeater")]
+    assert _nw == "a" or any("facing=east" in b for b in _nrb), \
+        f"NOT port drifted: {_nw} {_nrb}"
     _r = parse_recipe("IN a, b\nOUT t\nt = a AND b\n")
-    _, _, _io, _ = layout_retry(_r, verify=True)
+    _bb, _, _io, _ = layout_retry(_r, verify=True)
     _lamps = [c for c, v in _io["lamps"].items() if v == "t"]
     assert len(_lamps) == 1, _io["lamps"]
     _lx, _lz = _lamps[0]
     _nets = _io["nets"]
     assert _nets.get((_lx - 2, 1, _lz)) == "t", "AND out drifted"
-    assert _nets.get((_lx - 10, 1, _lz - 1)) == "a", "AND A-port drifted"
-    assert _nets.get((_lx - 10, 1, _lz + 2)) == "b", "AND B-port drifted"
+    # ponytail: a port holds dust or an east repeater (cover boosts tails;
+    # the cell is what matters, not the component — both drive the tile).
+    for _pc, _nm in (((_lx - 10, _lz - 1), "AND A-port"),
+                     ((_lx - 10, _lz + 2), "AND B-port")):
+        _w = _nets.get((_pc[0], 1, _pc[1]))
+        _rb = [b for x, y, z, b in _bb
+               if (x, z) == _pc and b.startswith("minecraft:repeater")]
+        assert _w == _nm[4].lower() or \
+            any("facing=east" in b for b in _rb), f"{_nm} drifted: {_w} {_rb}"
     print("ports ok: AND/NOT grid matches spec")
     # ponytail: OR-feeding inputs keep batch levers (junction aims at them);
     # verify=True proves the diodes fire (serve-DEMO class: silent dark bb).

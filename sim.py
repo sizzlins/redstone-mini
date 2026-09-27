@@ -172,7 +172,9 @@ def _run_vec(vec, init, ctx, until=None):
             # ponytail: dust powers a side block only when POINTING at it
             # (dust_points, the one shared table) — a wire merely running past
             # does not. Dust on top still counts (below), no shape condition.
-            if m in dust and pw.get(m, 0) >= 1 and (dx, dz) in dust_points(m, dust):
+            # Direction is dust->block (negated neighbour offset); the old
+            # sign mirrored corner/T sensing (symmetric shapes can't tell).
+            if m in dust and pw.get(m, 0) >= 1 and (-dx, -dz) in dust_points(m, dust):
                 pwrd = True
             if m in rblk:
                 pwrd, strong = True, True
@@ -572,16 +574,22 @@ if __name__ == "__main__":
     # double-stamped on the S-row cell (seeds 4/5 held set across hold) and a
     # route through the repeater cell (seed 1 never fed the load). One layout
     # hides this whole class, so all seven ship.
-    from collections import Counter as _Counter
     _dr = parse_recipe("IN D, W\nOUT Q\nnD = NOT D\nS = D AND W\nR = nD AND W\nQ = LATCH S R\n")
     _dph = [({"D": 1, "W": 1}, {"Q": 1}), ({"D": 0, "W": 1}, {"Q": 0}),
             ({"D": 0, "W": 0}, {"Q": 0}), ({"D": 1, "W": 0}, {"Q": 0}),
             ({"D": 1, "W": 1}, {"Q": 1})]
     for _seed in (None, 0, 1, 2, 3, 4, 5):
         _db, _, _dio = layout(_dr, seed=_seed, grow=0)
-        assert not [c for c, n in _Counter((x, y, z) for x, y, z, _ in _db).items() if n > 1], _seed
+        _seen, _dups = {}, set()
+        for _x, _y, _z, _b in _db:  # one pass; only dust-involved dups matter
+            _k, _bb = (_x, _y, _z), _b.split("[")[0]
+            if _k in _seen and (_seen[_k] == "minecraft:redstone_wire"
+                                or _bb == "minecraft:redstone_wire"):
+                _dups.add(_k)
+            _seen[_k] = _bb
+        assert not _dups, (_seed, _dups)
         sim_sequence(_dr, _db, _dio, _dph)
-    print("dlatch ok: gate-fed latch green on all 7 seeds, no double-stamped cell")
+    print("dlatch ok: gate-fed latch green on all 7 seeds, no dust double-stamped")
     def _hand(blocks, levers, lamps):
         io = {"levers": levers, "lamps": lamps, "nets": {}}
         return _parse_build(blocks, io), io
@@ -672,4 +680,16 @@ if __name__ == "__main__":
     assert _run_vec({"A": 1, "S": 1}, None, _cp4)[0].get("Y", True) is False
     assert _run_vec({"A": 1, "S": 0}, None, _cp4)[0].get("Y", False) is True
     print("comparator ok: compare/subtract/strong-side rule")
+    # ponytail: corner pointing is directional (wiki: a corner powers where it
+    # points, not the mirror side). cob_state once read (dx,dz) block->dust
+    # instead of dust->block, which symmetric shapes (line/end/cross) cannot
+    # tell apart — the whole suite stayed green around the bug. Corner N+E
+    # with a block south: block dark, torch on it stays ON.
+    _mb = [(1, 1, 0, W_), (1, 1, -1, W_), (2, 1, 0, W_),
+           (1, 1, 1, "minecraft:cobblestone"),
+           (2, 1, 1, "minecraft:redstone_wall_torch[facing=west]")]
+    _mp, _mio = _hand(_mb, {}, {})
+    _, _, _mtl, _, _, _ = _run_vec({}, None, _mp)
+    assert _mtl.get((2, 1, 1), 0) == 1, _mtl
+    print("pointing-mirror ok: corner leaves its unconnected side dark")
 
