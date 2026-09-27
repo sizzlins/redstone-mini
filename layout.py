@@ -264,6 +264,14 @@ def astar(starts, goal, net, W, D, solid, rings, wires, junctions, margin=None, 
     for (sx, sy, sz) in sup:
         if sy == 1:
             hard.add((sx, 1, sz))
+    # ponytail: a repeater cell is not dust. The search treated the LATCH
+    # S-row repeater as free space and routed straight through it (D-latch
+    # seed 1 crossed an east-facing repeater north-south; the load behind it
+    # never fed). One guard here covers flat/3D/bridge: all funnel through
+    # ok(). Ceiling: y==1 only; no y>=2 repeater exists before the cover pass.
+    for (rx, ry, rz) in reps:
+        if ry == 1:
+            hard.add((rx, 1, rz))
     jget2 = junctions.get
     wg2 = wires.get
     def ok(cell):
@@ -300,6 +308,8 @@ def astar(starts, goal, net, W, D, solid, rings, wires, junctions, margin=None, 
             if (x, z) in rings and net not in rings[(x, z)]:
                 return False
             if (x, 1, z) in sup:
+                return False
+            if cell in reps:
                 return False
         elif cell in cob:
             return False
@@ -1668,8 +1678,15 @@ def layout(recipe, seed=None, grow=0):
     repeaters = {(x - minx, y, z - minz): v for (x, y, z), v in repeaters.items()}
     W, D = maxx - minx + 1, maxz - minz + 1
     out = list(blocks)
-    dust = set(wires)
+    # ponytail: one component per cell; a repeater wins over dust. The router
+    # can re-stamp a wire label onto a tile repeater cell (tile dels it, route
+    # re-adds it), which modelled dust+repeater at once -- a phantom loop that
+    # holds itself lit across phases (D-latch seeds 4/5). The world gets one
+    # block, so the sim must see one.
+    dust = set(wires) - set(repeaters)
     for (x, y, z), net in wires.items():
+        if (x, y, z) in repeaters:
+            continue
         out.append((x, y, z, wire_bid((x, y, z), dust)))
     for (x, y, z), (net, facing) in repeaters.items():
         out.append((x, y, z, f"minecraft:repeater[facing={facing},delay=1]"))

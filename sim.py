@@ -559,6 +559,21 @@ if __name__ == "__main__":
                                   ({"S": 0, "R": 1}, {"Q": 0}),
                                   ({"S": 0, "R": 0}, {"Q": 0})])
     print("latch ok: set/hold/reset/hold")
+    # ponytail: gate-fed latch, EVERY seed — a lever-fed latch proves the tile,
+    # gate-fed proves arrival level too. Killed two classes: dust+repeater
+    # double-stamped on the S-row cell (seeds 4/5 held set across hold) and a
+    # route through the repeater cell (seed 1 never fed the load). One layout
+    # hides this whole class, so all seven ship.
+    from collections import Counter as _Counter
+    _dr = parse_recipe("IN D, W\nOUT Q\nnD = NOT D\nS = D AND W\nR = nD AND W\nQ = LATCH S R\n")
+    _dph = [({"D": 1, "W": 1}, {"Q": 1}), ({"D": 0, "W": 1}, {"Q": 0}),
+            ({"D": 0, "W": 0}, {"Q": 0}), ({"D": 1, "W": 0}, {"Q": 0}),
+            ({"D": 1, "W": 1}, {"Q": 1})]
+    for _seed in (None, 0, 1, 2, 3, 4, 5):
+        _db, _, _dio = layout(_dr, seed=_seed, grow=0)
+        assert not [c for c, n in _Counter((x, y, z) for x, y, z, _ in _db).items() if n > 1], _seed
+        sim_sequence(_dr, _db, _dio, _dph)
+    print("dlatch ok: gate-fed latch green on all 7 seeds, no double-stamped cell")
     def _hand(blocks, levers, lamps):
         io = {"levers": levers, "lamps": lamps, "nets": {}}
         return _parse_build(blocks, io), io
