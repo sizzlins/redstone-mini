@@ -1,4 +1,4 @@
-# Handoff — redstone-mini (2026-09-27, tile inputs 7/7; dense walls researched)
+# Handoff — redstone-mini (2026-09-27, dense items 1–4 worked, no green yet)
 
 > **Read this section first.** It is the state of play; everything below is
 > the detailed history, kept for the evidence.
@@ -16,8 +16,8 @@ correct under those rules, (3) only then make the dense builds
 
 ## Current state
 
-Branch `phase2-design`, **60 ahead / 1 behind** `origin` (remote sync needs
-explicit approval). Tree clean apart from untracked plan docs. HEAD `e755a32`.
+Branch `phase2-design`, **65 ahead / 1 behind** `origin` (remote sync needs
+explicit approval). Tree clean apart from untracked plan docs. HEAD `97cd430`.
 Suite green: `recipe.py`, `sim.py` (now with the `dlatch` canary), `layout.py`,
 `serve.py --check`.
 
@@ -51,6 +51,37 @@ oracle in place of the in-game test.
 | Byte-identity canary | `e79bfa6d` / `b4a9cc9b` / `40730f4c` unchanged; xor **`8de8a1ef`→`59638d5c` (`32c54b6`, 332→344 blocks, y>=2 47→0)** — its old route crossed a tile repeater cell, now illegal, so it cascades flat (+12 blocks). Honest movement, same bug class. Bridge splice still fires on every D-latch seed, which the new `dlatch` canary locks. |
 
 ## What changed
+
+### Dense items 1–4 worked (2026-09-27, three commits, no dense green yet)
+
+- **Item 1 — alu4 at grows=2: FAIL, joins the budget class.** Bounded
+  (`REDSTONE_SEARCH_CAP=3000`, heartbeat every 200 searches): 3092 searches,
+  222 tasks pending, ~100 ms/search (field scale). Placement passes, routing
+  nowhere close. grows=3 not tried (bigger field, worse per-search — the
+  discriminator is answered). Probe: `scratch/alu4_grow.py` (kept, gitignored).
+- **Item 2 — all-or-nothing hops (`53dd91d`).** Failed `pb` now unwinds `pa`
+  (entry + labels + pillars, no congest — its corridor is fine). Fires 2× on
+  micro1-None (16+14 cells). Zero green impact. Does NOT close S: pocket is
+  real (W spine wins; W re-wins via shortest path, congest+5 won't dislodge a
+  spine). A feet-stampability guard was tried and **reverted** (fired nowhere
+  that mattered; W arrives after the hop — order effect, not hop-time check).
+  S wall reclassified corridor-class.
+- **Item 3 — repeater-loop reject (`983e383`).** Static finder
+  (`scratch/loopfind.py`) validated first: clean on 4 small + D-latch 7, fires
+  only micro1-s2 `(80,1,19)`. Enforcement: one `_loop_rep` call at
+  materialization (O(1) pre-check per repeater, BFS on same-net pairs only,
+  first-loop exit; flat adjacency, slope-closed loops a known miss). s2 now
+  fails loud naming the cell. Zero green impact.
+- **Item 4 — cover floor (`97cd430`).** Per-entry 14-floor assumed a live
+  source at path[0]; bridge/rip-up segments start mid-chain dark (micro1-s2
+  OP split bank→(148,37) + (148,33)→tile). Cover now tiles source-rooted
+  entries to 14 (unchanged) and segment entries to 0; twisty heads fail loud.
+  Zero green impact (all green entries source-rooted). s2 converts SIM-FAIL
+  to LAYOUT-FAIL (`unboostable gap on nOP near index 1`).
+- **Still red after 1–4:** micro1-s2 needs S-loop *search avoidance*
+  (end-reject burns whole layouts; router keeps closing the loop) + an nOP
+  segment with a boostable head; s1 lamp-spot, s4 T0-wall, s0/s3/s5 budget.
+  Next: tap reservation (old item 7), ctrl_decode n2, corridor last.
 
 ### Dense walls researched (2026-09-27, no code — triage + dumps only)
 
@@ -574,21 +605,15 @@ branches cost very differently. Items 1+ do not depend on the answer.
 2. **DONE — census re-run: corridor conclusion survives (67→61, NO-ATTEMPT
    pinned at 41).** The arrival fixes cost 0 corridor and moved no dense
    needle, as predicted.
-3. **alu4 at grows=2,3 — minutes, might delete a whole build.** Placement
-   passes at grows=2 (measured); see if full green follows. Discriminator:
-   green, or the next wall named.
-4. **All-or-nothing hops.** Revert `pa` when `pb` fails; un-stamp bridge
-   `solid` on rip-up; allow rebuild of a ripped hop. Discriminator: micro1
-   seed None's S segment closes and the dump shows no `pa` litter.
-5. **Static repeater-loop check.** Flag any tile repeater whose front and back
-   join via same-net dust (label graph + `repeaters` dict, no sim). Must be
-   clean on all green builds (D-latch 7 pass sim, so presumably clean) and
-   must FIRE on micro1-s2 before it ships — validation first, search
-   enforcement after. This is the cheap half of item 0, now with two
-   motivating cases (D-latch phantom + s2 loop).
-6. **Arrival floor.** Open probe first: OP-at-port on micro1-s2 (decay vs tile
-   misfire). Then a per-load minimum. Constrained by history: repeater-before-
-   every-load oscillated 7/7, so input-side buffering near latches is out.
+3. **DONE (negative) — alu4 at grows=2: 222 pending at 3k searches.**
+   Joins the budget class; grows=3 not worth trying.
+4. **DONE (hygiene) — all-or-nothing hops landed; S wall reclassified.**
+   Feet guard tried and reverted (no effect). The pocket is real.
+5. **DONE — repeater-loop reject landed (`_loop_rep`, fires only s2).**
+   Remaining half: *search avoidance* (end-reject burns layouts; s2 needs the
+   router to not close the loop in the first place).
+6. **DONE (converter) — cover floor landed; s2 SIM-FAIL → LAYOUT-FAIL.**
+   Remaining: nOP segment with a boostable head (router retry luck) + item 5.
 7. **micro1 output-tap reservation** (old item 4, unchanged): clearance *and*
    wire-channel reservation, plus the panel-regression resolution. Still the
    cheapest micro1 win once routing passes.
