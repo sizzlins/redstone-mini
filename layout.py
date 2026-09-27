@@ -1015,6 +1015,18 @@ def layout(recipe, seed=None, grow=0):
                     for cells, net in ((Sdust, a[0]), (Rdust, a[1]),
                                        (Qdust, o), (Qbdust, qb)):
                         stamp_wire(cells, net)
+                    # ponytail: the S row is 9 cells of the tile's OWN dust from
+                    # the block it must power, so it needs level ~10 at the port
+                    # and no bus budget can supply that -- the load is the port,
+                    # the row is past it. A repeater in the row fixes it, and
+                    # (ox+1) is the only cell that still sees power at the
+                    # guaranteed minimum. Measured: at level 2 the row died 4
+                    # cells short and the latch could NEVER set. A repeater on
+                    # the set input is the textbook shape and costs no race:
+                    # only set is delayed, reset is not, and the cross-coupled
+                    # Q/Qb loop itself is untouched.
+                    del wires[(ox + 1, 1, gz + 4)]
+                    repeaters[(ox + 1, 1, gz + 4)] = (a[0], "east")
                     for cx_, cz_ in set([(ox, gz), (ox + 1, gz), (ox + 4, gz),
                                          (ox + 4, gz - 1)] + Sdust + Rdust + Qdust + Qbdust):
                         for dx, dz in DIRS:
