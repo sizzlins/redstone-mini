@@ -182,6 +182,35 @@ def _cover_gap(path, i):
     return min(cands) if cands else False
 
 
+def _loop_rep(wires, repeaters, dust):
+    """First repeater whose front joins its back via same-net dust (a
+    non-inverting loop: bistable in sim AND vanilla, the first transient
+    latches it forever — micro1-s2 S at (80,1,19)). None when clean. Cost is
+    one O(1) label check per repeater; BFS runs only on same-net pairs and
+    exits on the first loop. Flat adjacency only: a slope-closed loop misses.
+    """
+    _V = {"east": (1, 0), "west": (-1, 0), "south": (0, 1), "north": (0, -1)}
+    for (x, y, z), (net, facing) in repeaters.items():
+        dx, dz = _V[facing]
+        front, back = (x + dx, y, z + dz), (x - dx, y, z - dz)
+        nf = wires.get(front)
+        if front not in dust or back not in dust or nf is None \
+                or wires.get(back) != nf:
+            continue
+        seen = {front}
+        stack = [front]
+        while stack:
+            u = stack.pop()
+            if u == back:
+                return (x, y, z), nf
+            for ox, oz in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                m = (u[0] + ox, u[1], u[2] + oz)
+                if m in dust and wires.get(m) == net and m not in seen:
+                    seen.add(m)
+                    stack.append(m)
+    return None
+
+
 def _has_support(cell, sup, solid):
     """Can a repeater stand at `cell`? y=1 rides the ground/stone floor; y>=2
     needs a solid block directly under it (route pillar or tile cobble).
@@ -1696,6 +1725,10 @@ def layout(recipe, seed=None, grow=0):
     # holds itself lit across phases (D-latch seeds 4/5). The world gets one
     # block, so the sim must see one.
     dust = set(wires) - set(repeaters)
+    _loop = _loop_rep(wires, repeaters, dust)
+    if _loop is not None:
+        raise RuntimeError(f"repeater loop on {_loop[1]} at {_loop[0]}: front "
+                           f"joins back via dust (bistable; first transient latches it)")
     for (x, y, z), net in wires.items():
         if (x, y, z) in repeaters:
             continue
