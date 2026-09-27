@@ -26,12 +26,13 @@ Suite green: `recipe.py`, `sim.py` (all canaries), `layout.py` (incl. the new
 micro1 builds, and **`example_and` / `example_2gates` / `latch_sr` /
 `example_xor` byte-identical to HEAD (4/4 hashes)**.
 
-| recipe | status | measured this session (grow=1, cap 3000) |
+| recipe | status | measured this session |
 |---|---|---|
-| **micro1** | **GENERATES** | **2/12 seeds green** (s3, s5). Ladder script: 30s wall (was 308s). |
-| alu1 | corridor-bound | 0/6, all `no route for A`/`B`, ~35s/seed (was 197s). |
-| alu4 | unmeasured here | 8 min CPU on one seed without printing; **killed, not re-measured**. |
-| cpu4 | unmeasured here | not attempted. |
+| **micro1** | **GENERATES** | **2/12 seeds green** (s3, s5) at grow=1. Ladder script 30s; `layout_retry` 26s (was 235s). |
+| alu1 | corridor-bound, **NOT space-bound** | 0/6 at grow=1, all `no route for A`/`B`, ~35s/seed. 0/4 at **grow=2** too — see What failed. |
+| alu4 | **placement** wall | 0/3 at grow=0, `AND blocked for A0B0` in **0.0s** — dies pre-routing, `tried=0`. |
+| cpu4 | budget wall, largest | 402s for seed 0 at cap 3000, **376 tasks unrouted**. ~4× alu1's scale. |
+| ctrl_decode | not re-measured | harness killed before reaching it. History: `no route for n2`, 668 unroutable, ~20 min. |
 
 micro1's 12-seed breakdown after the fixes: 2 green, 5 `no route` (corridor),
 2 `SIM MISMATCH` (**the same named defect, see What next**), 1 `OPEN`,
@@ -151,8 +152,47 @@ is no first-green to return early at, so the same 36 layouts still get built.
 It reorders them (grow=2 is reached far sooner) but does not cut total work.
 Making those three faster requires *finding a green configuration*, not failing
 faster.
-
 ## What failed (with evidence, no theory)
+
+- **The approved "input port corridors" spec — IMPLEMENTED, MEASURED, REVERTED.**
+  This is the most valuable negative result in the file, because the spec is
+  owner-approved (`docs/superpowers/specs/2026-09-26-input-port-corridors-design.md`,
+  commit `09cc91a`, §§1–3 approved) and the obvious next move. It is ~10 lines,
+  placement-only, router-untouched: for every **input-fed** port, ring a
+  westward 8×3 ray (port row ±1) to that net, truncated at the first solid,
+  from `_load()` in the netspec block — the one place that knows both the net
+  and the port for every op.
+
+  **It is red at the spec's own Gate 4 and worse than that.**
+
+  | | result |
+  |---|---|
+  | `example_and` | 262 → 283 blocks, **`y>=2` 0 → 42** (pushed 3D) |
+  | `example_2gates` | 390 → 419, `y>=2` 0 → 42 |
+  | `example_xor` | **FAILS**: `lamp spot taken for y at (4, 18)` |
+  | **micro1** | **0/12 green, DOWN from 2/12** — s3 → `unboostable gap on Q`, s5 → SIM MISMATCH |
+  | micro1 failure class | shifted to `repeater loop ... every triple closes it` ×5 and `unboostable gap` ×2 |
+
+  **Mechanism, and it is the part the spec missed:** a ring is a wall for
+  every net that does not own it, and the **booster cover needs straight open
+  runs** — `_cover_triples` only offers a booster site where
+  `path[j-1],path[j],path[j+1]` are collinear. Reserving 24 cells per input
+  port deletes exactly those runs, so routes go twisty and the cover has
+  nowhere legal to put a repeater. The spec budgeted corridors as a cost to
+  *transit* ("crossing cost: bounded, in free gaps") and did not price them
+  against the *cover*. **Any retry must reserve space the cover can still
+  boost in** — reserve the lane but leave the repeater sites, or place boosters
+  before ringing. Do not re-attempt the ray as specified.
+
+- **"alu1 is space-bound" — FALSIFIED.** The standing conclusion in every prior
+  handoff was that the binding constraint is total ground corridor. grow=2
+  gives alu1 a much larger field (driver at z=398 vs z=265) and the **same
+  0/4, same failing nets (A, B), only slower** (52–62s vs 32–43s). The
+  coordinates are the tell: net A's driver sits at `z=398` while its load is at
+  `z=12` — a ~386-cell crossing. **More space lengthens the crossing, so area
+  is not the constraint; the lever-to-gate distance is.** Any future mechanism
+  that grows the field will make this worse, not better.
+
 
 - **Making the OPEN walk directional — REJECTED, does not discriminate.** A
   repeater really is one-way, so the walk should enter only from the back and
@@ -221,13 +261,32 @@ Next experiment, in order:
    again, it is wrong and must be dropped, exactly as last time.
 2. s4's `OPEN (unconnected dust): ((173,12),(171,12)) 'T0'` is a **different**
    mechanism — the booster-side probe was clean there. 2 cells, still open.
-3. Only then the corridor wall (alu1/alu4/cpu4). The two fixes above bought 10
-   of ~74 unreached loads on alu1; the rest needs a mechanism that *creates*
-   space, which nothing in the tree does.
+3. **The dense wall is now the whole remaining project, and it is three
+   different problems, not one.** Ordered by cost-to-first-green:
+   - **alu4 — cheapest.** It dies in *placement* (`AND blocked for A0B0`,
+     `tried=0`, 0.0s), so nothing in the router is even reached. That is a
+     port-grid/band-sizing question, not a routing one, and it is the only one
+     of the three that fails before spending any search. The handoff records
+     `grows=2` passes placement, so the first cheap probe is alu4 at grow=2
+     with a hard search cap, streaming.
+   - **alu1 — the lever-to-gate distance.** Not space (falsified above). The
+     two landed fixes bought 10 of ~74 unreached loads. The evidence says the
+     driver sits ~386 cells from its load, so the lever bank placement — not
+     the field size — is the lever. A mechanism that puts each input's bank
+     beside the gates it feeds is the untried idea; note it is NOT the spine
+     (four data points relocate starvation) and NOT corridors (measured above).
+   - **cpu4 — most expensive.** 376 tasks unrouted at cap 3000, 402s/seed.
+     Treat as alu1 at ~4× and do not measure it in the foreground.
+4. Standing rule for all three: a mechanism must be costed against the
+   **booster cover**, not only against transit. The corridor attempt is the
+   proof — it looked free on transit and destroyed every straight run the
+   cover needs.
 
 **Do not** re-run any input-distribution / spine variant (four data points say
-they relocate starvation), a fifth micro1 router constraint without a named
-hypothesis, or the OR-junction and ringed-cell theories (both falsified).
+they relocate starvation), the port-corridor ray as specified (measured, and it
+costs micro1 two green seeds), grow the field expecting relief (falsified for
+alu1), a fifth micro1 router constraint without a named hypothesis, or the
+OR-junction and ringed-cell theories (both falsified).
 
 ## Files touched
 
