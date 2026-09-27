@@ -61,6 +61,23 @@ def dust_points(cell, dust):
     return frozenset(live)                                 # line / corner / T
 
 
+_DIRNAME = {(1, 0): "east", (-1, 0): "west", (0, 1): "south", (0, -1): "north"}
+
+
+def wire_bid(cell, dust):
+    """Full wire block id: base id plus pointing states from dust_points().
+
+    The game stores a wire's connection shape per cell, so the FILE must
+    carry it — a bare id pastes as a dot that powers nothing sideways.
+    ponytail: flat dirs only (an elevated slope link bakes as none until the
+    game updates it — needs a shared slope predicate if 3D ever ships);
+    power is dynamic and game-owned, never baked.
+    """
+    pts = dust_points(cell, dust)
+    return "minecraft:redstone_wire[" + ",".join(
+        f"{_DIRNAME[d]}={'side' if d in pts else 'none'}" for d in DIRS) + "]"
+
+
 def _support(cell, net, solid, wires, sup, reps, guard):
     """Support under a y>=2 wire cell: None=reuse, (x,y,z)=stamp once,
     False=infeasible. Never share foreign pillars (no refcounting), never
@@ -1590,8 +1607,9 @@ def layout(recipe, seed=None, grow=0):
     repeaters = {(x - minx, y, z - minz): v for (x, y, z), v in repeaters.items()}
     W, D = maxx - minx + 1, maxz - minz + 1
     out = list(blocks)
+    dust = set(wires)
     for (x, y, z), net in wires.items():
-        out.append((x, y, z, "minecraft:redstone_wire"))
+        out.append((x, y, z, wire_bid((x, y, z), dust)))
     for (x, y, z), (net, facing) in repeaters.items():
         out.append((x, y, z, f"minecraft:repeater[facing={facing},delay=1]"))
     # ponytail: stone only where a ground component sits (flat worlds have
@@ -1686,6 +1704,29 @@ if __name__ == "__main__":
     assert dust_points((1, 1, 0), _T) == frozenset({(-1, 0), (1, 0), (0, 1)}), \
         "T points at its three links"
     print("pointing ok: cross/end/line/corner/T per wiki Redstone Dust")
+    # ponytail: the export round-trip — the FILE is the shipping gate and the
+    # sim never reads it, so a bare-id regression would go green everywhere
+    # and ship dots. Export a real build, read the .schem back, assert every
+    # wire's baked states equal wire_bid (the one shared encoding).
+    try:
+        import mcschematic as _ms
+        from export import export_schem as _xs
+        import tempfile as _tf
+        import os as _oo
+    except ImportError:
+        print("export-rt skipped: mcschematic missing (export already skips)")
+    else:
+        _r = parse_recipe("IN a, b\nOUT y\ny = a AND b\n")
+        _bb, _, _bio, _ = layout_retry(_r, verify=True)
+        with _tf.TemporaryDirectory(prefix="rs_rt_") as _td:
+            _rp = _oo.path.join(_td, "rt.schem")
+            _xs(_bb, _rp, 0)
+            _rs = _ms.MCSchematic(_rp)
+            _dust = set(_bio["nets"])
+            assert _dust, "no wires to round-trip"
+            for _c in _dust:
+                assert _rs.getBlockStateAt(_c) == wire_bid(_c, _dust), _c
+        print(f"export-rt ok: {len(_dust)} wire states round-trip through .schem")
     # ponytail: ONE bridge check — template matches sim's proven crossover
     # vectors; live-fire two independent nets through it, sim green.
     _feet, _sup, _dst = bridge_plan(7, 5, "ns")
