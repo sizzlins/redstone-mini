@@ -30,9 +30,9 @@ micro1 builds, and **`example_and` / `example_2gates` / `latch_sr` /
 |---|---|---|
 | **micro1** | **GENERATES** | **2/12 seeds green** (s3, s5) at grow=1. Ladder script 30s; `layout_retry` 26s (was 235s). |
 | alu1 | corridor-bound, **NOT space-bound** | 0/6 at grow=1, all `no route for A`/`B`, ~35s/seed. 0/4 at **grow=2** too — see What failed. |
-| alu4 | **placement** wall | 0/3 at grow=0, `AND blocked for A0B0` in **0.0s** — dies pre-routing, `tried=0`. |
+| alu4 | placement wall **CLEARED** | placement now passes; fails at the shared routing wall (`no route for OP0`, 78 unroutable). Was `AND blocked for A0B0`, 0.0s, `tried=0`. |
 | cpu4 | budget wall, largest | 402s for seed 0 at cap 3000, **376 tasks unrouted**. ~4× alu1's scale. |
-| ctrl_decode | not re-measured | harness killed before reaching it. History: `no route for n2`, 668 unroutable, ~20 min. |
+| ctrl_decode | routing wall | 15 gates, placement passes, 65 tasks unrouted at cap 150. |
 
 micro1's 12-seed breakdown after the fixes: 2 green, 5 `no route` (corridor),
 2 `SIM MISMATCH` (**the same named defect, see What next**), 1 `OPEN`,
@@ -152,6 +152,55 @@ is no first-green to return early at, so the same 36 layouts still get built.
 It reorders them (grow=2 is reached far sooner) but does not cut total work.
 Making those three faster requires *finding a green configuration*, not failing
 faster.
+### 4. Field depth sized for the bus lanes — `layout.py`, one line (alu4's placement wall)
+
+**How it was found:** alu4 is the cheapest of the four, so it went first. It
+died in *placement*, before any search — `AND blocked for A0B0`, 0.0s, **zero
+candidates tried**, identically on every seed. Nothing diagnoses a phase-1
+failure (the dump lives in routing), so `spot_free`'s four reject paths were
+instrumented — one line per exit, temporary, reverted after. Three calls, three
+reasons: `lane:OP1` on row 12, `lane:A1` on row 26, `bounds` on row 40.
+
+**Root cause is upstream of the placer.** Band assignment gives every gate its
+own band (`g["band"] = i`), so `counts` in the D formula is all 1s and
+
+```
+D = 12 + max(counts.values()) * 14 + 12   ->   38
+```
+
+**for every build, regardless of size.** 38 admits two usable rows. The bus
+lanes are stamped at the **bottom** of the field (`lz = D - 4 - idx * 2`) and
+are full width, so alu4's 10 inputs put lanes on z=16..34 — straddling the grid
+row at z=12, whose footprint reaches z=18. Every gate's slot is lane-blocked,
+`gridrows` then falls *downward* into the next lane, and the third row (z=40)
+is cut off by the bounds check. Placement could not succeed at any seed.
+
+**Fix:** the top grid row's footprint bottoms out at z=18, so the lowest lane
+must sit below it — `D - 4 - 2*(inputs-1) > 18`, i.e.
+`D = max(D, 24 + 2*len(recipe["inputs"]))`. One line, and `max()` so it cannot
+disturb a build that already placed: the four small builds and micro1 all have
+≤4 inputs (needing ≤32), so their D stays 38.
+
+**Result — the whole dense family now passes placement at grow=0:**
+
+| recipe | gates / inputs | verdict |
+|---|---|---|
+| alu1 | 21 / 5 | routing (40 unrouted at cap 150) |
+| **alu4** | 72 / 10 | **placement now PASSES** → routing (192 unrouted) |
+| cpu4 | 126 / 7 | routing (394 unrouted) |
+| ctrl_decode | 15 / 3 | routing (65 unrouted) |
+| micro1 | 10 / 4 | routing (14 unrouted) |
+
+4/4 small-build hashes byte-identical; micro1 still generates (2452 blocks,
+8 vectors, 25s); all gates green. Probe: `scratch/placecheck.py <cap>` gives a
+placement-vs-routing verdict per recipe, bounded so placement either passes or
+fails fast instead of burning 600s.
+
+**This does not make alu4 green.** It now fails at the *same* wall as alu1
+(`no route for OP0`, 78 unroutable after a full uncapped attempt). What it
+removes is a whole class of failure that was masking the real one — and it
+means the remaining work is **one shared problem, not four**.
+
 ## What failed (with evidence, no theory)
 
 - **The approved "input port corridors" spec — IMPLEMENTED, MEASURED, REVERTED.**
@@ -263,12 +312,9 @@ Next experiment, in order:
    mechanism — the booster-side probe was clean there. 2 cells, still open.
 3. **The dense wall is now the whole remaining project, and it is three
    different problems, not one.** Ordered by cost-to-first-green:
-   - **alu4 — cheapest.** It dies in *placement* (`AND blocked for A0B0`,
-     `tried=0`, 0.0s), so nothing in the router is even reached. That is a
-     port-grid/band-sizing question, not a routing one, and it is the only one
-     of the three that fails before spending any search. The handoff records
-     `grows=2` passes placement, so the first cheap probe is alu4 at grow=2
-     with a hard search cap, streaming.
+   - **alu4 — placement wall CLEARED (`2db73c9`), so it is no longer a
+     separate problem.** It now shares alu1's routing wall. The old advice to
+     "probe alu4 at grow=2" is obsolete: grow=0 now places.
    - **alu1 — the lever-to-gate distance.** Not space (falsified above). The
      two landed fixes bought 10 of ~74 unreached loads. The evidence says the
      driver sits ~386 cells from its load, so the lever bank placement — not
