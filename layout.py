@@ -1319,7 +1319,18 @@ def layout(recipe, seed=None, grow=0):
                     # the near foot is exact: a hop is straight and monotonic
                     # along its axis. Free: the same cells, re-partitioned.
                     _mid = sorted(_dst, key=lambda c: (c[0] - fa[0]) ** 2 + (c[2] - fa[2]) ** 2)
-                    paths[-2] = (list(pa) + list(_mid) + list(pb), net, ())
+                    _m = list(pa) + list(_mid) + list(pb)
+                    # ponytail: the cover assumes a CHAIN -- place_rep derives a
+                    # repeater's facing from the step into its cell, so a
+                    # non-adjacent pair here would face a repeater the wrong way
+                    # and feed the hop instead of the tile. Cheap to assert, and
+                    # a wrong order would otherwise be a silently wrong circuit.
+                    for _u, _v in zip(_m, _m[1:]):
+                        if max(abs(_u[0] - _v[0]), abs(_u[1] - _v[1]),
+                               abs(_u[2] - _v[2])) != 1:
+                            raise RuntimeError(
+                                f"bridge splice not a chain on {net}: {_u} -> {_v}")
+                    paths[-2] = (_m, net, ())
                     paths.pop()
                 except RuntimeError:
                     # ponytail: undo the hop. This used to rely on the caller
