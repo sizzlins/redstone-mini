@@ -1,4 +1,4 @@
-# Handoff — redstone-mini (2026-09-27, Steps 1–4 + tile inputs 7/7; census re-run)
+# Handoff — redstone-mini (2026-09-27, tile inputs 7/7; dense walls researched)
 
 > **Read this section first.** It is the state of play; everything below is
 > the detailed history, kept for the evidence.
@@ -16,8 +16,8 @@ correct under those rules, (3) only then make the dense builds
 
 ## Current state
 
-Branch `phase2-design`, **59 ahead / 1 behind** `origin` (remote sync needs
-explicit approval). Tree clean apart from untracked plan docs. HEAD `32c54b6`.
+Branch `phase2-design`, **60 ahead / 1 behind** `origin` (remote sync needs
+explicit approval). Tree clean apart from untracked plan docs. HEAD `e755a32`.
 Suite green: `recipe.py`, `sim.py` (now with the `dlatch` canary), `layout.py`,
 `serve.py --check`.
 
@@ -43,7 +43,7 @@ oracle in place of the in-game test.
 | NOT tile input port | **fixed** `48824d9` (own E-W stub ends at `(bx-1,bz)`, points east at host; guard change skipped — cheap kill took `probe_not` to 0 flips) + pointing sim **landed** same commit |
 | XOR levers | **1 per input, asserted** `32b6fc6` (side feeds are repeaters; wiki strong-side rule quoted in message) |
 | Export blockstates | **fixed** `0421c54` (every wire line carries side/none states) + `.schem` round-trip check; negative control 66/66 bare-id cells fail it |
-| **Dense builds — reframed** | **NOT input distribution. The binding constraint is total ground corridor.** The spine experiment *proved* the old diagnosis wrong: feeding inputs cheaply just moves the starvation to gate nets (NO-ATTEMPT 41→11, no-search 26→49, total only 67→60). No dense build is green. |
+| **Dense builds — four walls, not one** | Corridor is only the alu1/cpu4 wall. Measured post-fix: micro1 seed None dies on bridge churn (5 hops built, all reverted, `pa` litter left stamped; 1-cell `pb` sealed by W); micro1 seed 2 routes fully and fails electrically (S-row repeater + routed dust form a closed non-inverting loop — bistable in sim AND vanilla, kicked by a booster transient; plus nOP sustained hot with OP=1, arrival decay at the NOT tile or tile misfire, port check open); alu4 dies pre-routing (`tried=0`, grows=2 passes placement — cost-scale); ctrl_decode uncapped dies on `n2`. Work list is reordered below — corridor mechanism is last, not first. |
 | **Tile input arrival level — FIXED 7/7** | **`32c54b6`: repeater cells are not dust.** Two faces of one root cause (the tile `del`s the wire label, the router re-added it by stepping onto the cell): seeds 4/5 double-stamped wire+repeater, so the sim modelled both — a phantom loop holding SET across hold (the world gets one block); seed 1 routed *through* the east-facing S-row repeater north-south, so the load behind it never fed. Search guard in `astar.ok()` (all searches funnel through it; XCHECK reference mirrored, green) + repeater-wins at materialization. `dlatch` canary (7 seeds, sequence + no-dup assert) landed in `sim.py __main__` same commit. |
 | Census re-run (item 2) — DONE | alu1 6 seeds cap 700 post-fix: **41 NO-ATTEMPT (unchanged), 19 no-search (was 26), 1 solid, total 67→61.** Same cast eating the budget (A/B/OP0/CIN 94–501 tries), gate nets still starved. **Corridor conclusion survives.** The 1 solid (seed 2, B load on bridge-stamped cobble) is cap-order fallout, not a finding. |
 | **Single-lever panel** | **VERIFIED, and now enforced electrically** (`c1fe1c5`). An input feeding N gates costs **1** lever: all 9 recipes, and the load is reachable from that one lever by walking the real net graph. Measured saving: alu4 43→10 levers, alu1 15→5, cpu4 30→7, ctrl_decode 12→3, micro1 8→4. The old bars counted *labels* only; the new one also proves no lever shorts a second net. Two negative controls fire. |
@@ -51,6 +51,39 @@ oracle in place of the in-game test.
 | Byte-identity canary | `e79bfa6d` / `b4a9cc9b` / `40730f4c` unchanged; xor **`8de8a1ef`→`59638d5c` (`32c54b6`, 332→344 blocks, y>=2 47→0)** — its old route crossed a tile repeater cell, now illegal, so it cascades flat (+12 blocks). Honest movement, same bug class. Bridge splice still fires on every D-latch seed, which the new `dlatch` canary locks. |
 
 ## What changed
+
+### Dense walls researched (2026-09-27, no code — triage + dumps only)
+
+- **Triage, all bounded post-fix:** alu1 budget/97 pending; micro1 `no route
+  for S: (47,16)->(47,17)` (1-cell gap, "touches W"); alu4 `AND blocked for
+  A0B0` verbatim (placement unchanged by the search guard — phase 1, no
+  `astar` involved); cpu4 budget/413 pending; ctrl_decode budget-like at cap
+  700 (hard `n2` wall uncapped).
+- **micro1 seed None — bridge churn, not raw space.** Hop log (wrapped
+  `bridge_stamp`): S built 5 hops (Q 1, T0 1 alongside); every S hop reverted
+  on a failed `pb`, and each left its `pa` approach path stamped
+  (`(51,17)`, `(43,16)`, `(55,17)` survive in the dump as orphans). Three
+  local defects: failed hops don't revert `pa`; a ripped bridge leaves its
+  `solid` cobble pillars forever (rip-up dels `wires`+`sup` only —
+  `bridge_stamp` put supports in `solid`); `bridged` never-retries a ripped
+  hop. Final pocket (W north, tile cobble east, S-rings) is real, but the
+  router dug it deeper itself.
+- **micro1 seed 2 — first fully-routed micro1, SIM-FAIL Y ×2, two species.**
+  (a) S-row repeater `(80,19)` + routed dust close a **non-inverting loop**
+  (`(81,19)→(81,20)→(80,20)→(79,20)→(79,19)→back`). Tick-trace
+  (`_run_vec(until=)`): dark at tick 6, latched hot by tick 10 — a
+  booster-settling transient (west row `(77,15)=3` at tick 2) kicks it once
+  and it holds. Bistable in vanilla too: **true red, sim correct.** The
+  router may no longer step ON repeater cells (`32c54b6`) but may still join
+  front-arm to back-arm around one. (b) nOP sustained hot (15-peaks at
+  164/170/181/190,20) with OP=1: boosters can't latch (no feedback), so the
+  NOT tile genuinely drives — OP arrives dark at its port (arrival decay) or
+  the tile misfires. **Port-level check open.** Vector 1 in the same build is
+  consistent (Q=15 correct, T1 dark = Q→T1 leg dark).
+- **Corridor verdict unchanged** (alu1 41/19/1; cpu4 triage same mode) — but
+  it is now one wall of four, and the last to work on: items 1–3 below are
+  correctness fixes in the 0-block tradition, and micro1's routing wall is
+  churn it inflicts on itself.
 
 ### Tile inputs resolved (2026-09-27, `32c54b6` — D-latch 4/7 → 7/7)
 
@@ -541,28 +574,31 @@ branches cost very differently. Items 1+ do not depend on the answer.
 2. **DONE — census re-run: corridor conclusion survives (67→61, NO-ATTEMPT
    pinned at 41).** The arrival fixes cost 0 corridor and moved no dense
    needle, as predicted.
-3. **Act on the corridor reframing, not the spine.** The field is short of
-   *space*, not search. Any next mechanism must either create corridor (a real
-   height budget, or 2D layer reuse) or reduce cells consumed per net. Do **not**
-   re-run any input-distribution variant — measured to relocate the starvation.
-   Note the arrival-level fixes cost **0** blocks, which is the outcome to aim
-   for: a correctness fix that re-partitions existing cells rather than adding
-   any is available here, and it is the only kind that does not fight the
-   binding constraint.
-4. **micro1 output-tap reservation — the one item that demonstrably moves a
-   build.** Mechanism A got s0/s1 from a layout wall to a sim failure, the first
-   time those seeds fully routed. It needs the clearance *and* the wire-channel
-   reservation (both recorded above) and a resolution for why the shared-input
-   panel regresses under it. This is the cheapest remaining dense win.
-5. **micro1's `Q` mismatch: diagnosed, and it is item 1.** The old item 3 read
-   the symptom table as a diagnosis. Measured: the latch could not set because
-   its S row arrived at level 2 and died 4 cells short, and could not reset
-   because a bridged net's load arrived at level 0. Both root causes are now
-   fixed; 4 of 7 D-latch seeds are green. Nothing to chase here beyond item 1.
-6. **alu1/alu4/cpu4**: blocked on 1. When a mechanism is chosen, the acceptance
-   bar is unchanged and strict — **layout green AND verify green AND
-   `export-rt` green**. Nothing counts until all three.
-7. **Housekeeping**: `origin` sync is **59 ahead / 1 behind** and still needs
+3. **alu4 at grows=2,3 — minutes, might delete a whole build.** Placement
+   passes at grows=2 (measured); see if full green follows. Discriminator:
+   green, or the next wall named.
+4. **All-or-nothing hops.** Revert `pa` when `pb` fails; un-stamp bridge
+   `solid` on rip-up; allow rebuild of a ripped hop. Discriminator: micro1
+   seed None's S segment closes and the dump shows no `pa` litter.
+5. **Static repeater-loop check.** Flag any tile repeater whose front and back
+   join via same-net dust (label graph + `repeaters` dict, no sim). Must be
+   clean on all green builds (D-latch 7 pass sim, so presumably clean) and
+   must FIRE on micro1-s2 before it ships — validation first, search
+   enforcement after. This is the cheap half of item 0, now with two
+   motivating cases (D-latch phantom + s2 loop).
+6. **Arrival floor.** Open probe first: OP-at-port on micro1-s2 (decay vs tile
+   misfire). Then a per-load minimum. Constrained by history: repeater-before-
+   every-load oscillated 7/7, so input-side buffering near latches is out.
+7. **micro1 output-tap reservation** (old item 4, unchanged): clearance *and*
+   wire-channel reservation, plus the panel-regression resolution. Still the
+   cheapest micro1 win once routing passes.
+8. **ctrl_decode `n2` wall** — undiagnosed; needs the micro1 treatment (dump
+   read: `(57,9)->(59,11)`, 668 unroutable uncapped), not theory.
+9. **Corridor mechanism — last, not first.** Only for the alu1/cpu4 wall, and
+   only a mechanism that *creates* space. Discriminator unchanged: NO-ATTEMPT
+   drops without no-search rising 1:1. Do **not** re-run any
+   input-distribution variant — measured to relocate the starvation.
+10. **Housekeeping**: `origin` sync is **61 ahead / 1 behind** and still needs
    explicit approval. The checked-in demo artifacts have been regenerated with
    wire states (`build.mcfunction` 1317/1317, sampled `.schem` 49/49, 0 bare);
    `32c54b6` leaves them byte-identical (no repeater-cell routes in the demo).
