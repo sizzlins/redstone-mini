@@ -29,13 +29,13 @@ same way. Everything below follows from that.
 | item | state |
 |---|---|
 | Router performance | **1.7x faster**, A/B'd, with a biconditional `REDSTONE_XCHECK=1` |
-| `dust_points()` pointing table | landed `9512d23`, wiki-asserted for all 5 shapes, **not yet consumed** |
+| `dust_points()` pointing table | landed `9512d23`, wiki-asserted for all 5 shapes, **consumed**: sim `cob_state` (`48824d9`) + exporter `wire_bid`/`export-rt` (`0421c54`) |
 | AND tile `~a` stub | **fixed and verified** `67987b0` (was dead under the wiki rule) |
-| NOT tile input port | **broken** under the pointing rule — blocks landing the pointing sim |
-| XOR levers | 2 per input (26 vs 10 on `alu4`); canary now counts it and reports the miss |
-| Export blockstates | **confirmed defect**: 106 wire lines, 0 with blockstate; worlds get dots |
+| NOT tile input port | **fixed** `48824d9` (own E-W stub ends at `(bx-1,bz)`, points east at host; guard change skipped — cheap kill took `probe_not` to 0 flips) + pointing sim **landed** same commit |
+| XOR levers | **1 per input, asserted** `32b6fc6` (side feeds are repeaters; wiki strong-side rule quoted in message) |
+| Export blockstates | **fixed** `0421c54` (every wire line carries side/none states) + `.schem` round-trip check; negative control 66/66 bare-id cells fail it |
 | Dense builds | `micro1` = tile geometry; `alu1/alu4/cpu4` = input-route budget starvation |
-| Byte-identity canary | moved deliberately for the two AND builds, re-baselined |
+| Byte-identity canary | re-baselined: `e79bfa6d` / `b4a9cc9b` / `03542c34` (wire states only, geometry proven identical) + xor `3449ff76` (tile + routes moved) |
 
 ## What changed
 
