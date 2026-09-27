@@ -1281,6 +1281,16 @@ def layout(recipe, seed=None, grow=0):
             dx, dz = TORCH_BACK[face]
             guard.add((x + dx, z + dz))
     pending = tasks[:]
+    # ponytail: duplicate tasks queue (re-queued segments land twice);
+    # routing both appends twin paths entries. O(1) count per pop instead of
+    # an O(n) scan (pops x pending is quadratic on dense). Recounted after
+    # every rebuild below; decremented on pop.
+    def _recount():
+        _d = {}
+        for _t in pending:
+            _d[_t] = _d.get(_t, 0) + 1
+        return _d
+    _pcount = _recount()
     # conductive blocks, maintained as tiles/bridges/pillars land: the search
     # reads this instead of rebuilding it per astar call.
     tilecob = {(x, 1, z) for (x, z), (k, _) in solid.items() if k == "cobble"}
@@ -1443,8 +1453,11 @@ def layout(recipe, seed=None, grow=0):
                         f"search budget exceeded ({_scap} A* calls) with "
                         f"{len(pending)} task(s) unrouted — raise "
                         f"REDSTONE_SEARCH_CAP or narrow the build")
-                _scount[0] += 1
                 s, t, net = pending.pop(0)
+                _pcount[(s, t, net)] -= 1
+                if _pcount[(s, t, net)]:
+                    continue  # duplicate queued; the twin still queued runs it
+                _scount[0] += 1
                 try:
                     route(s, t, net, use3d)
                     continue
@@ -1488,6 +1501,7 @@ def layout(recipe, seed=None, grow=0):
                                 _rip(s_, m)
                                 paths.remove((p, m, s_))
                         pending = [(s, t, net)] + extra_tasks + pending
+                        _pcount = _recount()
                         continue
                     if try_bridge(s, t, net):
                         continue
@@ -1508,12 +1522,14 @@ def layout(recipe, seed=None, grow=0):
                         _rip(s_, m)
                         paths.remove((p, m, s_))
                 pending = [(s, t, net)] + block_tasks + pending
+                _pcount = _recount()
             if not deferred:
                 break                       # pass drained: nothing left to fly
             if use3d:
                 stuck = deferred[0]          # last chance: keep it so it raises
                 break
             pending = [d[:3] for d in deferred] + pending   # pass 2: height allowed
+            _pcount = _recount()
             deferred = []
         if stuck is not None:
             raise RuntimeError(f"no route for {stuck[2]}: {stuck[0]} -> {stuck[1]} "
@@ -1585,7 +1601,20 @@ def layout(recipe, seed=None, grow=0):
         # `KeyError: (0,-2)`. A chain is always adjacent (which is all cover
         # and place_rep assume) and is less code. Bounded so a shared trunk
         # never drags in a far sibling branch.
-        cells = list(path)
+        # ponytail: feed fragments from the tail side. A path entry starting
+        # mid-chain dark (bridge foot, rip-up segment) is fed from its tail,
+        # not its head — tiling it head-first aims boosters backwards and
+        # leaves the head dark (micro1-s2 OP tile end; s0-Q turn-head).
+        # Reverse only a DANGLING head (no same-net dust outside the entry:
+        # true dead end) with no span inside (span direction is load-bearing).
+        # Source-rooted entries (driver/bank stub) and joined heads keep order.
+        _root = path[0] in _srcd
+        _ps = set(path)
+        _dan = all(wires.get((path[0][0] + dx, 1, path[0][2] + dz)) != net
+                   or (path[0][0] + dx, 1, path[0][2] + dz) in _ps
+                   for dx, dz in DIRS)
+        _span = any(c[1] >= 2 for c in path)
+        cells = list(path) if (_root or not _dan or _span) else list(reversed(path))
         seen = set(cells)
         g = c = cells[-1]
         while True:
@@ -1605,17 +1634,12 @@ def layout(recipe, seed=None, grow=0):
             c = nxt
         path = cells
         n = len(path)
-        # ponytail: tile to the source, not to index 14. The 14-floor assumes
-        # path[0] is a live source (driver/bank stub); a bridge/rip-up segment
-        # starts mid-chain dark, so its head 14 went silently dark (micro1-s2
-        # OP: entries bank->(148,37) + (148,33)->tile, tile end dead). Heads
-        # without a source tile to 0; no straight triple there fails loud.
-        _root = path[0] in _srcd
         i = n - 1
-        while i > (14 if _root else 0):
+        while i > 14:
             j = _cover_gap(path, i)
             if j is False:
-                raise RuntimeError(f"unboostable gap on {net} near index {i} (twisty path)")
+                raise RuntimeError(f"unboostable gap on {net} near index {i} "
+                                   f"(twisty path): head={path[0]}")
             place_rep(path, net, j)
             i = j
 
@@ -1723,7 +1747,8 @@ def layout(recipe, seed=None, grow=0):
     dead = [(x, y, z) for (x, y, z) in wires if (x, y, z) not in reached
             and wires[(x, y, z)] != "0"]  # undriven "0" stubs read 0 unconnected
     if dead:
-        raise RuntimeError(f"OPEN (unconnected dust, nothing drives it): {dead[:6]}")
+        _dn = [(c, wires[c]) for c in dead[:6]]
+        raise RuntimeError(f"OPEN (unconnected dust, nothing drives it): {_dn}")
     # ponytail: shrink-wrap grid to content (+3 margin). A 13x4 gate on a
     # 30x38 pad photographs as sprawl even when every wire is minimal.
     OCC = [(x, 1, z) for (x, z) in solid] + list(wires)
