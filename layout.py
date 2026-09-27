@@ -1208,6 +1208,17 @@ def layout(recipe, seed=None, grow=0, reserve=False):
                     for cx_, cz_ in set([(ox, gz), (ox, gz + 4)] + Adust + Bdust + Odust):
                         for dx, dz in DIRS:
                             ring(cx_ + dx, cz_ + dz, fam)
+                    # ponytail: comparator sides read dust (vanilla: side dust
+                    # counts; cmc sideInput dust branch). A routed wire beside
+                    # a side suppresses the output like a side feed — example_xor
+                    # went dark on a=0,b=1 via b-dust at C2 south, which the old
+                    # sim (and the tile's "dust never counts" comment) couldn't
+                    # see. Wall all four side cells in solid: search (hard),
+                    # bridge, taps and later tiles route around; tile stamps
+                    # are already done, repeater cells were already unroutable.
+                    for _sx, _sz in ((ox, gz - 1), (ox, gz + 1),
+                                     (ox, gz + 3), (ox, gz + 5)):
+                        solid[(_sx, _sz)] = ("cmpside", o)
                     pa, pb, po = (ox + 3, gz), (ox + 3, gz + 4), (ox - 2, gz + 6)
                     pos[o] = po
                     recs.append((op, o, a, (pa, pb, po)))
