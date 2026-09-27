@@ -16,8 +16,8 @@ correct under those rules, (3) only then make the dense builds
 
 ## Current state
 
-Branch `phase2-design`, **73 ahead / 1 behind** `origin` (remote sync needs
-explicit approval). Tree clean apart from untracked plan docs. HEAD `8da0cb1`.
+Branch `phase2-design`, **75 ahead / 1 behind** `origin` (remote sync needs
+explicit approval). Tree clean apart from untracked plan docs. HEAD `d95460f`.
 Suite green: `recipe.py`, `sim.py` (now with `dlatch`, `pointing-mirror`,
 `lamp-sources`, `comp-side-dust` and `torch-burnout` canaries), `layout.py`,
 `serve.py --check`.
@@ -80,6 +80,9 @@ oracle in place of the in-game test.
 - **Vindicated, no change:** repeater-loop latching (vanilla latches too —
   burnout is torch-only), side torch (cmc agrees), weak-block feeding dust
   (`pbs` is strong-only already), comparator formulas/facing (match wiki).
+- **Render question (no fix):** lamp beside lit passing dust, dark in
+  `build.html` — checked on the shipped layout across all vectors, vanilla
+  agrees (passing line points away). True, no change. `scratch/lampaudit.py`.
 
 ### Sensing unmirrored + tiles funnelled (`7ee8faf` — D-latch 7/7, s3 green)
 
@@ -683,6 +686,7 @@ commits above):
   dumps. `scratch/xorscope.py` — XOR seeds × sim verdicts + b-pergola trace.
   `scratch/burnphase.py`, `scratch/fliptime.py`, `scratch/fliptime2.py` —
   torch flip timelines (until-stepped; no product edits needed for traces).
+  `scratch/lampaudit.py` — lamp-vs-dust audit on the shipped XOR layout.
 
 ### Environment notes (cost me real time; do not relearn)
 

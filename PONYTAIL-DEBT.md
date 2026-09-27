@@ -98,6 +98,12 @@ anti-rot devices themselves, listed for completeness.
 - sim.py:330, sim scope flat builds + chip-layer verticals, vanilla delays.
   ceiling: no full 3D. upgrade: none named. `no-trigger`
 - sim.py:399, delay-4 self-check (check-marker, not a shortcut). `no-trigger`
+- sim.py:burnout, no relight path (raise aborts the run on burn).
+  ceiling: vanilla relights after 160 ticks + block update and continues dark;
+  we fail loud instead, so a build that burns and then settles right still
+  reads red. Correct verdict, poorer trajectory info.
+  trigger: revisit if a build ever burns yet settles with matching lamps
+  (vanilla would pass it; we fail it loud).
 
 ## Watch list (real ceilings, no trigger)
 
