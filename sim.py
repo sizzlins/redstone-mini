@@ -99,6 +99,7 @@ def _run_vec(vec, init, ctx, until=None):
         last_change[0] = steps[0]
 
     flips = {}  # cell -> value changes; the churn set is the oscillator core
+    _bout = {}  # torch -> recent flip ticks; burnout bookkeeping (vanilla)
 
     def sched(tick, kind, cell):
         seq[0] += 1
@@ -244,6 +245,8 @@ def _run_vec(vec, init, ctx, until=None):
                 sd = comp[s]
                 if (s[0] - sd["rear"][0], s[1], s[2] - sd["rear"][1]) == c:
                     sl = max(sl, con.get(s, 0))
+            elif s in dust and pw.get(s, 0) >= 1:
+                sl = max(sl, pw.get(s, 0))
             elif s in cob and pbs.get(s, False):
                 sl = max(sl, 15)
         return rl, sl
@@ -337,6 +340,17 @@ def _run_vec(vec, init, ctx, until=None):
             tsched.discard(c)
             v = not pb.get(torch[c], False)
             if tl.get(c, False) != v:
+                # ponytail: vanilla burnout — a torch forced OFF more than
+                # eight times in 60 game ticks (= 30 sim ticks: delay-4 settles
+                # at tick 4, so 1 sim tick is 1 redstone tick) dies dark. OFF
+                # transitions only: a healthy settle flips a few times total,
+                # hunts alternate forever. Shipping gate fails loud, not hangs.
+                if tl.get(c, False) and not v:
+                    _bt = tuple(t for t in _bout.get(c, ()) if now - t < 30) + (now,)
+                    _bout[c] = _bt
+                    if len(_bt) > 8:
+                        tl[c] = False
+                        raise RuntimeError(f"TORCH BURNOUT at {c} (shipping red)")
                 tl[c] = v
                 flips[c] = flips.get(c, 0) + 1
                 mark(); wake(now, c)
@@ -364,12 +378,25 @@ def _run_vec(vec, init, ctx, until=None):
         # ponytail: lamps need pointing-at dust (vanilla arms). End-of-line
         # dust aims at the lamp beyond its tip; a straight run passing
         # sideways does not light a side lamp. Isolated dust counts (cross
-        # assumed; layouts never stamp dots).
+        # assumed; layouts never stamp dots). Dust on top, powered blocks,
+        # lit torches (not attached here), rblk and levers also light (wiki).
         for dx, dz in DIRS:
             if pw.get((cell[0] + dx, cell[1], cell[2] + dz), 0) < 1:
                 continue
             if all((cell[0] + dx + ex, cell[1], cell[2] + dz + ez) not in dust
                    for ex, ez in DIRS if (ex, ez) != (dx, dz)):
+                return True
+        if pw.get((cell[0], cell[1] + 1, cell[2]), 0) >= 1:
+            return True
+        for dx, dz in DIRS:
+            m = (cell[0] + dx, cell[1], cell[2] + dz)
+            if m in cob and pb.get(m, False):
+                return True
+            if m in torch and tl.get(m, False) and torch[m] != cell:
+                return True
+            if m in rblk:
+                return True
+            if m in lever and vec.get(lever[m], False):
                 return True
         return False
     return ({net: _lit(cell) for cell, net in lampnet.items()},
@@ -692,4 +719,39 @@ if __name__ == "__main__":
     _, _, _mtl, _, _, _ = _run_vec({}, None, _mp)
     assert _mtl.get((2, 1, 1), 0) == 1, _mtl
     print("pointing-mirror ok: corner leaves its unconnected side dark")
+    # ponytail: lamp/comparator/burnout oracle checks (wiki + cmc engine).
+    # Dust on top lights; powered block beside lights; lit torch (not
+    # attached here) lights. Comparator side dust counts (subtract kills).
+    # A hunting torch burns out dark instead of hanging the run.
+    _lb = [(0, 2, 1, "minecraft:redstone_wall_torch"), (1, 2, 1, W_),
+           (1, 1, 1, "minecraft:redstone_lamp")]
+    _lp2, _ = _hand(_lb, {}, {(1, 1): "y"})
+    assert _run_vec({}, None, _lp2)[0].get("y", False) is True, "dust-on-top must light"
+    _bb = [(0, 1, 0, "minecraft:lever"), (1, 1, 0, W_), (1, 1, 1, CB),
+           (2, 1, 1, "minecraft:redstone_lamp")]
+    _bp, _ = _hand(_bb, {(0, 0): "a"}, {(2, 1): "y"})
+    assert _run_vec({"a": 1}, None, _bp)[0].get("y", False) is True, "powered block must light"
+    _tb = [(0, 1, 1, "minecraft:redstone_wall_torch[facing=east]"),
+           (0, 1, 0, CB), (1, 1, 1, "minecraft:redstone_lamp")]
+    _tp, _ = _hand(_tb, {}, {(1, 1): "y"})
+    assert _run_vec({}, None, _tp)[0].get("y", False) is True, "lit torch must light"
+    print("lamp-sources ok: top dust, powered block, free torch")
+    _sb = [(2, 1, 0, "minecraft:lever"), (1, 1, 0, W_),
+           (0, 1, 0, CMP + "[facing=east,mode=subtract]"),
+           (0, 1, 1, W_), (0, 1, 2, "minecraft:lever"),
+           (-1, 1, 0, W_), (-2, 1, 0, "minecraft:redstone_lamp")]
+    _sp, _sio = _hand(_sb, {(2, 0): "r", (0, 2): "s"}, {(-2, 0): "y"})
+    _sg, _, _, _, _, _sc = _run_vec({"r": 1, "s": 1}, None, _sp)
+    assert _sc.get((0, 1, 0), 99) == 0 and _sg.get("y", True) is False, "side dust must suppress"
+    print("comp-side-dust ok: subtract kills on hot side dust")
+    _ob = [(0, 1, 0, CB), (1, 1, 0, "minecraft:redstone_wall_torch[facing=east]"),
+           (2, 1, 0, W_), (2, 1, 1, W_), (2, 1, 2, W_), (1, 1, 2, W_),
+           (0, 1, 2, W_), (0, 1, 1, W_)]
+    _op, _ = _hand(_ob, {}, {})
+    try:
+        _run_vec({}, None, _op)
+        assert False, "burnout clock should burn, not settle"
+    except RuntimeError as _e:
+        assert "BURNOUT" in str(_e), str(_e)[:80]
+    print("torch-burnout ok: hunting torch dies dark, loud")
 
