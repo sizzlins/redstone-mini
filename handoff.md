@@ -334,6 +334,22 @@ costs micro1 two green seeds), grow the field expecting relief (falsified for
 alu1), a fifth micro1 router constraint without a named hypothesis, or the
 OR-junction and ringed-cell theories (both falsified).
 
+- **Per-input lever bank (median-row placement) — TRIED, MEASURED, REVERTED.**
+  Second placement idea to die by the *same* mechanism as corridors, which is
+  the pattern. Measured first: every alu1 input crosses 127–214 cells at
+  grow=0 (OP1 214, OP0 203, A/B 166, CIN 127; loads span z=12..141, levers all
+  at z=176 — `scratch/bankdist.py`). Fix: park each input's lever just south
+  of its own loads' median grid row (replicating placement's bandrows math),
+  cutting maxdist 2.4–4×. Small-build canaries all passed — then micro1's two
+  green seeds both died, and the full 12-seed ladder came back **0/12, down
+  from 2/12**, with 10 of 11 failures on *gate* nets (T0/T1/S/Q/R ×2 each).
+  Inputs improved; gates collapsed. Relocation by the standing discriminator.
+  Mechanism: a lever plus its 4-cell ring in the middle of the field is a wall
+  for gate routes — same species as corridors. So **two independent placement
+  moves now agree: anything put in the middle of the field costs more ground
+  than the shorter input routes save.** The lever bank stays at D-2; the tree
+  is byte-identical to before the attempt.
+
 ## Files touched
 
 ### Uncommitted, `layout.py` (+93 / −4)
