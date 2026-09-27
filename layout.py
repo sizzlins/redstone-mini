@@ -687,6 +687,17 @@ def layout(recipe, seed=None, grow=0, reserve=False):
             b = g.get("band", -1)
             counts[b] = counts.get(b, 0) + 1
         D = 12 + max(counts.values()) * 14 + 12
+        # ponytail: D must clear the bus lanes, which are stamped at the BOTTOM
+        # (lz = D-4-idx*2) and are full width, so a lane straddling z=18 blocks
+        # every gate's grid slot and gridrows then falls DOWN into more lanes
+        # until the bounds check stops it. With one band per gate, counts is all
+        # 1s and D was pinned at 38 for every build: alu4 (10 inputs, lanes at
+        # z=16..34) found 3 rows -- 12 lane-blocked, 26 lane-blocked, 40 out of
+        # bounds -- and died in placement in 0.0s, `tried=0`. The top grid row's
+        # footprint bottoms out at z=18, so the lowest lane must sit below it:
+        # D-4-2*(inputs-1) > 18. max() leaves every build that already placed
+        # untouched (4 small + micro1 all have <=4 inputs, needing <=32).
+        D = max(D, 24 + 2 * len(recipe["inputs"]))
     # ponytail: infinite room = grow on demand. Each grow doubles the field;
     # placement is deterministic so extra space only ever helps detours.
     # (W cap fits ~830 bands; cpu4 needs 247.)
