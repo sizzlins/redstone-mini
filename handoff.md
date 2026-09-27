@@ -1,6 +1,144 @@
 # Handoff — redstone-mini (2026-09-26, 3D Attempt 1)
 
-## Goal (evolved)
+> **Read this section first.** It is the state of play; everything below is
+> the detailed history, kept for the evidence.
+
+## Goal
+
+Ship a generator whose output is **100% vanilla Minecraft compatible** — every
+build is exported to `.schem` and pasted into a real world, so the simulator is
+a *shipping* gate, not a design aid. A false green is a broken build in
+someone's world.
+
+In order: (1) make the sim trustworthy against the wiki, (2) make the tiles
+correct under those rules, (3) only then make the dense builds
+(`alu1/alu4/cpu4/micro1`) generate.
+
+## Current state
+
+Branch `phase2-design`, **47 ahead / 1 behind** `origin` (remote sync needs
+explicit approval). Tree clean apart from untracked plan docs. HEAD `67987b0`.
+Suite green: `recipe.py`, `sim.py`, `layout.py`, `serve.py --check`.
+
+**The governing discovery: this project had no external oracle.** The sim and
+the layout encode no redstone *pointing* rule at all, so they agreed with each
+other — layout stamped a wire end-cell beside a block, `cob_state` said
+"adjacent dust powers it", the tile verified green, and both were wrong the
+same way. Everything below follows from that.
+
+| item | state |
+|---|---|
+| Router performance | **1.7x faster**, A/B'd, with a biconditional `REDSTONE_XCHECK=1` |
+| `dust_points()` pointing table | landed `9512d23`, wiki-asserted for all 5 shapes, **not yet consumed** |
+| AND tile `~a` stub | **fixed and verified** `67987b0` (was dead under the wiki rule) |
+| NOT tile input port | **broken** under the pointing rule — blocks landing the pointing sim |
+| XOR levers | 2 per input (26 vs 10 on `alu4`); canary now counts it and reports the miss |
+| Export blockstates | **confirmed defect**: 106 wire lines, 0 with blockstate; worlds get dots |
+| Dense builds | `micro1` = tile geometry; `alu1/alu4/cpu4` = input-route budget starvation |
+| Byte-identity canary | moved deliberately for the two AND builds, re-baselined |
+
+## What changed
+
+- `812c464`/`7626779`/`c3db58a` — three perf hoists. The coupling predicate
+  re-probed ~12 neighbours **per candidate** (10.1M calls, 63M `dict.get` on
+  `alu1`, i.e. the whole layout cost) though it depends only on the cell and
+  the wires, so it is now one set per search built from the foreign side;
+  `ok()`'s three static-obstacle lookups merged into one; the build windowed to
+  the search's own margin box. **`alu1` 18.3s→10.65s, micro1 1.10s→0.63s,
+  end-to-end 1.56x.** One hoist tried and **reverted** (per-route forb: no gain).
+- `9980750` — the lever canary now covers XOR. It had only ever exercised
+  AND/OR, so **XOR was never counted** — that blindness is how
+  2-levers-per-input hid inside a gate that read "single lever per input".
+- `9512d23` — `dust_points()`, the one missing rule, in `layout.py` so the sim
+  and the exporter will share it and cannot drift apart.
+- `67987b0` — the AND tile's `~a` stub reshaped N-S→E-W so it points at its NOR
+  host. Verified **both ways**: with a pointing-aware sim all four small builds
+  go green; without it two of them fail.
+- `76d5233`/`8c67e77`/`ee1ba3f` — handoff: perf results, the single-lever
+  exemption struck, the export defect recorded.
+
+## What failed (with evidence, no theory)
+
+- **My OR-diode adjacency hypothesis — falsified by my own measurement.** Every
+  OR load cell has **3 router-legal approaches, 0 ringed**, so a "≥2 free
+  approaches" guard is a no-op.
+- **The OR-cluster wall theory — wrong, and it dates from the first handoff of
+  this project.** The cause column proves the failing OR drivers were
+  **NO-ATTEMPT**: never searched, because `A`/`B`/`OP0` were searched 200–360x
+  each at 40–75% failure and ate the whole budget. Positional downstream
+  damage, not a junction defect. The junctions are real and fine.
+- **"Connected vs cross" as the pointing rule — wrong.** I asserted it with the
+  wiki open; the rule is **pointing**, from the connection shape. The owner's
+  in-game test is what caught it.
+- **"The `~a` reshape is byte-neutral" — false.** Counts unchanged, but the
+  canary moved for both AND builds. The canary was right, the claim wrong.
+- **"`(ox+1,gz+1)` isn't ring-covered" — false.** It already was; no ring edit
+  was needed.
+- **The step-1 OR clamp — net negative, reverted.** Correct physics (a repeater
+  only reaches its junction at step 1) but 1.7x slower for identical routing,
+  because it turns placements into failures. It also revealed that the
+  project's own `y = a OR b` self-check hits a step-3 repeater on **attempt 1**,
+  so `layout_retry` has been silently burning attempts on broken ORs.
+- **"Single lever per input" — never verified where it was claimed.** XOR was
+  never counted.
+- **Every capped `alu1` number is a lower bound, not a diagnosis** — capped
+  results are order-dependent.
+
+## Files touched
+
+- `layout.py` — perf hoists (`_coupling_forb`, the `hard` set, the inlined
+  coupling test, the windowed build); `dust_points()` + wiki self-check; the
+  AND `~a` reshape.
+- `sim.py` — measured and **deliberately unchanged**: a settling verify is
+  0.03s, so `dust_lvl` was not worth touching, and the pointing-aware
+  `cob_state` was measured, found to break the NOT tile, and reverted.
+- `handoff.md` — this file.
+- `scratch/census_cause.py` — the census **with a cause column** (`solid` /
+  `ringed` / `NO-ATTEMPT` / `no-search`). Use this for any diagnosis, never
+  `census_capped.py`.
+- `scratch/redstone-mechanics-report.md` — wiki-grounded mechanics; now carries
+  the pointing table and the unresolved `[GAP]`.
+- `scratch/flat_hash.py`, `prof_all.py`, `not_approach.py`,
+  `pointing_impact.py` — A/B and probe harnesses (untracked by design).
+- Untouched: `recipe.py`, `serve.py`, `export.py`, `core.py`.
+
+## What next (in order)
+
+1. **In-game end-cell test — the only true gate, and the owner must run it.** A
+   north–south 2-dust wire that ENDS due west of a block, torch on that block,
+   lever on the wire. Torch off ⇒ the sim is right. Torch stays on ⇒ the
+   pointing model is right. Everything below is downstream of this.
+2. **Feed tile input ports from ON TOP of the host.** "On top" carries no shape
+   condition at all, so it is pointing-proof *by construction* — tile-local and
+   canary-safe. This generalises the `~a` fix and is the lazy answer: the NOT's
+   port is fed from the side, so its correctness depends on *where the router
+   approached*. Check the AND's external `A`/`B` ports too — they are
+   router-fed and exposed to the same class. The alternative is a router
+   approach constraint (new machinery, costs the canary).
+3. **Then land the pointing sim** (`cob_state` → `dust_points`) once the NOT and
+   the ports are fixed. Unblocked by 1+2, not before.
+4. **Export the wire blockstates** from the net map, plus an **export round-trip
+   check** (export → read the `.schem` back → assert every wire's states match
+   `dust_points`). Required by the 100%-vanilla goal regardless of how 1
+   resolves; the round-trip would have caught this today.
+5. **XOR input corridor** — ungate one approach cell so a routed wire can reach
+   the port and the second lever per input goes away. Hypothesis-independent: a
+   comparator reads its rear's *level*, and pointing is not involved in
+   comparator input.
+6. **Input distribution** (`spine-on-top` for `A`/`B`/`OP0`) — the census says
+   inputs are **15/15** of the genuine search failures. This is what actually
+   unblocks `alu1/alu4/cpu4`, and the only step that spends the canary.
+7. **micro1's latch `Sdust` stub** at `(81,16)` beside its Q-side torch attach —
+   tile geometry, and no router constraint can refuse the tile's own wire.
+8. **The 2 ringed load cells** in the `alu1` census — the only structural
+   failures left; no amount of budget fixes a reserved cell.
+
+**Do not** re-litigate the OR junctions, and do not read a symptom table as a
+diagnosis: three wrong inferences this session all came from doing that.
+
+## History (details and evidence behind the summary above)
+
+### Goal (evolved)
 1. Phase 1 port grid → DONE, PR #1 merged.
 2. Phase 2 routing → lanes/trunks/relays walled → shipped maze per-hop +
    master boosters + bridges + astar cap + two-tier rip-up. PR #2 MERGED
@@ -17,7 +155,7 @@
    supports stamped once on the winning path, repeaters keyed (x,y,z) and
    legal on pillars.
 
-## Current state
+### Current state
 - **Branch `phase2-design`** (ahead 22, behind 1 — sync still needs a force
   decision). Tracked tree CLEAN; everything below is committed.
 - **Commit chain this session:** `b0e4788` handoff → `33f3f2a` 3D Attempt 1
@@ -234,7 +372,7 @@
   fifth without a new hypothesis** — the constraint belongs in the tiles.
 - alu4 / ctrl_decode / cpu4: **never measured.** Stage-1 reads are ~2s each.
 
-## Method note (the part worth keeping)
+### Method note
 - **540s → 113s came from fixing two real bugs, NOT from the margin trim.**
   `try_bridge` left orphaned elevated dust when a hop failed (the OPEN that
   made all 36 attempts redundant), and the cover pass walked a tree while
@@ -253,7 +391,7 @@
      "impossible", check the threshold before theorising about the system.
 
 
-## Method note (the part worth keeping)
+### Method note (continued)
 - **540s → 113s came from fixing two real bugs, NOT from the margin trim.**
   `try_bridge` left orphaned elevated dust when a hop failed (the OPEN that
   made all 36 attempts redundant), and the cover pass walked a tree while
@@ -273,7 +411,7 @@
   fixes below removed most of it. **micro1's full 36-attempt budget: 540s →
   113s.**
 
-## What changed (newest last)
+### What changed (newest last)
 1. **Cover pass walks a chain, not a tree** (`2c03602`) — the stub-tail walk
    appended cells in *discovery* order, so consecutive entries could be two
    cells apart (`(114,1,13) -> (114,1,11)`). `_straight3` still calls that
@@ -309,7 +447,7 @@
   only by shorting, so they were never valid builds (sim would have failed
   them). Correctness kept, no valid build lost.
 
-## What changed (newest last)
+### What changed (newest last) (continued)
 1. **3D Attempt 1, uncommitted**: 6-dir A\* (`_H=3`, level change costs
    `_STEPCOST=4`), flat-first two-pass scheduling (`_PASSES=2`, env
    `REDSTONE_3D_PASSES`), per-level guards (y≥2 ignores tile columns/rings/
@@ -341,7 +479,7 @@
    stable sort; `try_bridge` candidate sort gained `p` as final tiebreak.
    Three processes now produce identical builds.
 
-## What failed (with evidence, no theory)
+### What failed (with evidence, no theory)
 - **Flat dense delivery: still exhausted, unchanged** (handoff item 4). 3D is
   the only direction tried; it moves walls but does not close micro1.
 - **The 3D router is ~3x slower, and NOT because searches got expensive.**
@@ -372,7 +510,7 @@
   `layout_retry(verify=True)` = 12 seeds × 3 grows ≈ up to 36 layouts × ~100s
   on dense. Probe harness uses `tries=3, grows=1` instead.
 
-## Files touched
+### Files touched
 - **Tracked, modified, UNCOMMITTED:** `layout.py` (3D Attempt 1 + perf +
   determinism + `3d ok` self-check), `export.py` (repeater keyed (x,y,z) so a
   pillar repeater renders; the 2D `repinfo` crashed with `KeyError`).
@@ -389,7 +527,7 @@
   `layout_head.py`, `seq_*.txt`, `ladder3d.log`.
 - **Not committed by policy:** the 4 untracked plans, all of `scratch/`.
 
-## What next (in order)
+### What next (in order)
 1. **Re-census alu1 under the deferral** (`12dd3c9`). The old census is a lower
    bound taken while 25 nets were never attempted, so Attempt 2's scope is still
    unsettled — the owner's prediction that the failure set changes completely is
