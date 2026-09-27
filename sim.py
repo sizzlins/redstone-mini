@@ -4,7 +4,7 @@ import heapq
 import os as _os
 
 from core import DIRS, base
-from layout import layout
+from layout import layout, dust_points
 from recipe import eval_net
 
 # ponytail: settling budget. A dense build is ~10x the cells of a small one and
@@ -161,7 +161,10 @@ def _run_vec(vec, init, ctx, until=None):
         pwrd, strong = False, False
         for dx, dz in DIRS:
             m = (c[0] + dx, c[1], c[2] + dz)
-            if m in dust and pw.get(m, 0) >= 1:
+            # ponytail: dust powers a side block only when POINTING at it
+            # (dust_points, the one shared table) — a wire merely running past
+            # does not. Dust on top still counts (below), no shape condition.
+            if m in dust and pw.get(m, 0) >= 1 and (dx, dz) in dust_points(m, dust):
                 pwrd = True
             if m in rblk:
                 pwrd, strong = True, True

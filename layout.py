@@ -1111,6 +1111,14 @@ def layout(recipe, seed=None, grow=0):
                     for rx, rz in ((bx - 1, bz), (bx + 1, bz), (bx, bz - 1), (bx, bz + 1),
                                    (bx + 2, bz), (bx + 1, bz - 1), (bx + 1, bz + 1)):
                         ring(rx, rz, nets)
+                    # ponytail: input stub must APPROACH the host along the axis
+                    # it points at (dust_points) — same reshape as the AND ~a stub
+                    # (67987b0). The old bare port (bx-1,bz) let the router arrive
+                    # from any side; from the north it left an end cell pointing
+                    # N/S that never powered the host. This E-W stub ends at
+                    # (bx-1,bz), which points east into the host no matter where
+                    # the router reaches the open load (bx-2,bz) from.
+                    stamp_wire([(bx - 2, bz), (bx - 1, bz)], a[0])
                     if (bx + 2, 1, bz) in wires:
                         raise RuntimeError(f"out cell blocked at {(bx + 2, bz)}")
                     stamp_wire([(bx + 2, bz)], o)
@@ -1145,7 +1153,7 @@ def layout(recipe, seed=None, grow=0):
         elif op == "NOT":
             bx, bz = cell
             netspec.setdefault(o, {'drv': (bx + 2, bz), 'loads': []})
-            _load(a[0], (bx - 1, bz))
+            _load(a[0], (bx - 2, bz))
         elif op in ("LATCH", "XOR"):
             pa, pb, po = cell
             netspec.setdefault(o, {'drv': po, 'loads': []})
