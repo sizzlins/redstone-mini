@@ -1,4 +1,4 @@
-# Handoff — redstone-mini (2026-09-27, fragments fed, queue deduped, s0 at R-wall)
+# Handoff — redstone-mini (2026-09-27, tap reserve scoped, s0/s1 route-then-oscillate)
 
 > **Read this section first.** It is the state of play; everything below is
 > the detailed history, kept for the evidence.
@@ -16,8 +16,8 @@ correct under those rules, (3) only then make the dense builds
 
 ## Current state
 
-Branch `phase2-design`, **67 ahead / 1 behind** `origin` (remote sync needs
-explicit approval). Tree clean apart from untracked plan docs. HEAD `b42cc85`.
+Branch `phase2-design`, **69 ahead / 1 behind** `origin` (remote sync needs
+explicit approval). Tree clean apart from untracked plan docs. HEAD `c1d8daa`.
 Suite green: `recipe.py`, `sim.py` (now with the `dlatch` canary), `layout.py`,
 `serve.py --check`.
 
@@ -51,6 +51,21 @@ oracle in place of the in-game test.
 | Byte-identity canary | `e79bfa6d` / `b4a9cc9b` / `40730f4c` unchanged; xor **`8de8a1ef`→`59638d5c` (`32c54b6`, 332→344 blocks, y>=2 47→0)** — its old route crossed a tile repeater cell, now illegal, so it cascades flat (+12 blocks). Honest movement, same bug class. Bridge splice still fires on every D-latch seed, which the new `dlatch` canary locks. |
 
 ## What changed
+
+### Tap reservation retry-scoped (`c1d8daa` — s0/s1 route, then oscillate)
+
+- **Always-on REJECTED twice.** Global tap rings moved xor@s7g1 into
+  `SHORT3D: b slope-links y at (6,2,18)` — the verbatim v1 failure. Reverted
+  to retry-scoped: `layout(reserve=False)` default; `layout_retry` runs one
+  reserve round only after a lamp-spot failure. Green trajectories never see
+  rings (hashes pinned, suite green). Reserve = tap+clearance+lamp rings with
+  output family only; no wire pre-seeding (v2's poison).
+- **s0/s1 route past taps** (2565/2562 blocks, detour-fat, ~1s) but SIM-FAIL
+  on oscillators (churn 469/551, torch loops — needs churn-trace; new wall,
+  not reservation's verdict to give). Detour bloat noted (+1700 blocks).
+- **RecursionError seen once under a double-wrapped probe harness** (wrap
+  assigned twice); clean retry shows normal FAIL. Harness artifact, not
+  product — recorded so it isn't re-investigated.
 
 ### Fragments fed, queue deduped (`b42cc85` — s0 down two walls, now R-wall)
 
@@ -642,9 +657,9 @@ branches cost very differently. Items 1+ do not depend on the answer.
    router to not close the loop in the first place).
 6. **DONE (converter) — cover floor landed; s2 SIM-FAIL → LAYOUT-FAIL.**
    Remaining: nOP segment with a boostable head (router retry luck) + item 5.
-7. **micro1 output-tap reservation** (clearance *and* wire-channel,
-   panel-safe). s0 must first pass its R-wall below; s1 dies earlier (nD
-   cover-gap) so tap work needs nD passing first.
+7. **DONE (scoped) — tap reservation v3.** Always-on rejected twice
+   (suite SHORT3D, verbatim v1); retry-round only. s0/s1 route past taps but
+   SIM-FAIL on oscillators (churn-trace needed) with +1700 detour bloat.
 7b. **micro1-s0 R-wall: `R (60,13)->(76,12)`, 3D self-lid.** Flat full, 3D
    flies its own pillar into its slope. One-pass limitation — session-sized,
    do after tap v3 or before, whichever is nearer.
