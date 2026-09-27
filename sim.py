@@ -25,39 +25,39 @@ _STALL = int(_os.environ.get("REDSTONE_SIM_STALL", "5000"))
 
 def layout_retry(recipe, tries=12, verify=False, grows=3):
     """Randomized-restart maze routing: reshuffle net order until the field fits.
-    With verify, keep the fastest verified build (ticks first, blocks break
-    ties): the sim is the selector, not just the guard; restarts are free
-    search, so ship the cheapest verified one.
-    Field grows on failure (effectively infinite room, capped at 2000).
+    Returns the FIRST verified build. ponytail: this used to sweep all `tries`
+    at a grow and ship the cheapest by (ticks, blocks) -- on micro1 that spent
+    48s AFTER the first green to find a candidate that was worse (ticks 45 vs
+    42), and on a recipe that never goes green it is 12x the cost for nothing.
+    Grows are interleaved per seed, not swept one field-size at a time: a field
+    too small to fit ALWAYS fails, so exhausting all 12 seeds at grow=0 before
+    trying grow=1 is 70s of guaranteed waste (measured, micro1: 0/12 at grow=0,
+    2/12 at grow=1). Diversifying the field size first is both faster and
+    cheaper. Cost of dropping best-of: a small build may come out a few blocks
+    larger; a few ms either way, and the sim still gates correctness.
     Tap reservation runs only as a second round after a lamp-spot failure:
     always-on rings moved small builds into a slope short (measured twice),
     so green trajectories never see it."""
     last = None
     for _res in (False, True):
-        for grow in range(grows or 1):
-            out = None
-            best = None
-            for t in range(tries):
+        for t in range(tries):
+            seed = None if t == 0 else t
+            for grow in range(grows or 1):
                 try:
-                    out = layout(recipe, seed=None if t == 0 else t, grow=grow,
-                                 reserve=_res)
+                    out = layout(recipe, seed=seed, grow=grow, reserve=_res)
                 except RuntimeError as e:
                     last = e
                     continue
                 if not verify:
                     return out + (None,)
                 try:
-                    st, ticks = sim_verify(recipe, out[0], out[2], quiet=True, collect=True)
+                    st, ticks = sim_verify(recipe, out[0], out[2], quiet=True,
+                                           collect=True)
                 except RuntimeError as e:
                     e.blocks, e.size, e.io = out[:3]
                     last = e
                     continue
-                score = (ticks, len(out[0]))
-                if best is None or score < best[0]:
-                    best = (score, out + (st,))
-            if best is not None:
-                return best[1]
-            # nothing verified this grow: keep last error, grow the field
+                return out + (st,)
         if not _res and last is not None and "lamp spot taken" in str(last):
             continue  # one reserve round, same tries x grows
         break
