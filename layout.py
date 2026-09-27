@@ -1306,8 +1306,21 @@ def layout(recipe, seed=None, grow=0):
                 condg.update(c for c in _sup if c[1] == 1)
                 fa, fb = sorted(feet, key=lambda f: abs(f[0] - s[0]) + abs(f[2] - s[1]))
                 try:
-                    route(s, (fa[0], fa[2]), net)
-                    route((fb[0], fb[2]), t, net)
+                    pa = route(s, (fa[0], fa[2]), net)
+                    pb = route((fb[0], fb[2]), t, net)
+                    # ponytail: splice the hop into ONE path. The bridge's dust
+                    # belonged to neither route, so the cover pass never counted
+                    # it and never boosted it: the electrical run across the hop
+                    # was longer than anything _cover_gap had promised, and a
+                    # load past the bridge got whatever level was left over.
+                    # Measured: a tile input load at level 0 -- a gate input
+                    # simply dark -- so the R AND tile computed R=0 forever and
+                    # the D-latch could never reset. Ordering by distance from
+                    # the near foot is exact: a hop is straight and monotonic
+                    # along its axis. Free: the same cells, re-partitioned.
+                    _mid = sorted(_dst, key=lambda c: (c[0] - fa[0]) ** 2 + (c[2] - fa[2]) ** 2)
+                    paths[-2] = (list(pa) + list(_mid) + list(pb), net, ())
+                    paths.pop()
                 except RuntimeError:
                     # ponytail: undo the hop. This used to rely on the caller
                     # raising (which discards the whole layout), but the
