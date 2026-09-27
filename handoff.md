@@ -15,37 +15,45 @@ correct under those rules, (3) make the dense builds generate.
 
 ## Current state
 
-Branch `phase2-design`, **75 ahead / 1 behind** `origin` (remote sync still
-needs explicit approval). HEAD `7423f16`. **Three verified changes are
-UNCOMMITTED** — `layout.py` (+93/-4) and `sim.py` (the `layout_retry`
-rewrite) — see "What changed". Nothing else is modified; the only untracked
-files are the four long-standing `docs/plans/*.md`.
+Branch `phase2-design`, **0 ahead / 0 behind** `origin` — everything is committed
+and pushed through `4d55c6e`, HEAD there. Tracked tree clean; the only untracked
+files are the five `docs/plans/*.md` (policy-excluded) and gitignored scratch.
+Landed this session and pushed: per-net retry cap + booster-side guard
+(`layout.py`), `layout_retry` rewrite (`sim.py`), field-depth fix (`layout.py`),
+three handoff records. Reverted before commit, tree byte-identical: port
+corridors, per-input bank, input fanout chaining (each with mechanism + numbers
+in What failed).
 
 Suite green: `recipe.py`, `sim.py` (all canaries), `layout.py` (incl. the new
 `booster-side` canary), `serve.py --check`, `REDSTONE_XCHECK=1` on both green
 micro1 builds, and **`example_and` / `example_2gates` / `latch_sr` /
 `example_xor` byte-identical to HEAD (4/4 hashes)**.
 
-| recipe | status | measured this session |
+| recipe | status | measured |
 |---|---|---|
-| **micro1** | **GENERATES** | **2/12 seeds green** (s3, s5) at grow=1. Ladder script 30s; `layout_retry` 26s (was 235s). |
-| alu1 | corridor-bound, **NOT space-bound** | 0/6 at grow=1, all `no route for A`/`B`, ~35s/seed. 0/4 at **grow=2** too — see What failed. |
-| alu4 | placement wall **CLEARED** | placement now passes; fails at the shared routing wall (`no route for OP0`, 78 unroutable). Was `AND blocked for A0B0`, 0.0s, `tried=0`. |
-| cpu4 | budget wall, largest | 402s for seed 0 at cap 3000, **376 tasks unrouted**. ~4× alu1's scale. |
-| ctrl_decode | routing wall | 15 gates, placement passes, 65 tasks unrouted at cap 150. |
+| **micro1** | **GENERATES** | **2/12 seeds green** (s3, s5) at grow=1. Ladder 30s; `layout_retry` 26s (was 235s). Unchanged by chaining (its inputs feed <3 gates). |
+| alu1 | shared corridor wall | 0/12 at grow=1 (~7 min); 0/12 with chaining (~38 min, 5× slower, same wall). NOT space-bound (0/4 at grow=2, same nets). |
+| alu4 | placement wall **CLEARED** | placement passes since `2db73c9`; shares alu1's wall (`no route for OP0`, 78 unroutable; 0/2 with chaining at 635s/672s). Was `AND blocked for A0B0`, 0.0s. |
+| cpu4 | budget wall, largest, **holdout** | 402s/seed, 376 unrouted. Frozen for generality proof; never tuned to. |
+| ctrl_decode | shared corridor wall | 15 gates, 65 unrouted at cap 150; 0/2 with chaining, failing on the buffer nets themselves (`_bf6`, `_bf5`). |
 
 micro1's 12-seed breakdown after the fixes: 2 green, 5 `no route` (corridor),
 2 `SIM MISMATCH` (**the same named defect, see What next**), 1 `OPEN`,
 2 `repeater loop ... every triple closes it` (new *loud* failure, not a false
 green — both seeds failed before too).
 
-**The headline: micro1 generates, and generating is now cheap — 26s through
-the shipping entry point, down from 235s (9×, both sides measured directly,
-repeat runs 25.0 / 26.0 / 26.2s).** `build.html` / `build.mcfunction` /
-`build.schem` hold a verified micro1: 2452 blocks, 1026 wire lines with **0
-bare**, `.schem` round-trip 1026 checked / 0 mismatches. The other three are
-still bound by ground corridor, which the handoff's own data says is unsolved
-— and the speed work is **neutral** for them (see What changed #3).
+**The headline, stated as a verdict:** micro1 generates; the other four share one
+wall with no new hypothesis. Engineering: successful — three landed fixes that
+transfer to every future recipe, 9× faster generation, placement wall cleared
+for all five, full vanilla bar on micro1's build (2452 blocks, 1026 wire lines,
+**0 bare**, `.schem` 1026/0), byte-identical small builds throughout, complete
+evidence record including three refuted mechanisms with causes. Mission ("all
+builds generated, new recipes green by default"): **not met** — alu1, alu4,
+cpu4, ctrl_decode are red, and the three mechanisms tried against the shared
+wall (corridors, bank-move, chaining) all died proving it is ground-*existence*,
+not length, order, or placement. What remains is either a ground-creating
+mechanism (nothing in the tree does this) or rescoping to pinned greens where
+search finds them. See What next.
 
 ## What changed
 
@@ -310,28 +318,36 @@ Next experiment, in order:
    again, it is wrong and must be dropped, exactly as last time.
 2. s4's `OPEN (unconnected dust): ((173,12),(171,12)) 'T0'` is a **different**
    mechanism — the booster-side probe was clean there. 2 cells, still open.
-3. **The dense wall is now the whole remaining project, and it is three
-   different problems, not one.** Ordered by cost-to-first-green:
-   - **alu4 — placement wall CLEARED (`2db73c9`), so it is no longer a
-     separate problem.** It now shares alu1's routing wall. The old advice to
-     "probe alu4 at grow=2" is obsolete: grow=0 now places.
-   - **alu1 — the lever-to-gate distance.** Not space (falsified above). The
-     two landed fixes bought 10 of ~74 unreached loads. The evidence says the
-     driver sits ~386 cells from its load, so the lever bank placement — not
-     the field size — is the lever. A mechanism that puts each input's bank
-     beside the gates it feeds is the untried idea; note it is NOT the spine
-     (four data points relocate starvation) and NOT corridors (measured above).
-   - **cpu4 — most expensive.** 376 tasks unrouted at cap 3000, 402s/seed.
-     Treat as alu1 at ~4× and do not measure it in the foreground.
-4. Standing rule for all three: a mechanism must be costed against the
-   **booster cover**, not only against transit. The corridor attempt is the
-   proof — it looked free on transit and destroyed every straight run the
-   cover needs.
+3. **The dense wall is one shared problem, and the placement lever is now
+   exhausted — two independent moves agree.** Corridors and the per-input bank
+   both died by the same mechanism (middle-field walls cost more ground than
+   they save), both recorded above with numbers. Ordering was already correct
+   before this session began. Growing the field is falsified for alu1. So there
+   is no fourth placement/order/size variant to try; the standing rule against
+   a fifth attempt without a new hypothesis now covers the whole category.
+   Ordered by cost-to-first-green, what little ordering remains:
+   - **alu1 — cheapest full green if the wall ever cracks.** 21 gates; lever
+     distance confirmed (386-cell crossings) but unfixable by placement.
+   - **ctrl_decode — fewest moving parts.** 15 gates; fails on its buffer nets
+     under chaining, on OP0/OP1 crossings without it. Best proving ground for
+     any future routing fix.
+   - **cpu4 — most expensive, and the holdout.** 376 unrouted, 402s/seed.
+     Never tune to it; it is the generality proof, background only.
+4. Standing rule, extended by this session: a mechanism must be costed against
+   **ground existence** — not transit, not the cover, not length. Corridors
+   looked free on transit and destroyed booster runs; the bank looked free on
+   length and sealed gate ground; chaining looked free on length and *was*
+   ground pressure (+20 tiles where 4 cells don't fit). The s8 datum
+   (`n0: (8,54)→(9,51)`, 4 cells, no fit) is the shape of the wall: when 4
+   cells don't fit, nothing that adds cells can help. Only a mechanism that
+   creates ground, or uses strictly less of it, is in scope.
 
 **Do not** re-run any input-distribution / spine variant (four data points say
-they relocate starvation), the port-corridor ray as specified (measured, and it
-costs micro1 two green seeds), grow the field expecting relief (falsified for
-alu1), a fifth micro1 router constraint without a named hypothesis, or the
+they relocate starvation), the port-corridor ray as specified (measured, costs
+micro1 two green seeds), the per-input bank (measured, 0/12 by relocation),
+input fanout chaining (measured, 0/12 at 5× cost, buffers can't route), grow
+the field expecting relief (falsified for alu1), a fifth micro1 router
+constraint or a fourth placement variant without a new hypothesis, or the
 OR-junction and ringed-cell theories (both falsified).
 
 - **Input fanout chaining — DESIGNED, APPROVED, IMPLEMENTED, MEASURED,
@@ -379,25 +395,37 @@ OR-junction and ringed-cell theories (both falsified).
 
 ## Files touched
 
-### Uncommitted, `layout.py` (+93 / −4)
+### Landed and pushed (`layout.py`)
 
-- `netfails` + the `or _nf > 6` term in the shared retry condition.
-- the same-net-side guard in `place_rep`.
-- `_sidefed_repeaters(blocks, io)` + the `booster-side ok` canary and its
-  negative control in `__main__`.
+- `netfails` + the `or _nf > 6` term in the shared retry condition (per-net cap).
+- the same-net-side guard in `place_rep` (booster-side refusal).
+- `_sidefed_repeaters(blocks, io)` + the `booster-side ok` canary, negative
+  control, and not-vacuous assert in `__main__`.
 - `_VEC` module constant replacing three duplicated facing→delta dicts.
+- `D = max(D, 24 + 2 * len(recipe["inputs"]))` (field depth clears the bus
+  lanes; placement wall gone for all five dense recipes).
 
-### Uncommitted, `sim.py` only
+### Landed and pushed (`sim.py`)
 
 - `layout_retry` returns the **first** verified build and interleaves the grow
   levels per seed; the best-of-`(ticks, blocks)` bookkeeping is deleted. 9×
-  faster on micro1 (235.4s → 26.0s), +12 blocks on two small builds. Detail and
-  scope limits in "What changed" #3.
+  faster on micro1 (235.4s → 26.0s), +12 blocks on two small builds.
 
-Every gate green and 4/4 small-build hashes byte-identical to HEAD. **Not
-committed — the owner has not asked for a commit.** `build.html`,
-`build.mcfunction` and `build.schem` have been regenerated and now hold a
-verified micro1 (2452 blocks, 0 bare wires, schem round-trip clean).
+### Landed and pushed (docs)
+
+- `docs/superpowers/specs/2026-09-27-input-fanout-chaining-design.md` — the
+  approved generality design (holdout cpu4 + synthetic floor).
+- `handoff.md` — this file, rewritten for the verdict below.
+
+### Attempted and reverted, tree byte-identical (evidence in What failed)
+
+- Port-corridor ray (`_corridor` in `_load`), per-input lever bank (`_bankz`),
+  input fanout chaining (two `recipe.py` gates). Each reverted after its
+  kill-switch fired; each left its probe and mechanism in the record.
+
+Every gate green and 4/4 small-build hashes byte-identical throughout.
+`build.html`, `build.mcfunction` and `build.schem` hold a verified micro1
+(2452 blocks, 0 bare wires, schem round-trip 1026/0).
 
 ### Untracked by design (`scratch/`, gitignored — never merge)
 
