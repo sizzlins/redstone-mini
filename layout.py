@@ -1557,6 +1557,21 @@ def layout(recipe, seed=None, grow=0):
         del wires[(x1, y1, z1)]
         repeaters[(x1, y1, z1)] = (net, facing)
 
+    # Live sources for the cover floor: bank-stub dust and gate-driver dust.
+    # A path entry starting anywhere else (bridge foot, rip-up segment) is
+    # mid-chain dark at its head, so the 14-floor does not apply to it.
+    _srcd = set()
+    for (sx, sz), (kind, _nm) in solid.items():
+        if kind == "lever":
+            for _dx, _dz in DIRS:
+                _m = (sx + _dx, 1, sz + _dz)
+                if _m in wires:
+                    _srcd.add(_m)
+    for _sp in netspec.values():
+        if _sp.get("drv"):
+            _m = (_sp["drv"][0], 1, _sp["drv"][1])
+            if _m in wires:
+                _srcd.add(_m)
     for path, net, _sups in paths:
         # cover the tile-stub tail past the goal too: same-net dust stamped
         # in phase 1 (ports, latch rows) decays exactly like routed wire, and
@@ -1590,8 +1605,14 @@ def layout(recipe, seed=None, grow=0):
             c = nxt
         path = cells
         n = len(path)
+        # ponytail: tile to the source, not to index 14. The 14-floor assumes
+        # path[0] is a live source (driver/bank stub); a bridge/rip-up segment
+        # starts mid-chain dark, so its head 14 went silently dark (micro1-s2
+        # OP: entries bank->(148,37) + (148,33)->tile, tile end dead). Heads
+        # without a source tile to 0; no straight triple there fails loud.
+        _root = path[0] in _srcd
         i = n - 1
-        while i > 14:
+        while i > (14 if _root else 0):
             j = _cover_gap(path, i)
             if j is False:
                 raise RuntimeError(f"unboostable gap on {net} near index {i} (twisty path)")
