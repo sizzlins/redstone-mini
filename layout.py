@@ -1033,7 +1033,10 @@ def layout(recipe, seed=None, grow=0):
         if op == "XOR":
             # comparator XOR (dual subtract, sim-verified): C1 = A-B,
             # C2 = B-A, outputs merged west. Side inputs are tile-stamped
-            # levers (dust side inputs don't count as comparator input).
+            # repeaters fed by the input nets (wiki: sides need STRONG power,
+            # dust never counts, so routed wire can't feed them — and neither
+            # can a panel lever beside the comparator, which is why the old
+            # tile levers cost a second lever per input).
             fam = own(a[0], a[1], o)
             placed = False
             for ox2, gz2 in gridrows(ox, gz):
@@ -1068,11 +1071,22 @@ def layout(recipe, seed=None, grow=0):
                             raise RuntimeError(f"XOR diode spot holds {wires.get((_jx, 1, _jz), 'EMPTY')}")
                         del wires[(_jx, 1, _jz)]
                         repeaters[(_jx, 1, _jz)] = (o, "south")
-                    for lx, lz, ln in ((ox, gz + 3, a[0]), (ox, gz + 1, a[1])):
-                        blocks.append((lx, 1, lz, "minecraft:lever"))
-                        solid[(lx, lz)] = ("lever", ln)
-                        for dx, dz in DIRS:
-                            ring(lx + dx, lz + dz, own(ln))
+                    # ponytail: side feeds are repeaters, not levers. Wiki:
+                    # comparator sides need STRONG power and dust never counts,
+                    # so the old tile levers ringed their neighbours shut and
+                    # every XOR input cost a second lever. REP2 (a -> C2 north
+                    # side) rides a 3-cell tile stub off Adust; REP1 (b -> C1
+                    # north side) takes a routed load at (ox,gz-2), kept clear
+                    # of the output/lamp row down south. Both face south into
+                    # their comparator; backs read dust, outputs are 15 exactly
+                    # like the levers were (subtract takes max of sides, so the
+                    # north/south swap on C1 is equivalent).
+                    stamp_wire([(ox + 1, gz + 1), (ox + 1, gz + 2), (ox, gz + 2)], a[0])
+                    for _rx, _rz in ((ox, gz - 1), (ox, gz + 3),
+                                     (ox + 1, gz + 1), (ox + 1, gz + 2), (ox, gz + 2)):
+                        ring(_rx, _rz, fam)
+                    repeaters[(ox, 1, gz - 1)] = (a[1], "south")
+                    repeaters[(ox, 1, gz + 3)] = (a[0], "south")
                     for cx_, cz_ in set([(ox, gz), (ox, gz + 4)] + Adust + Bdust + Odust):
                         for dx, dz in DIRS:
                             ring(cx_ + dx, cz_ + dz, fam)
@@ -1158,6 +1172,9 @@ def layout(recipe, seed=None, grow=0):
             pa, pb, po = cell
             netspec.setdefault(o, {'drv': po, 'loads': []})
             _load(a[0], pa); _load(a[1], pb)
+            if op == "XOR":
+                # REP1 back (ox,gz-2) is a routed load: pa = (ox+3,gz).
+                _load(a[1], (pa[0] - 3, pa[1] - 2))
         elif op == "OR":
             j, reps = cell
             netspec.setdefault(o, {'drv': j, 'loads': []})
@@ -1672,23 +1689,14 @@ if __name__ == "__main__":
     _c = _Ctr(_io["levers"].values())
     assert _c["a"] == 1 and len(_c) == 3, _c
     print("panel ok: shared input on one bank lever, verify green")
-    # ponytail: the AND/OR check above is BLIND to XOR, and the XOR tile
-    # stamps a side lever per input (the tile rings those levers' neighbours,
-    # so a routed wire cannot reach the port - the local lever is the only
-    # source). Every XOR build therefore carries 2 levers per input:
-    # 2 inputs / 2 tiles / 8 tiles for example_xor / alu1 / alu4 = 4 / 9 / 26
-    # levers. The bar is one lever per input, no exemptions.
-    #
-    # REPORTED, not asserted, until the XOR ring lets the input be routed in:
-    # a hard assert here would red the gate and block every other commit.
-    # Flip `_c["a"] == 1` to an assert in the same commit as that fix.
+    # ponytail: the AND/OR check above is BLIND to XOR, so XOR gets its own:
+    # side feeds are repeaters fed by the input nets (see placer), which is
+    # what lets the panel bar hold here — one lever per input, no exemptions.
     _r = parse_recipe("IN a, b\nOUT y\ny = a XOR b\n")
     _, _, _io, _ = layout_retry(_r, verify=True)
     _c = _Ctr(_io["levers"].values())
-    if _c["a"] == 1 and _c["b"] == 1:
-        print("xor-lever ok: one lever per input, verify green")
-    else:
-        print(f"xor-lever MISSED the panel bar: {dict(_c)} (want 1 per input)")
+    assert _c["a"] == 1 and _c["b"] == 1, dict(_c)
+    print("xor-lever ok: one lever per input, verify green")
     # ponytail: the POINTING table, asserted straight from
     # minecraft.wiki/Redstone_Dust. This is the only external oracle in the
     # project: everything else is the sim agreeing with the layout, which is
