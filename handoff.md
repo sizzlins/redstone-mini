@@ -1,4 +1,4 @@
-# Handoff — redstone-mini (2026-09-27, tap reserve scoped, s0/s1 route-then-oscillate)
+# Handoff — redstone-mini (2026-09-27, sensing unmirrored, s3 green, D-latch 7/7)
 
 > **Read this section first.** It is the state of play; everything below is
 > the detailed history, kept for the evidence.
@@ -16,8 +16,8 @@ correct under those rules, (3) only then make the dense builds
 
 ## Current state
 
-Branch `phase2-design`, **69 ahead / 1 behind** `origin` (remote sync needs
-explicit approval). Tree clean apart from untracked plan docs. HEAD `c1d8daa`.
+Branch `phase2-design`, **71 ahead / 1 behind** `origin` (remote sync needs
+explicit approval). Tree clean apart from untracked plan docs. HEAD `7ee8faf`.
 Suite green: `recipe.py`, `sim.py` (now with the `dlatch` canary), `layout.py`,
 `serve.py --check`.
 
@@ -43,7 +43,7 @@ oracle in place of the in-game test.
 | NOT tile input port | **fixed** `48824d9` (own E-W stub ends at `(bx-1,bz)`, points east at host; guard change skipped — cheap kill took `probe_not` to 0 flips) + pointing sim **landed** same commit |
 | XOR levers | **1 per input, asserted** `32b6fc6` (side feeds are repeaters; wiki strong-side rule quoted in message) |
 | Export blockstates | **fixed** `0421c54` (every wire line carries side/none states) + `.schem` round-trip check; negative control 66/66 bare-id cells fail it |
-| **Dense builds — four walls, not one** | Corridor is only the alu1/cpu4 wall. Measured post-fix: micro1 seed None dies on bridge churn (5 hops built, all reverted, `pa` litter left stamped; 1-cell `pb` sealed by W); micro1 seed 2 routes fully and fails electrically (S-row repeater + routed dust form a closed non-inverting loop — bistable in sim AND vanilla, kicked by a booster transient; plus nOP sustained hot with OP=1, arrival decay at the NOT tile or tile misfire, port check open); alu4 dies pre-routing (`tried=0`, grows=2 passes placement — cost-scale); ctrl_decode uncapped dies on `n2`. Work list is reordered below — corridor mechanism is last, not first. |
+| **Dense builds � sensing was mirrored; s3 green** | ee8faf\: corner sensing unmirrored (wiki unit first), tiles funnelled, loops avoided at cover. D-latch 7/7, micro1-s3 green (2452 blocks, export-rt open). s5 1-mismatch, s4 OPEN T0 fragment remain. Corridor work still last. |
 | **Tile input arrival level — FIXED 7/7** | **`32c54b6`: repeater cells are not dust.** Two faces of one root cause (the tile `del`s the wire label, the router re-added it by stepping onto the cell): seeds 4/5 double-stamped wire+repeater, so the sim modelled both — a phantom loop holding SET across hold (the world gets one block); seed 1 routed *through* the east-facing S-row repeater north-south, so the load behind it never fed. Search guard in `astar.ok()` (all searches funnel through it; XCHECK reference mirrored, green) + repeater-wins at materialization. `dlatch` canary (7 seeds, sequence + no-dup assert) landed in `sim.py __main__` same commit. |
 | Census re-run (item 2) — DONE | alu1 6 seeds cap 700 post-fix: **41 NO-ATTEMPT (unchanged), 19 no-search (was 26), 1 solid, total 67→61.** Same cast eating the budget (A/B/OP0/CIN 94–501 tries), gate nets still starved. **Corridor conclusion survives.** The 1 solid (seed 2, B load on bridge-stamped cobble) is cap-order fallout, not a finding. |
 | **Single-lever panel** | **VERIFIED, and now enforced electrically** (`c1fe1c5`). An input feeding N gates costs **1** lever: all 9 recipes, and the load is reachable from that one lever by walking the real net graph. Measured saving: alu4 43→10 levers, alu1 15→5, cpu4 30→7, ctrl_decode 12→3, micro1 8→4. The old bars counted *labels* only; the new one also proves no lever shorts a second net. Two negative controls fire. |
@@ -51,6 +51,33 @@ oracle in place of the in-game test.
 | Byte-identity canary | `e79bfa6d` / `b4a9cc9b` / `40730f4c` unchanged; xor **`8de8a1ef`→`59638d5c` (`32c54b6`, 332→344 blocks, y>=2 47→0)** — its old route crossed a tile repeater cell, now illegal, so it cascades flat (+12 blocks). Honest movement, same bug class. Bridge splice still fires on every D-latch seed, which the new `dlatch` canary locks. |
 
 ## What changed
+
+### Sensing unmirrored + tiles funnelled (`7ee8faf` — D-latch 7/7, s3 green)
+
+- **Root cause (failing test first): `cob_state` read block→dust instead of
+  dust→block, mirroring corner/T sensing.** Symmetric shapes (line/end/cross)
+  cannot tell, so the whole suite stayed green around it; the docstring
+  already said dust→block. One-tuple fix + `pointing-mirror` canary (corner
+  N+E, S block dark). `_lit` verified clean (checks the link explicitly).
+- **Tiles+routes had tuned to the mirror** (D-latch 6/7 red on the fix
+  alone): routed joins corner input stubs (parallel hug + tip turn), killing
+  the east point. Fix: funnel stubs with cobble (AND/NOT/latch-R; straight
+  dust reads identically either convention, so green-by-construction;
+  footprints already cover; +solids move small hashes, xor pinned).
+  Rejected instead: input repeaters fronting blocks (back-feed supply
+  through the block into route dust = permanent latch, measured on seed
+  None; S-row/XOR repeaters front dust/comps, different, safe) and
+  route-end loop rejection (punishes transients: seed 4 green→oscillator).
+- **Cover skips loop-closing booster spots** (ordered max→min, unwind +
+  fallback; seed4 green via min-j). Loop checks traverse cobble now
+  (block-mediated loops); `_loop_rep` at the end, `_closes_loop` (one BFS on
+  the new pair only) at cover. Route-end stays out (transients).
+- **`_snap` restores repeaters** (failed placements leaked phantoms).
+  Ports check accepts east repeaters (max-j boosts tails); dlatch canary
+  flags dust-involved dups only (benign cobble+cobble pillar dup exists).
+- **micro1-s3 GREEN** (first ever: 2452 blocks, ticks=42, 8 vectors —
+  export-rt still to close the bar). s5 1-mismatch, s4 OPEN T0 2-cell
+  fragment remain; s0/s1/s2 need uncapped re-measure post-fix.
 
 ### Tap reservation retry-scoped (`c1d8daa` — s0/s1 route, then oscillate)
 
@@ -648,8 +675,14 @@ branches cost very differently. Items 1+ do not depend on the answer.
 2. **DONE — census re-run: corridor conclusion survives (67→61, NO-ATTEMPT
    pinned at 41).** The arrival fixes cost 0 corridor and moved no dense
    needle, as predicted.
-3. **DONE (negative) — alu4 at grows=2: 222 pending at 3k searches.**
-   Joins the budget class; grows=3 not worth trying.
+3. **DONE — s3 GREEN (first ever), export-rt open.** s5 1-mismatch and s4
+   OPEN T0 fragment are the next two walls (below). s0/s1/s2 need uncapped
+   re-measure post-mirror (their walls predate it).
+3b. **s5 1-mismatch (D1W1B1OP1, Y False want True)** and **s4 OPEN T0
+   2-cell fragment ((173,12),(171,12))**: both new post-mirror, both small.
+   Do these before any corridor work.
+3c. **alu4 at grows=2: 222 pending at 3k searches (measured pre-mirror).**
+   Budget class; grows=3 not worth trying. Re-run post-mirror only if cheap.
 4. **DONE (hygiene) — all-or-nothing hops landed; S wall reclassified.**
    Feet guard tried and reverted (no effect). The pocket is real.
 5. **DONE — repeater-loop reject landed (`_loop_rep`, fires only s2).**
