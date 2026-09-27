@@ -1,4 +1,4 @@
-# Handoff — redstone-mini (2026-09-27, dense items 1–4 worked, no green yet)
+# Handoff — redstone-mini (2026-09-27, fragments fed, queue deduped, s0 at R-wall)
 
 > **Read this section first.** It is the state of play; everything below is
 > the detailed history, kept for the evidence.
@@ -16,8 +16,8 @@ correct under those rules, (3) only then make the dense builds
 
 ## Current state
 
-Branch `phase2-design`, **65 ahead / 1 behind** `origin` (remote sync needs
-explicit approval). Tree clean apart from untracked plan docs. HEAD `97cd430`.
+Branch `phase2-design`, **67 ahead / 1 behind** `origin` (remote sync needs
+explicit approval). Tree clean apart from untracked plan docs. HEAD `b42cc85`.
 Suite green: `recipe.py`, `sim.py` (now with the `dlatch` canary), `layout.py`,
 `serve.py --check`.
 
@@ -51,6 +51,34 @@ oracle in place of the in-game test.
 | Byte-identity canary | `e79bfa6d` / `b4a9cc9b` / `40730f4c` unchanged; xor **`8de8a1ef`→`59638d5c` (`32c54b6`, 332→344 blocks, y>=2 47→0)** — its old route crossed a tile repeater cell, now illegal, so it cascades flat (+12 blocks). Honest movement, same bug class. Bridge splice still fires on every D-latch seed, which the new `dlatch` canary locks. |
 
 ## What changed
+
+### Fragments fed, queue deduped (`b42cc85` — s0 down two walls, now R-wall)
+
+- **Cover feeds fragments tail-first.** Non-source-rooted entries with a
+  DANGLING head (no same-net dust outside, verified on s0-Q `(96,12)`) and no
+  span inside tile reversed (flow hot-to-dark); rooted/joined/span entries
+  keep order (span direction is load-bearing — reversing a spliced hop would
+  face its boosters backwards). s2-nOP loud-fail gone (OP tiles); s0-Q
+  turn-head gone. Zero green impact (hashes pinned).
+- **Duplicate queued tasks skipped at pop via O(1) Counter** (a pops×pending
+  scan is quadratic on dense). s0-S routed in 8 beads with one task twice;
+  twins defeated value-removal and fragmented cover's view. Green-neutral
+  (no re-queues there; counts identical).
+- **Checkers name cells:** OPEN reports `(cell, net)`; unboostable-gap names
+  the head cell. Temporary COVDUMP used for the s0-Q autopsy, reverted.
+- **Route-end loop rejection ATTEMPTED AND REVERTED.** Failing the task on a
+  completed loop punished transients: D-latch seed 4 went green→oscillator
+  (950 blocks) via congest-detour; revert restored 786 byte-identical. Reason:
+  path cells are always rippable, so every route-completed loop may die later
+  anyway — only the end-of-layout check (final topology) is sound. The
+  placed-stability refinement doesn't save it (same outcome).
+- **s0 uncapped trajectory this session:** budget-hit (capped) → Q cover-gap
+  → OPEN S-row fragment → now `no route for R: (60,13)->(76,12)` (3D
+  self-lid, 13 unroutable). S chains; R is the next wall (3D pass flies its
+  own pillar into its slope — one-pass limitation, session-sized).
+- **Oversight corrected:** test/probe code stays linear-or-better (BFS
+  O(V+E), Counter O(1)/pop); the stuck runs were unbounded `layout()` itself
+  (alu4 ~100 ms/search), now always bounded with heartbeats.
 
 ### Dense items 1–4 worked (2026-09-27, three commits, no dense green yet)
 
@@ -614,9 +642,12 @@ branches cost very differently. Items 1+ do not depend on the answer.
    router to not close the loop in the first place).
 6. **DONE (converter) — cover floor landed; s2 SIM-FAIL → LAYOUT-FAIL.**
    Remaining: nOP segment with a boostable head (router retry luck) + item 5.
-7. **micro1 output-tap reservation** (old item 4, unchanged): clearance *and*
-   wire-channel reservation, plus the panel-regression resolution. Still the
-   cheapest micro1 win once routing passes.
+7. **micro1 output-tap reservation** (clearance *and* wire-channel,
+   panel-safe). s0 must first pass its R-wall below; s1 dies earlier (nD
+   cover-gap) so tap work needs nD passing first.
+7b. **micro1-s0 R-wall: `R (60,13)->(76,12)`, 3D self-lid.** Flat full, 3D
+   flies its own pillar into its slope. One-pass limitation — session-sized,
+   do after tap v3 or before, whichever is nearer.
 8. **ctrl_decode `n2` wall** — undiagnosed; needs the micro1 treatment (dump
    read: `(57,9)->(59,11)`, 668 unroutable uncapped), not theory.
 9. **Corridor mechanism — last, not first.** Only for the alu1/cpu4 wall, and
