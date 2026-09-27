@@ -334,6 +334,33 @@ costs micro1 two green seeds), grow the field expecting relief (falsified for
 alu1), a fifth micro1 router constraint without a named hypothesis, or the
 OR-junction and ringed-cell theories (both falsified).
 
+- **Input fanout chaining — DESIGNED, APPROVED, IMPLEMENTED, MEASURED,
+  REVERTED.** Third mechanism to die, and the most instructive because it was
+  the best-argued: `recipe.py` relays gate-net fanout but excluded inputs on a
+  premise ("zero-wire taps") that died with the single-lever panel, so inputs
+  paid 130–390-cell marathons the chains exist to end. Full brainstorming
+  gate held (spec `docs/superpowers/specs/2026-09-27-input-fanout-chaining-design.md`,
+  holdout cpu4 + synthetic floor), implementation plan
+  (`docs/plans/2026-09-27-input-fanout-chaining.md`, inline execution),
+  TDD with a failing check first. Two correctness refinements found during
+  planning: line 102 keeps its exclusion (replication indexes a driving gate
+  inputs don't have — deleting there crashes), and single-band inputs take the
+  banded body as one shared buffer.
+- **Measured: 0/12 alu1 (was 0/12, now 5× slower), 0/2 alu4, 0/2 ctrl_decode.**
+  Zero near-misses anywhere — all corridor walls, no fully-routed-but-wrong
+  build. Costs escalated per seed (71s → 403s on alu1) because ~20 buffer tiles
+  plus their routes load an already-full field. Smoking gun on alu1 s8:
+  `no route for n0: (8,54)→(9,51)` — a **4-cell** hop failing. And a new loud
+  class tracing directly to the buffers: ctrl_decode fails `no route for
+  _bf6`, `no route for _bf5` — the buffer routes themselves can't fit.
+- **Mechanism: buffers don't relieve ground pressure, they add to it.** Each
+  buffer is a tile to place plus a route to find. On a field where 4 cells
+  don't fit, +20 tiles is strictly worse. Chaining helps only when the wall is
+  route *length*; alu1's wall is route *existence*. Reverted per the plan's
+  kill-switch (zero greens, zero near-misses, new buffer-traced failure
+  class); tree byte-identical, micro1's two greens intact. The spec and plan
+  docs stand as the worked example of the full gate held end to end.
+
 - **Per-input lever bank (median-row placement) — TRIED, MEASURED, REVERTED.**
   Second placement idea to die by the *same* mechanism as corridors, which is
   the pattern. Measured first: every alu1 input crosses 127–214 cells at
