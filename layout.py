@@ -165,6 +165,49 @@ def _coupling_forb(wires, net, starts, goal, junctions, cob, air, window=None):
     return forb, fwire
 
 
+# repeater/comparator facing -> (dx, dz)
+_VEC = {"east": (1, 0), "west": (-1, 0), "south": (0, 1), "north": (0, -1)}
+
+
+def _sidefed_repeaters(blocks, io):
+    """Repeaters that would have to feed same-net dust from the SIDE.
+
+    A repeater drives exactly one cell, its front (wiki: it reads the block
+    behind it). So same-net dust beside it that is neither back nor front is
+    either dead or fed by some other route -- if a booster was placed on a cell
+    another part of the same net runs through, that route is silently cut and
+    NO static check sees it: the OPEN walk steps onto a repeater from any side
+    and out of any side. Measured on micro1: s5 lost the m0 AND tile's OP port
+    (172,18) plus 40 cells, s10 stranded W at (48,1,38). place_rep now refuses
+    such a site; this is the regression lock, over the SHIPPED blocks.
+    """
+    nets = io["nets"]
+    out, seen = [], 0
+    for x, y, z, bid in blocks:
+        if not bid.startswith("minecraft:repeater"):
+            continue
+        f = bid.split("facing=")[1].split(",")[0]
+        dx, dz = _VEC[f]
+        # a repeater cell is not in io["nets"] (place_rep deletes it from wires),
+        # so take the net off its own back/front dust, which is the same net by
+        # construction. Front may be a block (a booster fronting one) -- then the
+        # back alone names it, which is exactly the back-feed case to catch.
+        net = (nets.get((x - dx, y, z - dz)) or nets.get((x + dx, y, z + dz)))
+        if net is None:
+            continue
+        seen += 1
+        for ax, az in DIRS:
+            m = (x + ax, y, z + az)
+            if (m == (x + dx, y, z + dz) or m == (x - dx, y, z - dz)
+                    or nets.get(m) != net):
+                continue
+            out.append(((x, y, z), f, m))
+    assert seen or not any(b.startswith("minecraft:repeater")
+                           for _, _, _, b in blocks), \
+        "side-fed check resolved no repeater (vacuous)"
+    return out
+
+
 def _straight3(a, b, c):
     """Three collinear cells at one level (booster/repeater sites). Ground and
     pillars alike: a repeater on a pillar is legal physics (the route already
@@ -194,7 +237,7 @@ def _closes_loop(wires, repeaters, dust, cobble, net, cell):
     the W-input latch class; assume the block powered: skips are cheap,
     escaped loops burn whole layouts). Only the new pair can newly close:
     placing removes dust, never joins it."""
-    _V = {"east": (1, 0), "west": (-1, 0), "south": (0, 1), "north": (0, -1)}
+    _V = _VEC
     dx, dz = _V[repeaters[cell][1]]
     front, back = (cell[0] + dx, cell[1], cell[2] + dz), (cell[0] - dx, cell[1], cell[2] - dz)
     seen = {front}
@@ -225,7 +268,7 @@ def _loop_rep(wires, repeaters, dust, cobble):
     repeater; BFS runs only on same-net pairs and exits on the first loop.
     Flat adjacency only: a slope-closed loop misses.
     """
-    _V = {"east": (1, 0), "west": (-1, 0), "south": (0, 1), "north": (0, -1)}
+    _V = _VEC
     for (x, y, z), (net, facing) in repeaters.items():
         dx, dz = _V[facing]
         front, back = (x + dx, y, z + dz), (x - dx, y, z - dz)
@@ -1426,6 +1469,7 @@ def layout(recipe, seed=None, grow=0, reserve=False):
                 condg.discard(c)
         return gone
     fails = {}
+    netfails = {}  # net -> total failed searches, across every blocker set
     bridged = set()  # (fx, fz, axis) already hopped; never retry
     def try_bridge(s, t, net):
         # ponytail: last-resort hop over sealing dust with one pre-proven
@@ -1595,7 +1639,20 @@ def layout(recipe, seed=None, grow=0, reserve=False):
                 block_tasks = [tk for tk in tasks if tk[2] in blockers]
                 key = (net, tuple(sorted(blockers)))
                 fails[key] = fails.get(key, 0) + 1
-                if not block_tasks or fails[key] > 2:
+                _nf = netfails.get(net, 0) + 1
+                netfails[net] = _nf
+                # ponytail: `fails` is keyed by (net, blockers), so a net that
+                # keeps meeting FRESH blocker sets kept resetting its own retry
+                # budget and re-queued every blocker at the head of pending --
+                # one hard net ate the cap and 41 loads went NO-ATTEMPT (alu1
+                # census). Cap the retries PER NET as well. 6 = the 3 blocker
+                # sets a per-set cap of 2 already allows, so a net that keeps
+                # meeting the same sealer is bit-identical; only the runaway
+                # changes. ponytail: ceiling — still no space created, a
+                # hopeless net just defers sooner; a corridor mechanism (more
+                # ground) is the separate fix if the census shows no-search
+                # rising 1:1 with the NO-ATTEMPT drop.
+                if not block_tasks or fails[key] > 2 or _nf > 6:
                     extra = (seal_nets(s) - blockers) if s is not None else set()
                     extra_tasks = [tk for tk in tasks if tk[2] in extra]
                     xkey = (net, tuple(sorted(blockers | extra)), "drv")
@@ -1673,6 +1730,21 @@ def layout(recipe, seed=None, grow=0, reserve=False):
             w = wires.get(f)
             if w is not None and w != net:
                 raise RuntimeError(f"repeater guard {net} vs {w} at {f}")
+        # ponytail: a repeater drives exactly ONE cell, its front. Converting a
+        # wire that another part of the SAME net runs through therefore strands
+        # whatever sat beside it -- vanilla cannot feed a repeater from the side.
+        # Measured: micro1-s5 lost the m0 AND tile's OP port (172,18) and 40
+        # cells with it; micro1-s10 stranded W at (48,1,38). A static check CANNOT
+        # see this (the OPEN walk steps onto a repeater from any side), so refuse
+        # the site here and let the caller fall through to the next candidate.
+        # Ceiling: a hairpin route doubles back beside its own repeater and is
+        # legal-but-refused, costing a longer run, never correctness.
+        _side = [f for f in ((x1 + ax, y1, z1 + az) for ax, az in DIRS)
+                 if f != (x1 + dx, y1, z1 + dz) and f != (x1 - dx, y1, z1 - dz)
+                 and wires.get(f) == net]
+        if _side:
+            raise RuntimeError(f"repeater {net} at {(x1, y1, z1)} would feed "
+                               f"{_side[:2]} sideways")
         if wires.get((x1, y1, z1)) != net:
             if (x1, y1, z1) in repeaters and repeaters[(x1, y1, z1)][0] == net:
                 return  # shared fanout trunk: a sibling branch already boosted here
@@ -2011,7 +2083,7 @@ if __name__ == "__main__":
     # front) and the sim's slope links at y+-1. Run on the AND fanout AND on
     # XOR, whose side feed runs ELEVATED — that shape is what caught a y=1-only
     # walk here, and a canary that skips it would let the bug back in.
-    _AX = {"east": (1, 0), "west": (-1, 0), "south": (0, 1), "north": (0, -1)}
+    _AX = _VEC
 
     def _panel_electrical(blocks, io, inputs):
         nets = io["nets"]
@@ -2175,4 +2247,21 @@ if __name__ == "__main__":
     _twist = [(x, 1, 0) if x % 2 else (x, 2, 0) for x in range(21)]  # no straight triple
     assert _cover_gap(_twist, 20) is False, "unboostable twisty run should be refused"
     print("3d ok: support assert fires, cover takes pillars, refuses dead flights")
+
+    # ponytail: no booster may sit on a cell the same net runs through sideways
+    # (it would cut that route with nothing to notice). Checked on the SHIPPED
+    # blocks of every small build, plus a negative control -- a check that has
+    # never been seen red is a press release, and this one was: it named the
+    # micro1-s5 and s10 cuts before place_rep learned to refuse them.
+    for _f in ("example_and", "example_2gates", "latch_sr", "example_xor"):
+        _br, _, _bio, _ = layout_retry(parse_recipe(open(
+            rf"D:\redstone-mini\{_f}.txt").read()), verify=True)
+        _bad = _sidefed_repeaters(_br, _bio)
+        assert not _bad, f"{_f} side-fed repeater(s): {_bad[:3]}"
+    _nb = [(4, 1, 4, "minecraft:repeater[facing=east,delay=1]")]
+    _nio = {"nets": {(3, 1, 4): "n", (5, 1, 4): "n", (4, 1, 5): "other"}}
+    assert not _sidefed_repeaters(_nb, _nio), "back+front only is not side-fed"
+    _nio["nets"][(4, 1, 3)] = "n"
+    assert len(_sidefed_repeaters(_nb, _nio)) == 1, "side-fed repeater missed"
+    print("booster-side ok: no repeater cuts its own net, on all 4 small builds")
 
