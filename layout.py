@@ -1710,7 +1710,7 @@ if __name__ == "__main__":
     # one lever per input (verify=True proves the routed fanout fires).
     from collections import Counter as _Ctr
     _r = parse_recipe("IN a, b, c\nOUT y\ny1 = a AND b\ny2 = a AND c\ny = y1 OR y2\n")
-    _, _, _io, _ = layout_retry(_r, verify=True)
+    _xb, _, _io, _ = layout_retry(_r, verify=True)
     _c = _Ctr(_io["levers"].values())
     assert _c["a"] == 1 and len(_c) == 3, _c
     print("panel ok: shared input on one bank lever, verify green")
@@ -1718,10 +1718,83 @@ if __name__ == "__main__":
     # side feeds are repeaters fed by the input nets (see placer), which is
     # what lets the panel bar hold here — one lever per input, no exemptions.
     _r = parse_recipe("IN a, b\nOUT y\ny = a XOR b\n")
-    _, _, _io, _ = layout_retry(_r, verify=True)
-    _c = _Ctr(_io["levers"].values())
+    _xg, _, _gio, _ = layout_retry(_r, verify=True)
+    _c = _Ctr(_gio["levers"].values())
     assert _c["a"] == 1 and _c["b"] == 1, dict(_c)
     print("xor-lever ok: one lever per input, verify green")
+    # ponytail: both bars above count LABELS, so neither can see the two ways
+    # the panel can actually be broken. (a) A lever beside wire of a SECOND net
+    # is a short the label never reports: the sim powers ANY same-level cell next
+    # to an ON lever (dust_lvl), so "one lever" and "one net" are different
+    # claims. (b) The extra loads may not be reachable from that one lever at
+    # all — the panel would be a label and not a wire. Check the real graph,
+    # crossing repeaters (a connection: the back reads behind, the output feeds
+    # front) and the sim's slope links at y+-1. Run on the AND fanout AND on
+    # XOR, whose side feed runs ELEVATED — that shape is what caught a y=1-only
+    # walk here, and a canary that skips it would let the bug back in.
+    _AX = {"east": (1, 0), "west": (-1, 0), "south": (0, 1), "north": (0, -1)}
+
+    def _panel_electrical(blocks, io, inputs):
+        nets = io["nets"]
+        reps = {}
+        for x, y, z, bid in blocks:
+            if bid.startswith("minecraft:repeater"):
+                reps[(x, y, z)] = bid.split("facing=")[1].split(",")[0]
+        for (lx, lz), lab in io["levers"].items():
+            near = {nets[(lx + dx, 1, lz + dz)]
+                    for dx, dz in DIRS if (lx + dx, 1, lz + dz) in nets}
+            assert len(near) <= 1, \
+                f"lever {lab} at {(lx, lz)} also reaches {sorted(near - {lab})}"
+        for a in inputs:
+            src = None
+            for (lx, lz), lab in io["levers"].items():
+                if lab == a:
+                    for dx, dz in DIRS:
+                        if nets.get((lx + dx, 1, lz + dz)) == a:
+                            src = (lx + dx, 1, lz + dz)
+                            break
+                if src:
+                    break
+            assert src is not None, f"lever for {a} reaches no wire"
+            seen, q = {src}, [src]
+            while q:
+                c = q.pop()
+                nxt = [m for dx, dz in DIRS for dy in (0, 1, -1)
+                       if nets.get(m := (c[0] + dx, c[1] + dy, c[2] + dz)) == a or m in reps]
+                if c in reps:
+                    dx, dz = _AX[reps[c]]
+                    nxt += [(c[0] + dx, 1, c[2] + dz), (c[0] - dx, 1, c[2] + dz)]
+                for m in nxt:
+                    if m not in seen:
+                        seen.add(m)
+                        q.append(m)
+            want = {c for c, n in nets.items() if n == a}
+            assert not want - seen, \
+                f"{a}: {len(want - seen)} of {len(want)} cells not reachable " \
+                f"from its one lever, e.g. {sorted(want - seen)[:3]}"
+
+    _panel_electrical(_xb, _io, ("a", "b", "c"))
+    _panel_electrical(_xg, _gio, ("a", "b"))
+    # ponytail: negative controls, because a canary never seen red is a print
+    # statement -- 9980750 is the scar tissue (a lever bar that counted nothing
+    # for a year). Two vacuity risks, both cheap to close: a lever shorting a
+    # second net, and the per-input loop quietly testing nothing.
+    import copy as _copy
+    _bad = _copy.deepcopy(_io)
+    _bl = next(iter(_bad["levers"]))
+    _bad["nets"][(_bl[0], 1, _bl[1] - 1)] = "intruder"
+    try:
+        _panel_electrical(_xb, _bad, ("a", "b", "c"))
+        raise SystemExit("panel-wire canary did NOT catch a lever shorting a 2nd net")
+    except AssertionError as e:
+        assert "also reaches" in str(e), e
+    try:
+        _panel_electrical(_xb, _io, ("nosuchinput",))
+        raise SystemExit("panel-wire canary did NOT notice an input with no lever")
+    except AssertionError as e:
+        assert "reaches no wire" in str(e), e
+    print("panel-wire ok: no lever shorts a 2nd net, every load fed by its one lever")
+    print("panel-wire neg: short caught, missing lever caught")
     # ponytail: the POINTING table, asserted straight from
     # minecraft.wiki/Redstone_Dust. This is the only external oracle in the
     # project: everything else is the sim agreeing with the layout, which is
