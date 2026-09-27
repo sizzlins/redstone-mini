@@ -788,7 +788,16 @@ def layout(recipe, seed=None, grow=0):
             ring(rx, rz, fam)
         stamp_wire([(ox - 2, gz), (ox - 1, gz)], A)
         stamp_wire([(ox - 2, gz + 3), (ox - 1, gz + 3)], B)
-        stamp_wire([(ox + 2, gz), (ox + 2, gz + 1)], na)
+        # ponytail: ~A must APPROACH the NOR host along the axis it points at.
+        # Vanilla: powered dust powers a block only when it is on top of it or
+        # POINTING at it, and pointing comes from the connection shape
+        # (dust_points). The old N-S stub ((ox+2,gz),(ox+2,gz+1)) left its end
+        # cell pointing north and south, so it never powered the host at
+        # (ox+3,gz+1) -- the AND tile's NOR input was dead in vanilla and only
+        # appeared to work because the sim assumed every cell is a cross. This
+        # E-W stub ends at (ox+2,gz+1), which points east into the host. Both
+        # cells were already in the ring list above, so no ring edit is needed.
+        stamp_wire([(ox + 1, gz + 1), (ox + 2, gz + 1)], na)
         # ponytail: ~B hugs the west side on purpose. It must never touch the
         # NOR torch (ox+4,gz+1): torch->wire->block->torch is a ring oscillator
         # that blinks instead of computing whenever both NOTs are off.
