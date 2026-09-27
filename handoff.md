@@ -16,8 +16,8 @@ correct under those rules, (3) only then make the dense builds
 
 ## Current state
 
-Branch `phase2-design`, **54 ahead / 1 behind** `origin` (remote sync needs
-explicit approval). Tree clean apart from untracked plan docs. HEAD `701ea5b`.
+Branch `phase2-design`, **57 ahead / 1 behind** `origin` (remote sync needs
+explicit approval). Tree clean apart from untracked plan docs. HEAD `c474ad3`.
 Suite green: `recipe.py`, `sim.py`, `layout.py`, `serve.py --check`.
 
 **Steps 1–4 of the 100%-vanilla plan are landed and committed** (four separable
@@ -44,9 +44,45 @@ oracle in place of the in-game test.
 | Export blockstates | **fixed** `0421c54` (every wire line carries side/none states) + `.schem` round-trip check; negative control 66/66 bare-id cells fail it |
 | **Dense builds — reframed** | **NOT input distribution. The binding constraint is total ground corridor.** The spine experiment *proved* the old diagnosis wrong: feeding inputs cheaply just moves the starvation to gate nets (NO-ATTEMPT 41→11, no-search 26→49, total only 67→60). No dense build is green. |
 | **Tile input arrival level — PARTIALLY fixed** | **Root cause found and fixed for bridged nets: `bridge_stamp` wrote wire that belonged to no path, so the booster cover never counted or covered it** (`701ea5b`) — a load past a bridge got whatever level was left over, measured **level 0**, i.e. a gate input simply dark. Plus the LATCH S row is 9 cells of the tile's own dust and needs buffering no bus budget can supply (`1d42c7b`). Together: the D-latch repro goes **0/7 → 4/7 seeds**, both fixes free (0 extra blocks). **3 seeds still red — see "Tile inputs" below.** |
+| **Single-lever panel** | **VERIFIED, and now enforced electrically** (`c1fe1c5`). An input feeding N gates costs **1** lever: all 9 recipes, and the load is reachable from that one lever by walking the real net graph. Measured saving: alu4 43→10 levers, alu1 15→5, cpu4 30→7, ctrl_decode 12→3, micro1 8→4. The old bars counted *labels* only; the new one also proves no lever shorts a second net. Two negative controls fire. |
+| **One-circuit-per-net** | **ATTEMPTED AND REJECTED — the check does not discriminate** (see "What failed"). The idea is right; a probe implementation of it flags `example_xor`, which the suite accepts. The invariant belongs in `sim.py` beside `dust_lvl`, not in a probe that re-derives the coupling rules. |
 | Byte-identity canary | re-baselined after the two fixes: `e79bfa6d` / `b4a9cc9b` unchanged, `latch_sr` `03542c34`→`40730f4c` (S-row repeater replaces a dust cell — composition only, still 292 blocks), xor `3449ff76`→`8de8a1ef` (bridge splice, 332 blocks, y>=2 48→47) |
 
 ## What changed
+
+### Tile inputs + panel session (2026-09-27, five commits, in this order)
+
+- `1d42c7b` **latch: buffer the S port row so the tile can set at all.** The S
+  row is 9 cells of the tile's *own* dust from the block it must power, so it
+  needs level ~10 at the port — and the load *is* the port, so no bus budget can
+  reach past it. A repeater at `(ox+1,gz+4)`, the only cell that still sees
+  power at the guaranteed minimum. Free: it replaces a dust cell inside the
+  tile's own row, so `latch_sr` is 292 blocks before and after (hash
+  `03542c34`→`40730f4c`, composition only).
+- `701ea5b` **routing: splice a bridge hop into one path so the cover sees the
+  run.** `try_bridge` made **two** routes and the bridge's dust belonged to
+  neither, so the cover never counted or boosted it — the electrical run across
+  the hop was longer than anything `_cover_gap` had promised. Root cause of the
+  dark-gate-input class, and invisible from the index budget because the cells
+  are in no path. Free: same cells, re-partitioned (`example_xor` 332 blocks
+  either way, one elevated cell fewer). Together with `1d42c7b` the D-latch repro
+  goes **0/7 → 4/7**; neither is sufficient alone.
+- `fb01d01` handoff for the above.
+- `c1fe1c5` **canary: prove the single-lever panel electrically, not just by
+  label.** `panel ok` and `xor-lever ok` both count labels, which cannot see (a)
+  a lever beside wire of a *second* net — the sim powers any same-level cell
+  next to an ON lever, so "one lever" and "one net" are different claims — or
+  (b) loads that are not reachable from that one lever at all. The new
+  `panel-wire` check walks the real net graph, crossing repeaters and the sim's
+  slope links, on the AND fanout **and** on XOR (whose side feed runs elevated).
+  **Two negative controls, both firing**: a lever shorting a second net, and an
+  input with no lever. No product code touched; all four hashes unchanged.
+- `c474ad3` **routing: assert a bridge splice is a chain before covering it.**
+  `place_rep` takes a repeater's facing from the step *into* its cell, so a
+  non-adjacent pair in the merged hop path would aim one the wrong way. The
+  cover assumes a chain everywhere else; the splice was the one place that did
+  not check. Cheap, and a wrong `_dst` order would otherwise be a silently
+  wrong circuit.
 
 ### Steps 1–4, the 100%-vanilla gate (landed, in this order)
 
@@ -103,6 +139,46 @@ oracle in place of the in-game test.
   exemption struck, the export defect recorded.
 
 ## What failed (with evidence, no theory)
+
+### The one-circuit-per-net check — REJECTED by its own validation (new)
+
+**The idea is right and the implementation is wrong. Do not ship the probe.**
+The hypothesis was that no net label ever spans more than one electrical
+circuit — a property nothing in the project checks, and the species of both
+bugs fixed this session. Built in `scratch/probe_onecircuit.py`, then run
+against a **known-answer** case first:
+
+```
+KNOWN ANSWER: seed 0 PASSES the canary, seeds 1 and 4 FAIL it
+  seed 0: 1 net with >1 circuit   <- passes anyway
+  seed 1: 1 net with >1 circuit
+  seed 4: 1 net with >1 circuit
+small builds, all green in the suite:
+  example_and     0 nets with >1 circuit
+  example_2gates  0
+  latch_sr        0
+  example_xor     a -> 8 circuits   <- green in the suite, worst score of all
+```
+
+**It does not discriminate.** It flags `example_xor`, which the suite accepts,
+more heavily than the failing seeds. Shipping it would have condemned good
+builds while looking like coverage — the exact failure `9980750` records.
+
+**Why it is wrong:** the false positives are all the same shape and they are
+informative — `[(46,2,10),(47,3,10)]`, `[(39,2,11),(39,3,12)]`, `[(3,1,6)]`.
+**y=2 and y=3 cells, i.e. 3D bridge dust.** The probe's slope-link predicate
+fails to join them to the run, so every bridged net looks like it has orphan
+islands. The sim connects them; the transcription of `dust_lvl` does not.
+
+**The lesson, which is worth more than the check:** the invariant must be
+written **in `sim.py`, beside `dust_lvl`, in terms of that function** — so the
+coupling rule is stated once and cannot drift. A probe that re-derives the
+rules is the same mistake as the four instrument bugs below, and it is the fifth
+time this session that re-implementing something the codebase already
+implements once has cost more than reading it.
+
+**Validation was the only reason this was caught**, and it cost one run. Keep
+doing it before shipping any new check.
 
 ### Tile inputs — a latch fed by gates could not set or reset (root cause found; 4/7)
 
@@ -165,14 +241,39 @@ Determinism re-checked across 3 processes. Suite green; `export-rt` green.
 | seed | failure |
 |---|---|
 | 1 | `SEQ MISMATCH {'D': 1, 'W': 1}` — cannot **set** (the S-row case, so a residual arrival-level path remains) |
-| 4, 5 | `SEQ MISMATCH {'D': 0, 'W': 0}` — wants `Q=0`, gets `Q=1`, i.e. the latch **spontaneously set while both inputs are 0**. S and R are both 0 there, so in a correct NOR latch Q holds; something drove S or Q transiently. Not yet diagnosed. |
+| 4, 5 | `SEQ MISMATCH {'D': 0, 'W': 0}` — wants `Q=0`, gets `Q=1`, i.e. the latch **spontaneously set while both inputs are 0** |
 
-Seed 1 says the arrival-level class is not closed (a non-bridged route can still
-arrive short). Seeds 4/5 are a different shape — a glitch on the R *fall* while
-holding — and are the next thing to look at. **Do not attempt a fix for 4/5 by
-touching the latch inputs again**; attempt 4 (a repeater before every load) was
-measured to make **7/7** seeds oscillate, which is the tile comment's power-on
-race, so input-side buffering is the wrong lever for a hold-phase glitch.
+**A/B'd, so this is not a regression from the fixes:** at `1d42c7b` (no bridge
+splice) seed 4 never sets *at all* — Q stays 0 and S never arrives, the old
+failure. The splice fixed the set path. The failure only *moved*.
+
+**NARROWED (seed 4, sim ground truth, per phase) — a lead, not yet a cause.**
+The discriminator is the *shape* of the S net, not whether it is hot — S is hot
+in the hold phase in **every** seed, including the passing one:
+
+| seed | verdict | S-net lit cells, hold phase | shape |
+|---|---|---|---|
+| 0 | **passes** | 60 | one clean monotone decay chain from the driver |
+| 1 | fails | 58 | **forked** — two runs both at 15 from `x=34` |
+| 4 | fails | 88 | **forked + a 3D elevated run** at `(39,2,11)`, `(39,3,12)` |
+
+In the hold phase the S AND tile's inputs are dark *and its output stub reads
+0*, yet 16 cells of the S net are still hot in a cluster at `(76-86, 14-17)`.
+So in the failing seeds the S label spans cells no decay chain from its driver
+explains. The sim raises no `SHORT` and no `OPEN`, because both static checkers
+reason about **labels** — the same species as both bugs fixed this session.
+**Which cell is the foreign source is not yet isolated.**
+
+Seed 4/5's mechanism is also a genuinely hard one, not just sloppiness: a
+cross-coupled NOR latch is **bistable** with both inputs low, so during the hold
+both `Q=0` and `Q=1` are legal and the expectation is not determined by the
+circuit — something has to perturb it, and the sim's latch-carry semantics are
+part of the question.
+
+**Do not attempt a fix for 4/5 by touching the latch inputs again** — attempt 4
+(a repeater before every load) was measured to make **7/7** seeds oscillate,
+which is the tile comment's power-on race. Input-side buffering is the wrong
+lever for a hold-phase glitch.
 
 **Four fixes tried and rejected on measurement** (full diff:
 `scratch/tile_arrival_level_attempts.diff`; attempts 1 and 5 became the two
@@ -185,8 +286,15 @@ commits above):
 | 4 | repeater on the cell before every load | **7/7 oscillate**, loop through the latch's two torches |
 | 5 | the same repeater ON the goal cell | **feeds backwards** — `place_rep` takes facing from the step *into* the cell |
 
-**Instrument traps hit this session — they cost real time and will bite again:**
+**Instrument traps hit this session — five, and they cost more than the bugs:**
 
+- **Do not re-implement a rule the codebase states once.** The fifth and worst:
+  the one-circuit probe above re-derived the sim's `dust_lvl` coupling and got
+  the slope links wrong. Write the check *in* `sim.py` beside the rule.
+- **Validate every new instrument against a KNOWN-ANSWER case before trusting
+  it.** The one-circuit check looked like exactly the coverage this project
+  needs, and validation (one run against seeds 0/1/4 plus the green small
+  builds) killed it. This is the single highest-leverage habit in the file.
 - **The build is shrink-wrapped but the debug dump is not.** `layout.py:1635`
   shifts everything by `(minx, minz)`; `REDSTONE_DEBUG` is written in routing's
   `finally`, *before* that shift. Comparing the two silently reads the wrong
@@ -197,7 +305,11 @@ commits above):
   will "find" a NOT or AND tile and read its rows.
 - **Do not key captured paths by `id()` in an instrument.** The cover loop
   rebuilds its list every iteration, so ids get reused and two paths merge into
-  one phantom — this cost the longest wrong turn of the session.
+  one phantom — this cost the longest single wrong turn of the session.
+- **Label your own probe output.** A row printed as "S tile row" was actually
+  the AND tile's *input* area, not the latch's S row, and sent a whole
+  investigation after a non-existent signal. Print the coordinates, or the
+  reader cannot check you.
 - **A "one layout passes" check hides this entire class.** The multi-seed
   version of the D-latch check killed attempts 3 and 4 on the spot. A canary
   that runs one layout is worse than none, because it reads as coverage.
@@ -320,15 +432,14 @@ commits above):
   untouched (a settling verify is 0.03s, so `dust_lvl` was measured and
   declined; verify timings re-measured after the pointing change and unchanged
   at 6–16 ms).
-- `layout.py` — **`1d42c7b` the LATCH S-row repeater** and **`701ea5b` the bridge-hop
-  splice** (both this session, both free: 0 extra blocks on all four small
-  builds, determinism re-checked across 3 processes).
-- `layout.py` — **`1d42c7b` the LATCH S-row repeater** and **`701ea5b` the bridge-hop
-  splice** (both this session, both free: 0 extra blocks on all four small
-  builds, determinism re-checked across 3 processes).
+- `layout.py` — **`1d42c7b` the LATCH S-row repeater**, **`701ea5b` the bridge-hop
+  splice**, **`c474ad3` its chain assert**, and **`c1fe1c5` the `panel-wire`
+  canary** (this session). The first three are product changes; all three are
+  free — 0 extra blocks on all four small builds, determinism re-checked across
+  3 processes. `c1fe1c5` is check-only and moved no hash.
 - `handoff.md` — this file.
 - Untouched throughout: `recipe.py`, `serve.py`, `export.py`, `core.py`,
-  `debug.py`, all `.txt` recipes.
+  `debug.py`, `sim.py`, all `.txt` recipes.
 
 ### Untracked by design (`scratch/`, gitignored — never merge)
 
@@ -353,6 +464,18 @@ commits above):
   `probe_cover3.py` log what the booster cover did, per path.
   **`scratch/tile_arrival_level_attempts.diff` — all 5 reverted fixes**, so no
   attempt has to be retyped to be re-measured.
+- **Panel probes.** `scratch/probe_one_lever.py` answers "does one input feeding
+  N gates cost one lever" three ways (label / no-short / fanout reachability),
+  and prints the naive-vs-panel lever table for all 9 recipes. `probe_panel.py`
+  is the generate-every-recipe sweep (4/9 build; the other 5 are the known
+  routing walls). Both are superseded by the landed `panel-wire` canary.
+- **`scratch/probe_onecircuit.py` — the REJECTED one-circuit check.** Keep it as
+  the negative example: it flags `example_xor`, which the suite accepts. Read it
+  as the worked example of "validate the instrument first".
+- D-latch probes: `probe_seeds.py` (the 7-seed repro — run this first),
+  `probe_hold.py` (per-tick trace, transitions only; prints the S/R mutual
+  exclusion), `probe_leak.py <seed>` (per-phase net breakdown; note two of its
+  own labels are wrong, see the instrument traps).
 
 ### Environment notes (cost me real time; do not relearn)
 
@@ -367,18 +490,41 @@ commits above):
 
 Phase 3's premise has changed. The old list is retired; these are measured.
 
+**Owner decision pending** on item 0 — it is a fork, not a task, and the two
+branches cost very differently. Items 1+ do not depend on the answer.
+
+0. **The one-circuit invariant: build it in `sim.py`, or skip it.** The idea is
+   right (a net label must be one circuit; nothing checks it; it is the species
+   of both bugs fixed this session) and the probe implementation of it is
+   **rejected** — it flags `example_xor`, which the suite accepts. The correct
+   home is beside `dust_lvl`, written in terms of that function, so coupling is
+   stated once. **Cost:** a real refactor of the shipping verifier's rules, so
+   it is the owner's call whether that is worth doing now. **Validation, if
+   built:** it must come out clean on all four green small builds and flag
+   seeds 0/1/4 differently — if it does not discriminate, it is worthless
+   regardless of how good it looks.
 1. **The 3 red D-latch seeds — start with 4 and 5, not 1.** The root cause of
    the dark-gate-input class is found and fixed (`701ea5b` + `1d42c7b`, 0/7 →
-   4/7, zero extra blocks). What is left splits in two, and they want different
-   investigations: seed 1 is a residual arrival-level path (a **non-bridged**
-   route can still arrive short — the cover still has no floor, only a
-   best-effort 14), while seeds 4/5 are a **hold-phase glitch**: S=R=0 and the
-   latch spontaneously sets, so something drove S or Q transiently on the R
-   *fall*. Do not reach for input-side buffering on 4/5 — a repeater before
-   every load was measured to make 7/7 seeds oscillate. When a fix lands, add
-   the multi-layout D-latch canary to `sim.py`'s `__main__` in the same commit;
-   a one-layout version of that check hides this whole class.
-2. **Act on the corridor reframing, not the spine.** The field is short of
+   4/7, zero extra blocks, A/B'd so it is not a regression). What is left splits
+   in two: seed 1 is a residual arrival-level path (a **non-bridged** route can
+   still arrive short — the cover still has no floor, only a best-effort 14),
+   while seeds 4/5 are a **hold-phase** event: a NOR latch is bistable with both
+   inputs low, so `Q=0` is not determined by the circuit and something perturbs
+   it. The narrowed lead and the measurement that discriminates the seeds are in
+   "Tile inputs" above — start from the **shape** of the S net, not whether it
+   is hot (it is hot in the passing seed too). Do not reach for input-side
+   buffering on 4/5: a repeater before every load was measured to make 7/7 seeds
+   oscillate. When a fix lands, add the multi-layout D-latch canary to
+   `sim.py`'s `__main__` **in the same commit** — per the standing decision it
+   lives in `scratch/probe_seeds.py` until then, and a one-layout version of
+   that check hides this whole class.
+2. **Re-run the bounded census before trusting any Phase 3 number.** `701ea5b`
+   changed what a *bridged* net delivers, and it moved `example_xor` — a small
+   build. So the spine experiment and the "gate nets fail as stably as input
+   nets" reading were both taken under the old, under-covered bridges. Cheap
+   (~20s x 6 seeds on alu1) and it tests whether the corridor conclusion
+   survives, which is the standing hypothesis for all of Phase 3.
+3. **Act on the corridor reframing, not the spine.** The field is short of
    *space*, not search. Any next mechanism must either create corridor (a real
    height budget, or 2D layer reuse) or reduce cells consumed per net. Do **not**
    re-run any input-distribution variant — measured to relocate the starvation.
@@ -386,23 +532,20 @@ Phase 3's premise has changed. The old list is retired; these are measured.
    for: a correctness fix that re-partitions existing cells rather than adding
    any is available here, and it is the only kind that does not fight the
    binding constraint.
-3. **micro1 output-tap reservation — the one item that demonstrably moves a
+4. **micro1 output-tap reservation — the one item that demonstrably moves a
    build.** Mechanism A got s0/s1 from a layout wall to a sim failure, the first
    time those seeds fully routed. It needs the clearance *and* the wire-channel
    reservation (both recorded above) and a resolution for why the shared-input
    panel regresses under it. This is the cheapest remaining dense win.
-4. **micro1's `Q` mismatch: diagnosed, and it is item 1.** The old item 3 read
+5. **micro1's `Q` mismatch: diagnosed, and it is item 1.** The old item 3 read
    the symptom table as a diagnosis. Measured: the latch could not set because
    its S row arrived at level 2 and died 4 cells short, and could not reset
    because a bridged net's load arrived at level 0. Both root causes are now
    fixed; 4 of 7 D-latch seeds are green. Nothing to chase here beyond item 1.
-5. **alu1/alu4/cpu4**: blocked on 1. When a mechanism is chosen, the acceptance
+6. **alu1/alu4/cpu4**: blocked on 1. When a mechanism is chosen, the acceptance
    bar is unchanged and strict — **layout green AND verify green AND
-   `export-rt` green**. Nothing counts until all three. Worth re-running the
-   bounded census first, though: `701ea5b` changes what a bridged net delivers,
-   so the "gate nets fail as stably as input nets" reading was taken under the
-   old, under-covered bridges.
-6. **Housekeeping**: `origin` sync is 52 ahead / 1 behind and still needs
+   `export-rt` green**. Nothing counts until all three.
+7. **Housekeeping**: `origin` sync is **57 ahead / 1 behind** and still needs
    explicit approval. The checked-in demo artifacts have been regenerated with
    wire states (`build.mcfunction` 1317/1317, sampled `.schem` 49/49, 0 bare).
 
@@ -410,6 +553,13 @@ Phase 3's premise has changed. The old list is retired; these are measured.
 0 targets), a fifth micro1 router constraint, or any spine variant. And do not
 read a symptom table as a diagnosis: four wrong inferences came from doing that
 in this project, and the spine plan was the most expensive one yet.
+
+**And do not ship a check you have not seen fail.** Two things this session were
+caught only by validation, not by reasoning: the cover-window "fixes" (which a
+multi-seed probe killed on the spot) and the one-circuit check (which flags a
+build the suite accepts). Both looked exactly like the coverage this project
+needs. A green check that has never been seen red is a press release, not
+evidence.
 
 ## History (details and evidence behind the summary above)
 
