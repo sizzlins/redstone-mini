@@ -342,6 +342,33 @@ Next experiment, in order:
    cells don't fit, nothing that adds cells can help. Only a mechanism that
    creates ground, or uses strictly less of it, is in scope.
 
+5. **Next session: engine generality — bar A, anything-but-physics.** Owner
+   decisions, recorded because the next session inherits them: the bar is raw
+   capability (any recipe verifies fast inside the default ladder — NOT pinned
+   greens, NOT autonomy-through-sweeps); the change budget is everything except
+   the sim's vanilla contract and the suite gates (tiles explicitly unfrozen);
+   proof is holdout (cpu4, still frozen) plus a synthetic paired floor.
+   Three approaches, evidence-graded in session and approved in that order:
+   - **(1) Shrink what tiles occupy — clearance first, circuitry second.**
+     `footprint(AND)` reserves 11×9 while `spot_free` checks 9×7: slack is 2
+     columns + 2 rows of rings/clearance nobody has measured. (A 12×10 figure
+     was claimed once in session and is wrong; 11×9 is the code.) Step one
+     costs no physics: tighten reserves to need and hand the cells back.
+     Step two is electrical redesign per tile, each re-verified green.
+     Recommended: only approach that *creates* ground; every step gated green.
+   - **(2) Roof/support reuse — evidence gate BEFORE any design.** Tile cobble
+     tops are paid-for support, but dust-on-top powers the block beneath
+     unconditionally (`d506b74`), so roof traffic may misfire its own tile —
+     possibly fatal without tile changes — and chained bridges thrashed past
+     300s. Probe first (does an elevated marathon fit *and* verify where
+     ground verifiably doesn't); scope only on a positive.
+   - **(3) Demand-driven packing — deferred.** Trigger: (1) provably can't free
+     enough (measured) or (2)'s gate passes. Most invasive non-tile change.
+   - License note: tile redesign is permitted by the owner's answer plus
+     absence of prohibition — the handoff never endorses it, and the Do-not
+     list below is unchanged. The 11×9 correction above exists so nobody
+     re-derives the slack from the wrong number.
+
 **Do not** re-run any input-distribution / spine variant (four data points say
 they relocate starvation), the port-corridor ray as specified (measured, costs
 micro1 two green seeds), the per-input bank (measured, 0/12 by relocation),
