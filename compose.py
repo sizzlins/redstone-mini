@@ -270,6 +270,32 @@ def _plant_repeaters(ctx, cells, net, flow):
                 dist = 0
 
 
+def _strip_buffers(gates):
+    # fanout relay buffers are AND(x,x) = identity, emitted for maze hop-
+    # shortening. The composer boosts by construction, so relays are pure
+    # overhead (extra tiles + routes on an already-full field — the reverted
+    # chaining lesson). Inline them: provably equivalent, maze untouched.
+    buf = {}
+    for g in gates:
+        if g["op"] == "AND" and g["args"][0] == g["args"][1] and not g.get("rep"):
+            buf[g["out"]] = g["args"][0]
+    if not buf:
+        return gates
+
+    def resolve(n):
+        while n in buf:
+            n = buf[n]
+        return n
+
+    out = []
+    for g in gates:
+        if g["out"] in buf:
+            continue
+        g = dict(g, args=[resolve(a) for a in g["args"]])
+        out.append(g)
+    return out
+
+
 def _topo(gates):
     by_out, order = {}, []
     for i, g in enumerate(gates):
@@ -302,7 +328,7 @@ def _depths(gates, inputs):
 
 
 def compose(recipe):
-    gates = expand_gates(recipe["gates"], recipe["inputs"])
+    gates = _strip_buffers(expand_gates(recipe["gates"], recipe["inputs"]))
     blocks, solid, rings, wires, junctions, repeaters, pos, recs, sup = [], {}, {}, {}, {}, {}, {}, [], {}
     ctx = new_ctx(blocks, solid, rings, wires, junctions, repeaters, pos, recs, sup)
     guard = set()
@@ -349,16 +375,18 @@ def compose(recipe):
             break
         else:
             raise RuntimeError(f"compose blocked for {g['out']}")
-    # ties: layout.py:895-903 convention at fixed west sites (tiles live z>=12).
-    if any(a in ("0", "1") for g in gates for a in g["args"]):
-        stamp_wire(ctx, [(0, 3)], "0")
-        pos["0"] = (0, 3)
-        blocks.append((2, 1, 3, "minecraft:redstone_block"))
-        solid[(2, 3)] = ("block", "1")
+    # ties: hot "1" far from dark "0" (adjacent stubs side-touch and
+    # short). "0" needs nothing (dark by absence; netspec never routes
+    # it). "1" lives far east at z=3: north of every tile (tiles bottom
+    # out at z>=7) and clear of lanes (south field).
+    uses = {a for g in gates for a in g["args"]}
+    if "1" in uses:
+        stamp_wire(ctx, [(63, 3)], "1")
+        pos["1"] = (63, 3)
+        blocks.append((64, 1, 3, "minecraft:redstone_block"))
+        solid[(64, 3)] = ("block", "1")
         for dx, dz in DIRS:
-            ring(ctx, 2 + dx, 3 + dz, own("1"))
-        stamp_wire(ctx, [(1, 3)], "1")
-        pos["1"] = (1, 3)
+            ring(ctx, 64 + dx, 3 + dz, own("1"))
     # inputs: one edge bus per input at pitch 5 on the west edge. Stub on
     # the lever's west side so the lane jog never crosses its own block.
     for k, name in enumerate(recipe["inputs"]):
@@ -449,9 +477,26 @@ if __name__ == "__main__":
     assert any(y >= 2 for (x, y, z), n in _wires.items() if n == "B"), "B never left the ground"
     print("lwire ok: bridge-over crosses without touching")
 
-    from recipe import parse_recipe
+    from recipe import parse_recipe, expand_gates, eval_net
     from sim import sim_verify
     _r = parse_recipe("IN a, b\nOUT y\ny = a AND b\n")
     _out, _size, _io = compose(_r)
     sim_verify(_r, _out, _io, quiet=True)
     print("compose ok: AND verifies through the sim gate")
+    _fan = {"inputs": ["s", "x", "y", "z"], "outputs": ["o1", "o2", "o3"],
+            "gates": [{"out": "t", "op": "AND", "args": ["s", "x"]},
+                      {"out": "o1", "op": "AND", "args": ["t", "y"]},
+                      {"out": "o2", "op": "AND", "args": ["t", "z"]},
+                      {"out": "o3", "op": "AND", "args": ["t", "s"]},
+                      {"out": "big", "op": "OR", "args": ["o1", "o2"]}]}
+    _fx = expand_gates(_fan["gates"], _fan["inputs"])
+    assert any(g["out"].startswith("_bf") for g in _fx), "want real buffers"
+    _sx = _strip_buffers(_fx)
+    assert not any(g["out"].startswith("_bf") for g in _sx), _sx
+    from itertools import product as _prod
+    for _bits in _prod([0, 1], repeat=4):
+        _v = dict(zip(["s", "x", "y", "z"], _bits))
+        _a = eval_net(dict(_fan, gates=_sx), _v)
+        _b = eval_net(dict(_fan, gates=_fx), _v)
+        assert all(_a[o] == _b[o] for o in ["o1", "o2", "o3", "big"]), _v
+    print("buffers ok: relay chains inline to identical logic on all vectors")
