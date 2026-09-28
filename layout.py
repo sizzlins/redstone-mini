@@ -690,6 +690,48 @@ def finish_assembly(blocks, solid, wires, rings, junctions, repeaters, pos):
     return sorted(out), (W, D), io
 
 
+def build_netspec(recs, recipe, pos):
+    netspec = {}
+    def _load(net, cell):
+        if net == "0":
+            return  # dark stubs read 0; nothing is stamped
+        e = netspec.setdefault(net, {'drv': None, 'loads': []})
+        e['loads'].append(cell)
+    for op, o, a, cell in recs:
+        if op == "AND":
+            pa, pb, po = cell
+            netspec.setdefault(o, {'drv': po, 'loads': []})
+            _load(a[0], pa); _load(a[1], pb)
+        elif op == "NOT":
+            bx, bz = cell
+            netspec.setdefault(o, {'drv': (bx + 2, bz), 'loads': []})
+            _load(a[0], (bx - 2, bz))
+        elif op in ("LATCH", "XOR"):
+            pa, pb, po = cell
+            netspec.setdefault(o, {'drv': po, 'loads': []})
+            _load(a[0], pa); _load(a[1], pb)
+            if op == "XOR":
+                # REP1 back (ox,gz-2) is a routed load: pa = (ox+3,gz).
+                _load(a[1], (pa[0] - 3, pa[1] - 2))
+        elif op == "OR":
+            j, reps = cell
+            netspec.setdefault(o, {'drv': j, 'loads': []})
+            for sig, (rr, bb) in zip(a, reps):
+                _load(sig, bb)
+        elif op == "OUT":
+            pass  # lamp taps the driver wire; no stub
+        else:
+            raise RuntimeError(f"bus: unsupported {op}")
+    for name in recipe["inputs"]:
+        netspec.setdefault(name, {'drv': None, 'loads': []})
+    if "1" in netspec:
+        netspec["1"]['drv'] = pos["1"]
+    for net in [n for n, s in netspec.items()
+                if not s['loads'] and n not in recipe["outputs"]]:
+        del netspec[net]
+    return netspec
+
+
 def layout(recipe, seed=None, grow=0, reserve=False):
     """reserve=True rings each output driver's tap pocket (retry layer only:
     always-on moved small builds' routes into a slope short, measured twice).
@@ -1386,44 +1428,7 @@ def layout(recipe, seed=None, grow=0, reserve=False):
     # local margins hit fast), then boosters bridge residual decay.
     # (XOR tile-stamped side levers stay: tile geometry, and same-net
     # duplicates are wired-OR harmless.)
-    netspec = {}
-    def _load(net, cell):
-        if net == "0":
-            return  # dark stubs read 0; nothing is stamped
-        e = netspec.setdefault(net, {'drv': None, 'loads': []})
-        e['loads'].append(cell)
-    for op, o, a, cell in recs:
-        if op == "AND":
-            pa, pb, po = cell
-            netspec.setdefault(o, {'drv': po, 'loads': []})
-            _load(a[0], pa); _load(a[1], pb)
-        elif op == "NOT":
-            bx, bz = cell
-            netspec.setdefault(o, {'drv': (bx + 2, bz), 'loads': []})
-            _load(a[0], (bx - 2, bz))
-        elif op in ("LATCH", "XOR"):
-            pa, pb, po = cell
-            netspec.setdefault(o, {'drv': po, 'loads': []})
-            _load(a[0], pa); _load(a[1], pb)
-            if op == "XOR":
-                # REP1 back (ox,gz-2) is a routed load: pa = (ox+3,gz).
-                _load(a[1], (pa[0] - 3, pa[1] - 2))
-        elif op == "OR":
-            j, reps = cell
-            netspec.setdefault(o, {'drv': j, 'loads': []})
-            for sig, (rr, bb) in zip(a, reps):
-                _load(sig, bb)
-        elif op == "OUT":
-            pass  # lamp taps the driver wire; no stub
-        else:
-            raise RuntimeError(f"bus: unsupported {op}")
-    for name in recipe["inputs"]:
-        netspec.setdefault(name, {'drv': None, 'loads': []})
-    if "1" in netspec:
-        netspec["1"]['drv'] = pos["1"]
-    for net in [n for n, s in netspec.items()
-                if not s['loads'] and n not in recipe["outputs"]]:
-        del netspec[net]
+    netspec = build_netspec(recs, recipe, pos)
     # ponytail: inputs ride the router like gate nets (single-lever panel);
     # fanout cost is real routing now. Loud fail if a dense input seals.
     tasks = []
