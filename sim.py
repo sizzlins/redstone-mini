@@ -5,6 +5,7 @@ import os as _os
 
 from core import DIRS, base
 from layout import layout, dust_points
+from compose import compose
 from recipe import eval_net
 
 # ponytail: settling budget. A dense build is ~10x the cells of a small one and
@@ -39,6 +40,20 @@ def layout_retry(recipe, tries=12, verify=False, grows=3):
     always-on rings moved small builds into a slope short (measured twice),
     so green trajectories never see it."""
     last = None
+    try:
+        out = compose(recipe)
+    except RuntimeError as e:
+        last = e
+    else:
+        if not verify:
+            return out + (None,)
+        try:
+            st, ticks = sim_verify(recipe, out[0], out[2], quiet=True, collect=True)
+        except RuntimeError as e:
+            e.blocks, e.size, e.io = out[:3]
+            last = e
+        else:
+            return out + (st,)
     for _res in (False, True):
         for t in range(tries):
             seed = None if t == 0 else t
@@ -754,4 +769,8 @@ if __name__ == "__main__":
     except RuntimeError as _e:
         assert "BURNOUT" in str(_e), str(_e)[:80]
     print("torch-burnout ok: hunting torch dies dark, loud")
+    _r = parse_recipe("IN a, b\nOUT y\ny = a AND b\n")
+    _b, _, _, _st = layout_retry(_r, verify=True)
+    assert _st is not None and len(_b) > 0
+    print("ladder ok: compose-first returns a verified build")
 
