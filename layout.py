@@ -732,6 +732,92 @@ def build_netspec(recs, recipe, pos):
     return netspec
 
 
+def check_shorts(wires, junctions, blocks):
+    # checker: no two nets may share/side-touch dust, except at OR junctions.
+    # Diagonal +-1 adjacency counts only via a true slope link (support +
+    # no lid, sim's rule): stacked/unsupported y-adjacency never couples,
+    # so legal overflight passes and real 3D shorts still fail loudly.
+    cob3 = {(x, y, z) for x, y, z, bid in blocks if bid.split("[")[0] == "minecraft:cobblestone"}
+    for (x, y, z), net in wires.items():
+        for dx, dz in DIRS:
+            m = (x + dx, y, z + dz)
+            if m in wires and wires[m] != net:
+                ok = ((m[0], m[2]) in junctions and net in junctions[(m[0], m[2])] and wires[m] in junctions[(m[0], m[2])])
+                ok = ok or ((x, z) in junctions and wires[m] in junctions[(x, z)])
+                if not ok:
+                    raise RuntimeError(f"SHORT: {net} touches {wires[m]} at {(x, y, z)}->{m}")
+            for dy in (1, -1):
+                f = (x + dx, y + dy, z + dz)
+                w = wires.get(f)
+                if w is None or w == net:
+                    continue
+                if dy == 1:
+                    if (f[0], f[1] - 1, f[2]) in cob3 and (x, y + 1, z) not in cob3:
+                        raise RuntimeError(f"SHORT3D: {net} slope-links {w} at {(x, y, z)}->{f}")
+                elif y >= 2 and (x, y - 1, z) in cob3 and (f[0], y, f[2]) not in cob3:
+                    raise RuntimeError(f"SHORT3D: {net} slope-links {w} at {(x, y, z)}->{f}")
+
+
+def check_opens(wires, junctions, repeaters, solid, pos, blocks):
+    # checker 2 (opens): every wire must trace to a driver (lever feed, tie,
+    # or torch-adjacent dust). Same-net steps, junctions merge, repeaters pass.
+    # A routed-looking but unconnected net fails loudly instead of building dead.
+    seed_states = []
+    for name, p in pos.items():
+        p3 = (p[0], 1, p[1])
+        if p3 in wires and wires[p3] == name:
+            seed_states.append((p3, name))
+    for (x, z), (kind, name) in solid.items():
+        # ponytail: every lever island seeds (multi-lever inputs drive
+        # several disconnected dust cells; pos[] only knows the first).
+        if kind != "lever":
+            continue
+        for dx, dz in DIRS:
+            c = (x + dx, 1, z + dz)
+            if c in wires and wires[c] == name:
+                seed_states.append((c, name))
+    for (x, y, z), net in wires.items():
+        for dx, dz in DIRS:
+            if solid.get((x + dx, z + dz), (None,))[0] == "torch":
+                seed_states.append(((x, y, z), net))
+                break
+    reached, seen_states = set(), set()
+    stack = seed_states
+    cob = {(x, y, z) for x, y, z, bid in blocks if bid.split("[")[0] == "minecraft:cobblestone"}
+    while stack:
+        c, n = stack.pop()
+        if (c, n) in seen_states:
+            continue
+        seen_states.add((c, n))
+        reached.add(c)
+        for dx, dz in DIRS:
+            m = (c[0] + dx, c[1], c[2] + dz)
+            if m in wires:
+                nm = wires[m]
+                if nm == n or ((c[0], c[2]) in junctions and nm in junctions[(c[0], c[2])]) or \
+                   ((m[0], m[2]) in junctions and n in junctions[(m[0], m[2])]):
+                    stack.append((m, nm if nm == n or (m[0], m[2]) not in junctions else n))
+            elif m in repeaters and repeaters[m][0] == n:
+                stack.append((m, n))
+            elif solid.get((m[0], m[2]), (None,))[0] == "repeater" and solid[(m[0], m[2])][1] == n:
+                stack.append((m, n))  # OR diodes stamp solid-only
+            # ponytail: slope links use sim's rule (support below, no lid
+            # above); without this every bridge reads as unconnected dust.
+            up = (c[0] + dx, c[1] + 1, c[2] + dz)
+            if wires.get(up) == n and (c[0] + dx, c[1], c[2] + dz) in cob \
+                    and (c[0], c[1] + 1, c[2]) not in cob:
+                stack.append((up, n))
+            dn = (c[0] + dx, c[1] - 1, c[2] + dz)
+            if wires.get(dn) == n and (c[0], c[1] - 1, c[2]) in cob \
+                    and (c[0] + dx, c[1], c[2] + dz) not in cob:
+                stack.append((dn, n))
+    dead = [(x, y, z) for (x, y, z) in wires if (x, y, z) not in reached
+            and wires[(x, y, z)] != "0"]  # undriven "0" stubs read 0 unconnected
+    if dead:
+        _dn = [(c, wires[c]) for c in dead[:6]]
+        raise RuntimeError(f"OPEN (unconnected dust, nothing drives it): {_dn}")
+
+
 def layout(recipe, seed=None, grow=0, reserve=False):
     """reserve=True rings each output driver's tap pocket (retry layer only:
     always-on moved small builds' routes into a slope short, measured twice).
@@ -1952,82 +2038,11 @@ def layout(recipe, seed=None, grow=0, reserve=False):
     # Diagonal +-1 adjacency counts only via a true slope link (support +
     # no lid, sim's rule): stacked/unsupported y-adjacency never couples,
     # so legal overflight passes and real 3D shorts still fail loudly.
-    cob3 = {(x, y, z) for x, y, z, bid in blocks if bid.split("[")[0] == "minecraft:cobblestone"}
-    for (x, y, z), net in wires.items():
-        for dx, dz in DIRS:
-            m = (x + dx, y, z + dz)
-            if m in wires and wires[m] != net:
-                ok = ((m[0], m[2]) in junctions and net in junctions[(m[0], m[2])] and wires[m] in junctions[(m[0], m[2])])
-                ok = ok or ((x, z) in junctions and wires[m] in junctions[(x, z)])
-                if not ok:
-                    raise RuntimeError(f"SHORT: {net} touches {wires[m]} at {(x, y, z)}->{m}")
-            for dy in (1, -1):
-                f = (x + dx, y + dy, z + dz)
-                w = wires.get(f)
-                if w is None or w == net:
-                    continue
-                if dy == 1:
-                    if (f[0], f[1] - 1, f[2]) in cob3 and (x, y + 1, z) not in cob3:
-                        raise RuntimeError(f"SHORT3D: {net} slope-links {w} at {(x, y, z)}->{f}")
-                elif y >= 2 and (x, y - 1, z) in cob3 and (f[0], y, f[2]) not in cob3:
-                    raise RuntimeError(f"SHORT3D: {net} slope-links {w} at {(x, y, z)}->{f}")
+    check_shorts(wires, junctions, blocks)
     # checker 2 (opens): every wire must trace to a driver (lever feed, tie,
     # or torch-adjacent dust). Same-net steps, junctions merge, repeaters pass.
     # A routed-looking but unconnected net fails loudly instead of building dead.
-    seed_states = []
-    for name, p in pos.items():
-        p3 = (p[0], 1, p[1])
-        if p3 in wires and wires[p3] == name:
-            seed_states.append((p3, name))
-    for (x, z), (kind, name) in solid.items():
-        # ponytail: every lever island seeds (multi-lever inputs drive
-        # several disconnected dust cells; pos[] only knows the first).
-        if kind != "lever":
-            continue
-        for dx, dz in DIRS:
-            c = (x + dx, 1, z + dz)
-            if c in wires and wires[c] == name:
-                seed_states.append((c, name))
-    for (x, y, z), net in wires.items():
-        for dx, dz in DIRS:
-            if solid.get((x + dx, z + dz), (None,))[0] == "torch":
-                seed_states.append(((x, y, z), net))
-                break
-    reached, seen_states = set(), set()
-    stack = seed_states
-    cob = {(x, y, z) for x, y, z, bid in blocks if bid.split("[")[0] == "minecraft:cobblestone"}
-    while stack:
-        c, n = stack.pop()
-        if (c, n) in seen_states:
-            continue
-        seen_states.add((c, n))
-        reached.add(c)
-        for dx, dz in DIRS:
-            m = (c[0] + dx, c[1], c[2] + dz)
-            if m in wires:
-                nm = wires[m]
-                if nm == n or ((c[0], c[2]) in junctions and nm in junctions[(c[0], c[2])]) or \
-                   ((m[0], m[2]) in junctions and n in junctions[(m[0], m[2])]):
-                    stack.append((m, nm if nm == n or (m[0], m[2]) not in junctions else n))
-            elif m in repeaters and repeaters[m][0] == n:
-                stack.append((m, n))
-            elif solid.get((m[0], m[2]), (None,))[0] == "repeater" and solid[(m[0], m[2])][1] == n:
-                stack.append((m, n))  # OR diodes stamp solid-only
-            # ponytail: slope links use sim's rule (support below, no lid
-            # above); without this every bridge reads as unconnected dust.
-            up = (c[0] + dx, c[1] + 1, c[2] + dz)
-            if wires.get(up) == n and (c[0] + dx, c[1], c[2] + dz) in cob \
-                    and (c[0], c[1] + 1, c[2]) not in cob:
-                stack.append((up, n))
-            dn = (c[0] + dx, c[1] - 1, c[2] + dz)
-            if wires.get(dn) == n and (c[0], c[1] - 1, c[2]) in cob \
-                    and (c[0] + dx, c[1], c[2] + dz) not in cob:
-                stack.append((dn, n))
-    dead = [(x, y, z) for (x, y, z) in wires if (x, y, z) not in reached
-            and wires[(x, y, z)] != "0"]  # undriven "0" stubs read 0 unconnected
-    if dead:
-        _dn = [(c, wires[c]) for c in dead[:6]]
-        raise RuntimeError(f"OPEN (unconnected dust, nothing drives it): {_dn}")
+    check_opens(wires, junctions, repeaters, solid, pos, blocks)
     return finish_assembly(blocks, solid, wires, rings, junctions, repeaters, pos)
 
 
