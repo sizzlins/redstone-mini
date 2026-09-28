@@ -646,6 +646,49 @@ def bridge_stamp(blocks, solid, wires, rings, placed, net, fx, fz, axis):
     return feet
 
 
+def finish_assembly(blocks, solid, wires, rings, junctions, repeaters, pos):
+    # ponytail: shrink-wrap grid to content (+3 margin). A 13x4 gate on a
+    # 30x38 pad photographs as sprawl even when every wire is minimal.
+    OCC = [(x, 1, z) for (x, z) in solid] + list(wires)
+    minx = min(c[0] for c in OCC) - 3
+    minz = min(c[2] for c in OCC) - 3
+    maxx = max(c[0] for c in OCC) + 3
+    maxz = max(c[2] for c in OCC) + 3
+    blocks = [(x - minx, y, z - minz, b) for x, y, z, b in blocks]
+    solid = {(x - minx, z - minz): v for (x, z), v in solid.items()}
+    wires = {(x - minx, y, z - minz): v for (x, y, z), v in wires.items()}
+    rings = {(x - minx, z - minz): v for (x, z), v in rings.items()}
+    junctions = {(x - minx, z - minz): v for (x, z), v in junctions.items()}
+    pos = {n: (x - minx, z - minz) for n, (x, z) in pos.items()}
+    repeaters = {(x - minx, y, z - minz): v for (x, y, z), v in repeaters.items()}
+    W, D = maxx - minx + 1, maxz - minz + 1
+    out = list(blocks)
+    # ponytail: one component per cell; a repeater wins over dust. The router
+    # can re-stamp a wire label onto a tile repeater cell (tile dels it, route
+    # re-adds it), which modelled dust+repeater at once -- a phantom loop that
+    # holds itself lit across phases (D-latch seeds 4/5). The world gets one
+    # block, so the sim must see one.
+    dust = set(wires) - set(repeaters)
+    _cob = {x[:3] for x in out if x[3].split("[")[0] == "minecraft:cobblestone"}
+    _loop = _loop_rep(wires, repeaters, dust, _cob)
+    if _loop is not None:
+        raise RuntimeError(f"repeater loop on {_loop[1]} at {_loop[0]}: front "
+                           f"joins back (bistable; first transient latches it)")
+    for (x, y, z), net in wires.items():
+        if (x, y, z) in repeaters:
+            continue
+        out.append((x, y, z, wire_bid((x, y, z), dust)))
+    for (x, y, z), (net, facing) in repeaters.items():
+        out.append((x, y, z, f"minecraft:repeater[facing={facing},delay=1]"))
+    # ponytail: stone only where a ground component sits (flat worlds have
+    # ground already); a full pad was 98% of the file. y>=2 rides pillars.
+    for x, z in sorted({(x, z) for x, y, z, bid in out if y == 1}):
+        out.append((x, 0, z, "minecraft:stone"))
+    io = {"levers": {c: n for c, (k, n) in solid.items() if k == "lever"},
+          "lamps": {c: n for c, (k, n) in solid.items() if k == "lamp"},
+          "nets": dict(wires)}
+    return sorted(out), (W, D), io
+
 
 def layout(recipe, seed=None, grow=0, reserve=False):
     """reserve=True rings each output driver's tap pocket (retry layer only:
@@ -1980,47 +2023,7 @@ def layout(recipe, seed=None, grow=0, reserve=False):
     if dead:
         _dn = [(c, wires[c]) for c in dead[:6]]
         raise RuntimeError(f"OPEN (unconnected dust, nothing drives it): {_dn}")
-    # ponytail: shrink-wrap grid to content (+3 margin). A 13x4 gate on a
-    # 30x38 pad photographs as sprawl even when every wire is minimal.
-    OCC = [(x, 1, z) for (x, z) in solid] + list(wires)
-    minx = min(c[0] for c in OCC) - 3
-    minz = min(c[2] for c in OCC) - 3
-    maxx = max(c[0] for c in OCC) + 3
-    maxz = max(c[2] for c in OCC) + 3
-    blocks = [(x - minx, y, z - minz, b) for x, y, z, b in blocks]
-    solid = {(x - minx, z - minz): v for (x, z), v in solid.items()}
-    wires = {(x - minx, y, z - minz): v for (x, y, z), v in wires.items()}
-    rings = {(x - minx, z - minz): v for (x, z), v in rings.items()}
-    junctions = {(x - minx, z - minz): v for (x, z), v in junctions.items()}
-    pos = {n: (x - minx, z - minz) for n, (x, z) in pos.items()}
-    repeaters = {(x - minx, y, z - minz): v for (x, y, z), v in repeaters.items()}
-    W, D = maxx - minx + 1, maxz - minz + 1
-    out = list(blocks)
-    # ponytail: one component per cell; a repeater wins over dust. The router
-    # can re-stamp a wire label onto a tile repeater cell (tile dels it, route
-    # re-adds it), which modelled dust+repeater at once -- a phantom loop that
-    # holds itself lit across phases (D-latch seeds 4/5). The world gets one
-    # block, so the sim must see one.
-    dust = set(wires) - set(repeaters)
-    _cob = {x[:3] for x in out if x[3].split("[")[0] == "minecraft:cobblestone"}
-    _loop = _loop_rep(wires, repeaters, dust, _cob)
-    if _loop is not None:
-        raise RuntimeError(f"repeater loop on {_loop[1]} at {_loop[0]}: front "
-                           f"joins back (bistable; first transient latches it)")
-    for (x, y, z), net in wires.items():
-        if (x, y, z) in repeaters:
-            continue
-        out.append((x, y, z, wire_bid((x, y, z), dust)))
-    for (x, y, z), (net, facing) in repeaters.items():
-        out.append((x, y, z, f"minecraft:repeater[facing={facing},delay=1]"))
-    # ponytail: stone only where a ground component sits (flat worlds have
-    # ground already); a full pad was 98% of the file. y>=2 rides pillars.
-    for x, z in sorted({(x, z) for x, y, z, bid in out if y == 1}):
-        out.append((x, 0, z, "minecraft:stone"))
-    io = {"levers": {c: n for c, (k, n) in solid.items() if k == "lever"},
-          "lamps": {c: n for c, (k, n) in solid.items() if k == "lamp"},
-          "nets": dict(wires)}
-    return sorted(out), (W, D), io
+    return finish_assembly(blocks, solid, wires, rings, junctions, repeaters, pos)
 
 
 if __name__ == "__main__":
