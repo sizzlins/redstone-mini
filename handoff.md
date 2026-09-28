@@ -286,6 +286,11 @@ means the remaining work is **one shared problem, not four**.
 
 ## The next defect, named but NOT solved — micro1 s7 / s10
 
+**2026-09-28 session (systematic-debugging, fully reverted, tree byte-identical):**
+experiment #1 above was RUN — one-circuit check in dust_lvl/dust_points terms
+— and it FAILED its own positive control, so it is dropped, third in the
+rejected-instrument line (directional walk, naive one-circuit, this one).
+
 Both fail `SIM MISMATCH x2` on the **same** vectors, and the cause is
 `Q` (the latch output) not propagating:
 
@@ -312,12 +317,39 @@ beside `dust_lvl`, written in terms of that function*, not in a probe that
 re-derives the coupling rules.
 
 Next experiment, in order:
-1. Read `sim.py::dust_lvl` and write the one-circuit check **there**, in terms
-   of that function. Validation is mandatory and cheap: it must come out clean
-   on all four green small builds and flag s7/s10 — if it flags `example_xor`
-   again, it is wrong and must be dropped, exactly as last time.
-2. s4's `OPEN (unconnected dust): ((173,12),(171,12)) 'T0'` is a **different**
-   mechanism — the booster-side probe was clean there. 2 cells, still open.
+1. ~~Read `sim.py::dust_lvl` and write the one-circuit check **there**~~ **DONE,
+   FALSIFIED — do not revive without relevance tracking.** Built as
+   `_unboosted_gaps` (BFS from re-power opportunities over same-net dust,
+   flag uncovered or gap >14, pointing-true cobble via `dust_points`) and it
+   separated Q cleanly (s3/s5: 14/12 clean; s7: 15; s10: 10 unreachable; four
+   small builds ≤12 clean) — then fired on **s3 net D (gap 15) on a GREEN
+   build**. D-15-green vs Q-15-red is the discriminator the model lacks:
+   D's far cell is almost certainly a tail past the tile's read point (s3-D
+   loads read 0 yet S arrives hot), Q's is mid-route before all loads. A
+   static map without tail-vs-mid-route relevance WILL fire on green again.
+   Wired as checker-3 once, saw the s3-D refusal, reverted the same session;
+   suite + serve green, tree byte-identical. Evidence that survives: greens
+   bootstrap via downstream-repeater feedback (s3/s5: touching reps 14/14,
+   13/13 ON when Q=1, 0 when Q=0), reds never start (s7/s10: 0/16, 0/11);
+   the cover's per-segment 14-rule lets assembled runs escape (zero Q
+   boosters in all four seeds). Probes in TEMP (`compq/compwr/qrep/qvec*/
+   qgap*/qverify.py`), not scratch, and now stale. The sim remains the gate.
+2. s4's `OPEN (unconnected dust): ((173,12),(171,12)) 'T0'` — **DIAGNOSED
+   2026-09-28, TRUE POSITIVE, no fix (a fix gains no green).** Autopsied with
+   temporary instruments (reverted same session, tree byte-identical): T0's
+   route churned 8× (ripped for S/T1/m1/Q), finished via two bridges (feet
+   (108,12)/(112,12) and (129,11)/(129,15); static tasks confirm the
+   segments), and the cover planted a T0 booster **on the load port cell
+   itself** (172,12 = m0's pa, repeater facing east). Flanking dust 171/173
+   hangs off it with no driver (170 empty, N/S empty — the flat approach was
+   ripped away mid-churn), so the repeater back reads permanent 0 and m0's A
+   is dark forever; vanilla agrees, so the OPEN refusal is correct, not
+   walk over-strictness. Considered and rejected: a cover guard against
+   boosting tile-port cells — it would only move s4 from OPEN to
+   unboostable-gap (the island stays driverless either way), renaming a loud
+   failure for zero greens. Repair direction for engine-generality work, not
+   today's diff: re-feed ripped flat mouths after bridge assembly, and/or
+   keep boosters off `placed` port cells. Probes in TEMP (`s4*.py`), stale.
 3. **The dense wall is one shared problem, and the placement lever is now
    exhausted — two independent moves agree.** Corridors and the per-input bank
    both died by the same mechanism (middle-field walls cost more ground than
@@ -978,4 +1010,38 @@ throughout Steps 1–4 (Steps 1–4 are neutral on dense builds).
    Attempt 2's scope from a census taken under the old loop; compare timings
    across runs that die at different walls or on a loaded machine; merge
    `scratch/` or the untracked plans.
+
+## Compositional backend session (2026-09-28, second backend landed)
+
+Upstream RHDL (`D:\redstone_description_language`, Zig 0.15.1, built locally
+with two Windows-compat fixes, uncommitted there) was translated and measured:
+alu1/ctrl_decode/alu4 flatten to single-expression VHDL (equivalence proven
+vs `eval_net` on all vectors: 32/32, 8/8, 1024/1024) and compile in ≤0.2s
+each (3485/1440/24396 blocks, 7–9% elevated, byte-identical runs). micro1/cpu4
+cannot enter their pipeline (no sequential logic). Lesson ported, not code:
+compositional placement + bridges-over, keeping OUR verified tiles + sim.
+
+Landed on `phase2-design` (`2183023`..`4a77efb` + 2 specs): extraction of
+`finish_assembly` / `build_netspec` / SHORT+OPEN checkers / full tile layer
+to `tiles.py` (AND reserve tightened 11×9→9×7 inside the hoist), new
+`compose.py` (lanes, staircase hops from `bridge_plan`, candidate rays,
+halos, per-path planting, flow-guarded diodes, buffer-strip), `layout_retry`
+tries composer first with maze fallback untouched.
+
+Measured: 4/4 small builds sim-green deterministically through the composer
+(158/280/226/254 blocks; latch_sr included — sequential, upstream
+cannot); suite green; 4/4 hashes byte-identical; serve green; cpu4 never
+touched (still frozen). Kill-switch (b) SUPERSEDED by measurement: composer
+failure costs 0.0s (loud → instant fallback), so keeping the integration is
+strictly better than reverting (small builds faster + deterministic).
+
+Dense: 0/4 composer-green (micro1 D-march, alu1 C-march, ctrl_decode n0,
+alu4 C1-march; 2 micro1 mutants die on the identical march — structural).
+Recursive-locality placement (spec `2026-09-28-recursive-locality-design.md`)
+landed but did not clear the wall: remaining failures are density
+proximity + marches through tile bodies, which no deterministic discipline
+here can cross (hops correctly refuse signal-solids). Per that spec's kill
+criterion the locality hypothesis is FALSIFIED — record and stop, no fifth
+mechanism. Next (each its own spec): tile through-corridors, or maze-search
+assist for composer-placed builds.
 
