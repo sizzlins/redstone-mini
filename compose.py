@@ -317,14 +317,11 @@ def _topo(gates):
     return [gates[i] for i in order]
 
 
-def _depths(gates, inputs):
-    ins, depth = set(inputs), {}
-    for g in _topo(gates):
-        if all(a in ins or a in ("0", "1") for a in g["args"]):
-            depth[g["out"]] = 2
-        else:
-            depth[g["out"]] = 1 + max(depth[a] for a in g["args"] if a not in ins and a not in ("0", "1"))
-    return depth
+def _expanded(op, ox, gz):
+    # footprint + 2 halo for disjoint-testing: guarantees ~4-wide streets
+    # between tiles (marches need empty ground, not just non-overlap).
+    fp = footprint(op, ox, gz)
+    return {(x + ax, z + az) for (x, z) in fp for ax in (-2, -1, 0, 1, 2) for az in (-2, -1, 0, 1, 2)}
 
 
 def compose(recipe):
@@ -333,13 +330,12 @@ def compose(recipe):
     ctx = new_ctx(blocks, solid, rings, wires, junctions, repeaters, pos, recs, sup)
     guard = set()
     ordered = _topo(gates)
-    depth = _depths(gates, recipe["inputs"])
-    # placement: topo bands in Z, padding from subtree depth; 4 X-lanes stride 30.
-    gz_of, z = {}, 12
-    for g in ordered:
-        gz_of[g["out"]] = z
-        z += 4 + depth[g["out"]] + 6
+    # placement: recursive locality — each gate goes just south of its
+    # drivers (children next to parents, so runs are short by
+    # construction), bumping east until disjoint. Driverless gates seed a
+    # top row. Flow invariant: signals run south+east only.
     used_fp = []
+    placed = {}
 
     def c_spot_free(op, ox, gz, i):
         fp = footprint(op, ox, gz)
@@ -354,8 +350,20 @@ def compose(recipe):
 
     c_place = SimpleNamespace(spot_free=c_spot_free, gridrows=c_gridrows,
                               snap=lambda: None, restore=lambda s: None)
+    topx = 6
     for i, g in enumerate(ordered):
-        ox, gz = 6 + (i % 4) * 30, gz_of[g["out"]]
+        drvs = [a for a in g["args"] if a in placed]
+        if not drvs:
+            ox, gz = topx, 12
+            topx += 30
+        else:
+            bottom = max(z for a in drvs for (_, z) in placed[a][3])
+            n = sum(len(placed[a][3]) for a in drvs)
+            cx = sum(x for a in drvs for (x, _) in placed[a][3]) // n
+            gz = bottom + 8
+            ox = max(4, cx)
+            while any(not _expanded(g["op"], ox, gz).isdisjoint(u) for u in used_fp):
+                ox += 2
         for ox2, gz2 in c_gridrows(ox, gz):
             if not c_spot_free(g["op"], ox2, gz2, i):
                 continue
@@ -371,32 +379,55 @@ def compose(recipe):
                 place_xor(ctx, c_place, g, i, ox2, gz2, pos)
             else:
                 raise RuntimeError(f"compose: bad primitive {g['op']}")
-            used_fp.append(footprint(g["op"], ox2, gz2))
+            fp = footprint(g["op"], ox2, gz2)
+            placed[g["out"]] = (g["op"], ox2, gz2, fp)
+            used_fp.append(_expanded(g["op"], ox2, gz2))
             break
         else:
             raise RuntimeError(f"compose blocked for {g['out']}")
-    # ties: hot "1" far from dark "0" (adjacent stubs side-touch and
-    # short). "0" needs nothing (dark by absence; netspec never routes
-    # it). "1" lives far east at z=3: north of every tile (tiles bottom
-    # out at z>=7) and clear of lanes (south field).
+    # bbox of placed tiles drives ties + input buses (both hug the field
+    # instead of living at fixed far coordinates).
+    BB = [(x, z) for u in used_fp for (x, z) in u]
+    minx, maxx = min(x for x, _ in BB), max(x for x, _ in BB)
+    minz, maxz = min(z for _, z in BB), max(z for _, z in BB)
+    # ties: hot "1" east of bbox at z=3 (north of every tile — footprints
+    # bottom out at z>=7 — and clear of buses, which live at z>=minz-6).
+    # "0" needs nothing (dark by absence; netspec never routes it).
     uses = {a for g in gates for a in g["args"]}
     if "1" in uses:
-        stamp_wire(ctx, [(63, 3)], "1")
-        pos["1"] = (63, 3)
-        blocks.append((64, 1, 3, "minecraft:redstone_block"))
-        solid[(64, 3)] = ("block", "1")
+        stamp_wire(ctx, [(maxx + 3, 3)], "1")
+        pos["1"] = (maxx + 3, 3)
+        blocks.append((maxx + 4, 1, 3, "minecraft:redstone_block"))
+        solid[(maxx + 4, 3)] = ("block", "1")
         for dx, dz in DIRS:
-            ring(ctx, 64 + dx, 3 + dz, own("1"))
-    # inputs: one edge bus per input at pitch 5 on the west edge. Stub on
-    # the lever's west side so the lane jog never crosses its own block.
+            ring(ctx, maxx + 4 + dx, 3 + dz, own("1"))
+    # inputs: lever row on the bbox edge nearest the loads' centroid
+    # (north minz-6, south maxz+6, tie south), pitched clear per edge.
+    # Runs stay short: bus hugs the field, loads tap in. Loads come from
+    # netspec (same cells the router targets — no second recs walk).
+    netspec = build_netspec(recs, recipe, pos)
+    edge_n, edge_s = {}, {}
     for k, name in enumerate(recipe["inputs"]):
-        lz = z + 6 + k * 5
-        blocks.append((4, 1, lz, "minecraft:lever"))
-        solid[(4, lz)] = ("lever", name)
+        loads = netspec.get(name, {}).get('loads', [])
+        if not loads:
+            continue  # unused input: no lever, nothing to drive
+        cz = sum(z for _, z in loads) // len(loads)
+        cx = min(max(sum(x for x, _ in loads) // len(loads), minx), maxx)
+        if cz - minz <= maxz - cz:
+            lz = minz - 6 - 2 * len(edge_n)
+            edge_n[name] = lz
+        else:
+            lz = maxz + 6 + 2 * len(edge_s)
+            edge_s[name] = lz
+        blocks.append((cx, 1, lz, "minecraft:lever"))
+        solid[(cx, lz)] = ("lever", name)
         for dx, dz in DIRS:
-            ring(ctx, 4 + dx, lz + dz, own(name))
-        stamp_wire(ctx, [(3, lz)], name)
-        pos[name] = (3, lz)
+            ring(ctx, cx + dx, lz + dz, own(name))
+        # stub juts east along the empty lever row (west collides with
+        # other lanes' columns; rows sit outside tile z-span so east runs
+        # free until the lane turns north/south).
+        stamp_wire(ctx, [(cx + 1, lz)], name)
+        pos[name] = (cx + 1, lz)
     # guard from stamped torches, exactly like layout.py:1419-1425.
     for x, y, zz, bid in blocks:
         if "wall_torch" in bid:
@@ -404,25 +435,19 @@ def compose(recipe):
             face = bid.split("facing=")[1].rstrip("]")
             dx, dz = TORCH_BACK[face]
             guard.add((x + dx, zz + dz))
-    netspec = build_netspec(recs, recipe, pos)
-    inps = list(recipe["inputs"])
-    # order: gate nets before input nets. A long input jog is a wall no
-    # 5-cell hop can cross (feet land on the wall itself); stamped last, it
-    # hops each short gate run it meets instead — single victims, free feet.
-    ordered_nets = sorted(n for n in netspec if n not in inps and n not in ("0", "1"))
-    ordered_nets += sorted(n for n in netspec if n in inps)
     paths = []
     # other nets' load cells are reserved: a candidate stepping on one
     # would steal a future port (then that net dies loud at its endpoint).
     # Halo (Chebyshev 1 around each foreign load): feeds must never sit
-    # adjacent either (different nets side-touching = a vanilla short) —
-    # e.g. a@(6,9) would seal b's (6,10) port forever, and vice versa.
+    # adjacent either (different nets side-touching = a vanilla short).
     allloads = {}
     for n2, spec in netspec.items():
         for cell in spec['loads']:
             allloads.setdefault(n2, set()).add(cell)
     halos = {}
-    for net in ordered_nets:
+    for net in netspec:
+        if net in ("0", "1"):
+            continue
         h = set()
         for n2, s in allloads.items():
             if n2 == net:
@@ -431,18 +456,21 @@ def compose(recipe):
                 h.update((lx + ax, lz + az) for ax in (-1, 0, 1) for az in (-1, 0, 1))
         halos[net] = frozenset(h)
     flow = {}
-    for net in ordered_nets:
+    inps = list(recipe["inputs"])
+    # Transit segregation: recursive placement keeps runs short, but runs
+    # still share columns without lanes — per-input N-S lanes in the west
+    # field (strictly west of all tiles AND levers, pitch 4) give every
+    # input private ground; E-W jogs cross them perpendicularly
+    # (hop-able). Gate nets route first (short direct runs stamp before
+    # lanes fill).
+    ordered = sorted(n for n in netspec if n not in inps and n not in ("0", "1"))
+    ordered += sorted(n for n in netspec if n in inps)
+    for net in ordered:
         avoid = halos[net]
         drv = netspec[net]['drv'] or pos.get(net)
         for cell in sorted(netspec[net]['loads']):
             if net in inps:
-                # per-input lane: N-S runs never share a column, so one
-                # net's overpass pillars can never seal another's. Lanes
-                # spread west (x<=2, south of tile country) at pitch 4:
-                # pitch 2 put adjacent lanes inside one hop's feet, so a
-                # jog crossing two lanes died loud; at pitch 4 every
-                # crossing is a single victim with free feet.
-                lx = 2 - 4 * inps.index(net)
+                lx = minx - 2 - 4 * inps.index(net)
                 d1 = lwire(ctx, sup, guard, drv, (lx, drv[1]), net, avoid)
                 d2 = lwire(ctx, sup, guard, (lx, drv[1]), (lx, cell[1]), net, avoid)
                 d3 = lwire(ctx, sup, guard, (lx, cell[1]), cell, net, avoid)
@@ -456,6 +484,40 @@ def compose(recipe):
             flow.setdefault((v[0], v[1], v[2]), set()).add(d)
     for net, full in paths:
         _plant_repeaters(ctx, full, net, flow)
+    # normalize to non-negative coords (lanes run west of zero; the shared
+    # tap routine bounds-checks 0<=lx<W like the maze field). Shift every
+    # live structure; recs is dead past wiring (netspec already built).
+    _minx = min([x for (x, z) in ctx.solid] + [x for (x, _, z) in ctx.wires] + [x for (x, _, z) in ctx.repeaters])
+    _minz = min([z for (x, z) in ctx.solid] + [z for (x, _, z) in ctx.wires] + [z for (x, _, z) in ctx.repeaters])
+    _dx, _dz = max(0, 1 - _minx), max(0, 1 - _minz)
+    if _dx or _dz:
+        ctx.blocks[:] = [(x + _dx, y, z + _dz, b) for x, y, z, b in ctx.blocks]
+        # clear+update (never pop-and-set: an eastward shift overwrites
+        # not-yet-moved keys and cascades corruption through the dict).
+        _nw = {(x + _dx, y, z + _dz): v for (x, y, z), v in ctx.wires.items()}
+        ctx.wires.clear()
+        ctx.wires.update(_nw)
+        _ns = {(x + _dx, z + _dz): v for (x, z), v in ctx.solid.items()}
+        ctx.solid.clear()
+        ctx.solid.update(_ns)
+        _nr = {(x + _dx, z + _dz): v for (x, z), v in ctx.rings.items()}
+        ctx.rings.clear()
+        ctx.rings.update(_nr)
+        _nj = {(x + _dx, z + _dz): v for (x, z), v in ctx.junctions.items()}
+        ctx.junctions.clear()
+        ctx.junctions.update(_nj)
+        _nrep = {(x + _dx, y, z + _dz): v for (x, y, z), v in ctx.repeaters.items()}
+        ctx.repeaters.clear()
+        ctx.repeaters.update(_nrep)
+        for _n in list(pos.keys()):
+            _p = pos[_n]
+            pos[_n] = (_p[0] + _dx, _p[1] + _dz)
+        _nsup = {(x + _dx, y, z + _dz): v for (x, y, z), v in sup.items()}
+        sup.clear()
+        sup.update(_nsup)
+        _g = {(x + _dx, z + _dz) for (x, z) in guard}
+        guard.clear()
+        guard.update(_g)
     # lamps via the shared tap routine (same E/S/N/W order, same loud
     # failure) — AFTER wiring (maze order): lamp rings would otherwise seal
     # lanes routed past them with a foreign-only ring set.
