@@ -1045,3 +1045,201 @@ criterion the locality hypothesis is FALSIFIED — record and stop, no fifth
 mechanism. Next (each its own spec): tile through-corridors, or maze-search
 assist for composer-placed builds.
 
+## Scale-infra session (2026-09-28, Phase C of `2026-09-28-redstone-mini-improvement.md`)
+
+Three pieces, no physics touched. Placement is untouched because Phase B is
+still blocked on the locality kill-criterion above.
+
+**`REDSTONE_MAX_SECS` — `sim.py`, loud.** RB `budget.rs:20` translated to the
+one scarce resource here. No RAM cap: a Python router's memory tracks its own
+allocations and nothing in the record shows an OOM, so a second knob would be
+one more thing nobody reads. Measured on the holdout: `cpu4`, cap 700, grows=1
+goes 80.6s for two seeds and dies on the existing search cap
+(`353 task(s) unrouted`); with a 30s budget the guard fires at the seed
+boundary carrying the last error. **Ceiling, ledgered:** seed-boundary
+granularity only — one seed always finishes, and `tries=1` is never bounded.
+`layout()` already polls a search cap mid-search; threading the deadline
+through it makes the guard per-A*-call.
+
+**`recipe.eval_gate` — the pre-place gate.** RDL's build-and-`eval`-before-place
+(`dl.zig:235` via `nbt_test.zig:32-42`) is the one thing the survey offers that
+this tree lacked: a recipe that is structurally impossible (undriven `OUT`,
+undefined gate arg, non-converging loop) currently costs the whole router
+budget and then surfaces as an uncaught `KeyError` out of `sim_verify` — which
+`serve.py` does not catch, so the editor 500s instead of 400ing. Now rejected
+in microseconds at the top of `layout_retry`, off the same `eval_net` the sim
+compares against, so it can only reject what the sim would have rejected
+anyway. Three vectors (0ⁿ, 1ⁿ, alternating): a speed bound, not a correctness
+one. `serve --check` 280 blocks, unchanged.
+
+**`snapshot.py` — the record, and where the Q datum now lives.** RC's
+`compilation_snapshots.md` tree, shrunk to what this compiler has: RC has six
+IR layers and a candidate cache, mini has two and none, so it is one JSON per
+DISTINCT build, content-hashed (a re-run that lands the same build overwrites
+instead of littering). Off unless `REDSTONE_SNAPSHOT=fail|all`. `replay()`
+re-runs the sim gate over a recorded build.
+
+**This is also the home of the Phase-C "STA-lite on Q" item, and it is why that
+item is not a check.** The handoff records three consecutive falsified
+instruments in exactly this area, ending with `_unboosted_gaps` firing on a
+GREEN build (s3 net D, gap 15) because a static map has no tail-vs-mid-route
+relevance. A warn-only arrival check I cannot validate green-vs-red is the same
+instrument one notch softer. Instead the datum is recorded and re-derivable:
+the SIM MISMATCH message already ends with the whole live map, and a recorded
+red build reproduces it verbatim. Measured, from the snapshot alone —
+**micro1 s7: Q 16/126 cells lit, 1 at 15**, against the handoff's recorded
+16/126, and micro1 s3 (green) correctly not recorded in fail mode. The
+discriminator the 2026-09-28 entry said was missing is `at 15`, not `lit`.
+
+Suite green (`recipe`/`snapshot`/`sim`/`layout`/`redstone_mini`/`serve --check`
+all exit 0). 4/4 small-build hashes byte-identical to a `git stash` control
+(`fd9c0a4957b88253`/`3fce63bc20a9c989`/`d9b741e522183a60`/`5aed1dce47313cd4`).
+`REDSTONE_XCHECK=1` green on both micro1 seeds (s3 2452/42, s5 2608/45 —
+unchanged). `_STALL`/`SIM MISMATCH` raise sites and the `2**n <= 4096`
+exhaustive rule untouched. No `corridor`/`_bankz` revived. cpu4 frozen
+throughout — bounded only, never tuned.
+
+Three defects found in this session's own code before it shipped, all by
+running the thing rather than reading it: the error log truncated at 4000
+chars, which cut off exactly the live map the Q diagnosis needs; `expand_gates`
+was recorded without `inputs`, so the snapshot's routable IR was not the one
+built; and `mkdir(exist_ok=True)` without `parents=True` crashed the whole
+build on any nested `REDSTONE_SNAPSHOT_DIR`. The last one is why the snapshot
+canary points at a temp dir rather than the repo.
+
+## Investigation session (2026-09-28, seven mechanisms measured, five dead)
+
+Started from "we have six projects that do this, why can't we". Answered by
+measurement. **Two results matter; the rest is the negative space between them.**
+
+### 1. RDL's builds are severed at every elevated crossing — the one that matters
+
+RDL's own compiled output is still in TEMP (`vhdl/*.nbt`, from the
+compositional-backend session). Parsed and measured:
+
+| | alu1 | ctrl_decode | alu4 |
+|---|---|---|---|
+| diagonal wire steps | 240 | 102 | 2493 |
+| corner block at each | white_wool **100%** | 100% | 100% |
+
+A diagonal (Δx=±1, Δy=+1) between two dust cells needs a **redstone
+conductor** in the corner to transmit (dust powers the block, the block powers
+the dust above). RDL puts **white wool** there, chosen *because* it does not
+conduct — so all 240/102/2493 crossings are dead. Our wiki-verified sim agrees
+independently: air corner dark, wool dark, cobblestone lit. Paste RDL's alu1 and
+the crossings are open circuits.
+
+**So the handoff's evidence line was misread, twice.** It says "equivalence
+proven vs `recipe.eval_net`" — that is *logic* equivalence of a flattened
+expression, never physics on placed blocks, and RDL has no sim. And the trimmed
+plan's "our tiles + their placement discipline" cannot work as written: the
+bridge is the load-bearing half of "never shares ground" and it is broken.
+Also: RDL cannot enter micro1/cpu4 at all (no sequential logic), and
+`redstone-compiler`'s README says "Currently, you can use only unittests" and
+links a `docs/place_and_route.md` that does not exist.
+
+### 2. The composer's real blocker, named for the first time
+
+`compose.py::lwire` is a **fixed template** — L-paths from `_candidates` plus
+two bridge shapes. It never searches. Feeding `astar` (`layout.py:314`, the
+maze's real search — rung 2: it already exists, nobody called it from the
+composer) as a fallback and then reading the `seen` set it populates:
+
+```
+alu1        m0  (58,27)->(47,40):  24 blockers  {foreign_wire: 24}
+ctrl_decode n0  (68,12)->(70,38): 197 blockers  {foreign_wire: 197}
+```
+
+**100% foreign wire. No rings, no solid, no footprint.** The composer routes
+one net at a time and never rips up, so whoever routes first keeps the open
+field and everything after is fenced in. Order decides who gets the ground, and
+`ordered = sorted(...)` picked it alphabetically. This is a cause the handoff
+never recorded: it is not density, not rings, not placement, not the cover.
+
+**Next step, with its prerequisite understood:** rip-up in the composer —
+on failure, take the blocker nets from `seen`, un-stamp their paths, re-queue
+them after the current net, bounded. `layout.py:1427` (`seal_nets` → re-queue
+blockers) is the same mechanism and it works there. Needs a no-progress bound
+or two mutually-dependent nets will deadlock.
+
+**BUILT, MEASURED, REVERTED (rip-up).** The mechanism is right and the port is
+mechanical; it is the *bound* that is wrong, and the measurement is worth more
+than the code. Four things learned, in order of value:
+
+1. **A latent landmine, worth its own fix regardless of rip-up.** `astar` floors
+   its search box at **0 on both axes**, and the composer deliberately places
+   two things outside the tile bbox: input lanes at `minx - 2 - 4*index`
+   (strictly west, so E-W jogs cross them) and north lever rows at
+   `minz - 6 - 2*k`. Both go **negative** — measured `micro1 OP (62,-1)`,
+   `alu1 CIN (160,-3)`. Any search bolted onto the composer is blind to its own
+   input lanes and north levers. `topx = 8 + 4*len(inputs)` and
+   `gz0 = 12 + 4*len(inputs)` is the two-line fix and a pure translation
+   (shrink-wrap, so block counts hold). Not landed: alone it changes nothing
+   observable.
+2. **micro1 produced a complete build for the first time ever.** With the
+   translation + rip-up it got through routing *and* planting and died at
+   `check_opens`: `OPEN (unconnected dust): [((13,1,24), 'W')]` — a W lane
+   cell orphaned. Previously the composer refused micro1 at routing. So the
+   combinator is capable; the residue is cleanup, not capability.
+3. **Bounded rip-up needs a *no-progress* bound, not a count bound.** `_RIP =
+   3*(len(netspec)+2)` was hit while re-routing the **same** net repeatedly
+   (`B (46,103)->(9,103)` three times, `D (38,19)->(17,19)` twice). Counting
+   attempts cannot tell progress from churn. The bound must be on *distinct
+   victims re-ripped*, or on a monotone objective (fenced cells strictly
+   decreasing). Until then this is a churn generator — this is the actual next
+   design and it is small.
+4. **Three real bugs in the port**, all found by running it, none by reading
+   it: a failed `lwire` leaves its partial path stamped (poisons every net
+   after it); `stamp_wire` uses `setdefault` so a **shared trunk cell** carries
+   the first net's label and ripping that net deletes a cell a later net stands
+   on (`_plant_repeaters` then `KeyError`); `_unroute` must skip cells other
+   routed nets still claim.
+
+Net effect: **4/9 compose-green, unchanged**, small-build hashes unchanged
+(158/280/226/254), but cpu4 went 14s -> 95s from rip churn and micro1 traded a
+loud refusal for a circuit that builds and is electrically open. That is a
+regression on the shipping gate, so it is reverted. Do not re-derive items 1
+and 4; item 3 is what to build next.
+
+### Dead, measured this session (do not re-attempt)
+
+- **pitch-5 in the composer** — provable no-op: `_plant_repeaters` runs *after*
+  wiring, and the composer refuses all five bar recipes before planting one, so
+  its kill-switch would pass vacuously.
+- **pitch-5 in the maze cover** — the `14` in `_cover_triples` is a search
+  *window*, not a decay budget, and `place_rep`'s `_side` guard
+  (`layout.py:1550`) means a legal site needs a locally straight path.
+  Narrowing it only deletes candidate sites. Measured: alu1/ctrl_decode fail
+  at cap 700 (6/6 `search budget exceeded`) and at cap 100000 (3/3
+  `no route for B/OP1`, "grid full") — **the cover is never reached.**
+- **widening the tile halo** (`compose.py:324`, ±2 → ±6) — relocation. The
+  refusal just changes nets: AB → m1 → m0 → m0 → _rc1. Notably at halo 6 real
+  footprint coverage is ~16% and it *still* refuses, which is what disproved
+  "density" as the cause and led to the blocker census.
+- **composer astar fallback** and **longest-span-first ordering** — both landed
+  temporarily, both relocated the failure (`m0`→`O`, `AL_C4`→`AL_n1`), both
+  4/9 compose-green, small-build hashes unchanged. cpu4 got 2.7x faster
+  (40.7s→15.2s) so ordering is real, but order alone cannot fix fencing.
+  **Reverted, tree back to Phase C only.**
+
+### Tile extents (never measured before; for the unfrozen-tile work)
+
+| op | reserved | touched | bbox | slack | misalignment |
+|---|---|---|---|---|---|
+| AND | 63 (9×7) | 31 | 8×6=48 | 15 (24%) | reserves `gz..gz+6`, touches `gz-1` |
+| NOT | 21 (7×3) | 12 | 5×3=15 | 6 (29%) | — |
+| LATCH | 154 (14×11) | 90 | 12×11=132 | 22 (14%) | reserves x+7, touches x+5 |
+| XOR | 110 (11×10) | 52 | 8×9=72 | 38 (35%) | reserves z-2, touches z-1 |
+
+Two findings: slack is not the AND story (the handoff's 11×9→9×7 was right),
+and **every footprint is both oversized and misaligned** — each misses a row
+its own ring already reserves. Tightening is a re-derivation, not a subtraction.
+XOR has the most slack at 35% and was never touched.
+
+### Still open, and the cheapest test left
+
+Paste `C:\Users\LOQ\AppData\Local\Temp\opencode\vhdl\alu1.nbt` (RDL's own
+3485-block output) and throw the inputs. If it computes, §1 above is wrong and
+the whole line is re-opened. 60 seconds, and only the owner can run it.
+
+

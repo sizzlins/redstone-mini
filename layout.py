@@ -73,13 +73,14 @@ def wire_bid(cell, dust):
 
     The game stores a wire's connection shape per cell, so the FILE must
     carry it — a bare id pastes as a dot that powers nothing sideways.
+    power baked as resting 0 (strict .schem loaders replace partial states
+    with air); the game still owns it live.
     ponytail: flat dirs only (an elevated slope link bakes as none until the
     game updates it — needs a shared slope predicate if 3D ever ships);
-    power is dynamic and game-owned, never baked.
     """
     pts = dust_points(cell, dust)
     return "minecraft:redstone_wire[" + ",".join(
-        f"{_DIRNAME[d]}={'side' if d in pts else 'none'}" for d in DIRS) + "]"
+        f"{_DIRNAME[d]}={'side' if d in pts else 'none'}" for d in DIRS) + ",power=0]"
 
 
 def _support(cell, net, solid, wires, sup, reps, guard):
@@ -1021,7 +1022,7 @@ def layout(recipe, seed=None, grow=0, reserve=False):
             raise RuntimeError(f"bank lever out of bounds for {name}")
         if (x, bz) in solid or (x, 1, bz) in wires or (x + 1, bz) in solid or (x + 1, 1, bz) in wires:
             raise RuntimeError(f"bank lever spot taken for {name} at {(x, bz)}")
-        blocks.append((x, 1, bz, "minecraft:lever"))
+        blocks.append((x, 1, bz, "minecraft:lever[face=floor,facing=north,powered=false]"))
         solid[(x, bz)] = ("lever", name)
         for dx, dz in DIRS:
             ring(x + dx, bz + dz, own(name))

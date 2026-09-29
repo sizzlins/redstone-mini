@@ -3,3 +3,4 @@ build*.html
 build*.mcfunction
 build*.schem
 scratch/
+.snapshots/

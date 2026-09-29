@@ -79,6 +79,37 @@ def eval_net(recipe, values):
 
 
 
+def eval_gate(recipe):
+    """RDL's pre-place gate (build+`dl.zig:235 eval` in `nbt_test.zig:32-42`,
+    every builder `try`-wrapped): the whole circuit is built and evaluated
+    BEFORE anything is placed. `eval_net` is the same function `sim_verify`
+    compares against, so this can only reject what the sim would reject
+    anyway — it just does it in microseconds instead of after the router has
+    spent 400s, and it turns the two failure modes nothing catches (undriven
+    OUT -> KeyError inside sim_verify, undefined gate arg -> KeyError inside
+    eval) into a message the editor can show. Three vectors, not an exhaustive
+    sweep: every structural defect (undefined signal, undriven output,
+    non-converging loop) is vector-independent, and sim_verify still owns the
+    exhaustive rule."""
+    ins = recipe["inputs"]
+    for vals in ((0,) * len(ins), (1,) * len(ins),
+                 tuple(j % 2 for j in range(len(ins)))):
+        vec = dict(zip(ins, vals))
+        try:
+            sig = eval_net(recipe, vec)
+        except KeyError as e:
+            raise ValueError(f"gate reads undefined signal {e.args[0]!r} on {vec}")
+        for net in recipe["outputs"]:
+            if net not in sig:
+                raise ValueError(f"output {net!r} is never driven")
+    # ponytail: three vectors, not the exhaustive set. Speed bound, not a
+    # correctness one -- anything missed here still fails in sim_verify, later.
+    # ceiling: a defect reachable only off {0^n, 1^n, alternating} is not
+    # caught pre-layout. upgrade: mirror sim_verify's 2**n <= 4096 rule if a
+    # recipe is ever slow enough that the microseconds matter.
+    # trigger: none; widening is free whenever it is wanted.
+
+
 def expand_gates(gates, inputs=()):
     """XOR stays a comparator tile. AND stays a compound, OR a junction,
     NOT a tile. (Banded OR used to expand to NOR+NOT for spread ports,
@@ -232,4 +263,21 @@ if __name__ == "__main__":
     _le = expand_gates(_lp["gates"])
     assert _le == [{"out": "Q", "op": "LATCH", "args": ["S", "R"]}], _le
     print("latch ok: LATCH passes expansion through for the custom tile")
+    # ponytail: the pre-layout gate rejects what the sim would reject anyway,
+    # earlier. Both are things nothing currently catches cleanly.
+    eval_gate({"inputs": ["a", "b"], "outputs": ["y"],
+               "gates": [{"out": "y", "op": "AND", "args": ["a", "b"]}]})
+    for _txt, _want in (("IN a\nOUT y\nz = a AND a\n", "never driven"),
+                        ("IN a\nOUT y\ny = a AND q\n", "undefined signal"),
+                        ("IN a\nOUT y\ny = a AND a\nz = y AND y\nq = z AND z\n",
+                         None)):
+        if _want is None:  # convergent loop is legal; the gate must pass it
+            eval_gate(parse_recipe(_txt))
+            continue
+        try:
+            eval_gate(parse_recipe(_txt))
+            assert False, _txt
+        except ValueError as e:
+            assert _want in str(e), (str(e), _want)
+    print("gate ok: undriven OUT + undefined arg refused, legal loop passes")
 

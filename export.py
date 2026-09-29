@@ -38,6 +38,33 @@ def build_stamp(label, nblocks):
 
 
 
+# ponytail: missing props := vanilla defaults (the resting state of a fresh
+# block). The .schem palette holds no defaults: a strict loader (WorldEdit)
+# replaces a partial state with air. /setblock is lenient, so this is a
+# no-op there. Levers are fully stamped at their sites; not listed here.
+_DEFAULT_PROPS = {
+    "minecraft:redstone_wire": (("power", "0"),),
+    "minecraft:repeater": (("powered", "false"), ("locked", "false")),
+    "minecraft:comparator": (("powered", "false"),),
+    "minecraft:redstone_wall_torch": (("lit", "true"),),
+    "minecraft:redstone_torch": (("lit", "true"),),
+    "minecraft:redstone_lamp": (("lit", "false"),),
+}
+
+
+def full_state(bid):
+    """Complete a partial blockstate with vanilla defaults (see above)."""
+    base_, sep, rest = bid.partition("[")
+    if not sep:
+        extra = _DEFAULT_PROPS.get(bid)
+        return f"{bid}[{','.join(f'{k}={v}' for k, v in extra)}]" if extra else bid
+    have = {p.split("=", 1)[0] for p in rest.rstrip("]").split(",") if "=" in p}
+    missing = [f"{k}={v}" for k, v in _DEFAULT_PROPS.get(base_, ()) if k not in have]
+    if not missing:
+        return bid
+    return f"{bid.rstrip(']')},{','.join(missing)}]"
+
+
 def export_schem(blocks, path, oy=64):
     """Real .schem via mcschematic (pip install mcschematic). Skips politely
     without the dep; mcfunction export always works."""
@@ -49,7 +76,7 @@ def export_schem(blocks, path, oy=64):
         return
     schem = mcschematic.MCSchematic()
     for x, y, z, bid in blocks:
-        schem.setBlock((x, oy + y, z), bid)
+        schem.setBlock((x, oy + y, z), full_state(bid))
     folder, name = os.path.split(path)
     schem.save(folder or ".", name.replace(".schem", ""), mcschematic.Version.JE_1_21)
     print(f"schem ok: {path}")
@@ -65,7 +92,7 @@ def export_mcfunction(blocks, path, oy=64):
         f.write("# datapack /function or chat paste. Includes stone floor so dust/torches are supported.\n")
         f.write("# big builds: raise gamerule maxCommandChainLength (e.g. 200000) first.\n")
         for x, y, z, bid in sorted(blocks, key=key):
-            f.write(f"setblock {x} {oy + y} {z} {bid}\n")
+            f.write(f"setblock {x} {oy + y} {z} {full_state(bid)}\n")
 
 
 

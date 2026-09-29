@@ -118,3 +118,35 @@ anti-rot devices themselves, listed for completeness.
    pitch. (layout.py:267,679)
 
 33 markers, 23 with no trigger.
+
+## Addendum 2026-09-28 (Phase C: budget, eval gate, snapshots)
+
+> The body above is the 2026-09-26 generated snapshot and its line numbers are
+> now stale (layout.py alone has ~40 markers, ~20 listed). Regenerating the
+> whole file is a mechanical chore nobody has done in three sessions; these are
+> the rows Phase C adds, with current line numbers. Line numbers for the
+> pre-existing rows are NOT updated here — do not trust them, re-grep.
+
+### recipe.py
+
+- recipe.py:260, eval gate runs 3 vectors (0^n, 1^n, alternating), not the
+  exhaustive set. Speed bound, not a correctness one: anything missed still
+  fails in sim_verify, later. ceiling: a defect reachable only off those three
+  vectors is not caught pre-layout. upgrade: mirror sim_verify's `2**n <= 4096`
+  rule. trigger: none, widening is free.
+
+### sim.py
+
+- sim.py:27, `REDSTONE_MAX_SECS` wall clock, checked at the SEED boundary only.
+  ceiling: one seed always runs to completion (grows layouts), and `tries=1` is
+  never bounded. upgrade: `layout()` already polls a search cap mid-search —
+  thread the same deadline through it for per-A*-call granularity.
+  trigger: one seed overrunning the budget by more than the budget itself
+  (measured: 80.6s for two cpu4 seeds at grow=0, `REDSTONE_SEARCH_CAP=700`).
+
+### snapshot.py
+
+- snapshot.py, whole build as one unpruned JSON. Bounded only by content-hash
+  dedup, so N distinct builds is N files forever. ceiling: no eviction; alu4 at
+  24k blocks is ~2MB. upgrade: prune by count/mtime in `target()`, or gzip.
+  trigger: `.snapshots/` past ~100MB or a few hundred files.
