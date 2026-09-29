@@ -107,3 +107,25 @@ example_and 182, example_2gates 396, latch_sr 250, example_xor 282.
      proves 3D routing works.
   3. For micro1: is a defined latch power-on (reset-then-set) acceptable,
      or must every build settle from cold?
+
+## Session 2 (continued after first report) — maze sweep falsified a config fix
+
+Ran `scratch/mazesweep.py` (maze backend only, seeds x grow, self-bounded),
+because micro1 greens through the maze and a config-only change would have
+been zero-risk against the DONE bar. It is not a config problem:
+
+| recipe | attempts | result |
+|---|---|---|
+| ctrl_decode | 8 (seeds None/0/1, grow 0/1/2) | 0 green, all `no route for <net>` |
+| alu1 | 4 (seeds None/0, grow 0/1/2) | 0 green, all `no route for B` / `no route for OP1` |
+
+Verdict: **both backends hit the same ground-existence wall**, so no seed,
+grow level or backend ordering can satisfy "all dense builds generate".
+The wall is placement/routing geometry, not search. This retires the
+"just sweep harder" option that the first report left open.
+
+Also confirmed this session: a tile's own apron seals its west-edge port
+(alu1 OP1 `(-15,12)->(4,12)` has no flat and no 3D path), and opening
+that port trades signal strength for reach (arrives at 9 where an OR
+diode rear needs 15). Root-caused, not guessed; the fix ordering is in
+MORNING-REPORT.md TODO.
