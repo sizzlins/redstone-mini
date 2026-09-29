@@ -2,11 +2,13 @@
 
 import heapq
 import os as _os
+import time as _time
 
+import snapshot
 from core import DIRS, base
 from layout import layout, dust_points
 from compose import compose
-from recipe import eval_net
+from recipe import eval_gate, eval_net
 
 # ponytail: settling budget. A dense build is ~10x the cells of a small one and
 # legitimately needs more ticks (a 40-cell boosted run alone costs 40), so the
@@ -22,6 +24,19 @@ _STEP_CAP = int(_os.environ.get("REDSTONE_SIM_STEPS", "300000"))
 # converging" and from "oscillating forever". A stall now reports as a stall
 # instead of masquerading as an oscillator, and fails fast.
 _STALL = int(_os.environ.get("REDSTONE_SIM_STALL", "5000"))
+# ponytail: whole-attempt wall clock, RB `budget.rs:20 BudgetGuard::new/check`
+# translated to the one resource that is actually scarce here. RSS is not (a
+# Python router's memory tracks its own allocations and nothing in the record
+# shows an OOM), but wall time is: cpu4 is 402s/seed, so the default ladder is
+# 12 tries x 3 grows = hours to learn nothing. 0 = off. Fails LOUD, because a
+# silently shortened ladder reads as "verified".
+# ceiling: checked at the SEED boundary only, so one seed always runs to
+# completion -- grows layouts -- and a tries=1 call is never bounded at all.
+# upgrade: layout() already polls a search cap mid-search; thread the same
+# deadline through it and the guard becomes per-A*-call.
+# trigger: revisit when one seed overruns the budget by more than the budget
+# (measured: 80.6s for two cpu4 seeds at grow=0, cap 700).
+_MAX_SECS = float(_os.environ.get("REDSTONE_MAX_SECS", "0") or 0)
 
 
 def layout_retry(recipe, tries=12, verify=False, grows=3):
@@ -39,43 +54,74 @@ def layout_retry(recipe, tries=12, verify=False, grows=3):
     Tap reservation runs only as a second round after a lamp-spot failure:
     always-on rings moved small builds into a slope short (measured twice),
     so green trajectories never see it."""
+    eval_gate(recipe)  # reject a bad recipe in us, not after the router's budget
+    t0, log = _time.monotonic(), []
+
+    def tried(backend, seed, grow, res, err):
+        # full message, not truncated: a SIM MISMATCH ends with the whole live
+        # map, which IS the record (s7/s10 Q is 16/126 cells lit). Capping it
+        # would keep the headline and drop the only part worth having.
+        log.append({"backend": backend, "seed": seed, "grow": grow, "reserve": res,
+                    "secs": round(_time.monotonic() - t0, 2), "error": str(err)})
+
+    def done(out):
+        snapshot.write(recipe, out[0], out[2], out[3],
+                       {"status": "ok", "verify": verify, "attempts": log})
+        return out
+
     last = None
     try:
         out = compose(recipe)
     except RuntimeError as e:
         last = e
+        tried("compose", None, 0, False, e)
     else:
         if not verify:
-            return out + (None,)
+            return done(out + (None,))
         try:
             st, ticks = sim_verify(recipe, out[0], out[2], quiet=True, collect=True)
         except RuntimeError as e:
             e.blocks, e.size, e.io = out[:3]
             last = e
+            tried("compose", None, 0, False, e)
         else:
-            return out + (st,)
+            return done(out + (st,))
     for _res in (False, True):
         for t in range(tries):
+            if _MAX_SECS and _time.monotonic() - t0 > _MAX_SECS:
+                e = RuntimeError(
+                    f"BUDGET: layout_retry hit REDSTONE_MAX_SECS={_MAX_SECS:g}s "
+                    f"after {len(log)} attempts; last error: {last}")
+                snapshot.write(recipe, getattr(last, "blocks", None),
+                               getattr(last, "io", None), None,
+                               {"status": "budget", "verify": verify,
+                                "attempts": log, "error": str(e)})
+                raise e
             seed = None if t == 0 else t
             for grow in range(grows or 1):
                 try:
                     out = layout(recipe, seed=seed, grow=grow, reserve=_res)
                 except RuntimeError as e:
                     last = e
+                    tried("maze", seed, grow, _res, e)
                     continue
                 if not verify:
-                    return out + (None,)
+                    return done(out + (None,))
                 try:
                     st, ticks = sim_verify(recipe, out[0], out[2], quiet=True,
                                            collect=True)
                 except RuntimeError as e:
                     e.blocks, e.size, e.io = out[:3]
                     last = e
+                    tried("maze", seed, grow, _res, e)
                     continue
-                return out + (st,)
+                return done(out + (st,))
         if not _res and last is not None and "lamp spot taken" in str(last):
             continue  # one reserve round, same tries x grows
         break
+    snapshot.write(recipe, getattr(last, "blocks", None), getattr(last, "io", None),
+                   None, {"status": "failed", "verify": verify, "attempts": log,
+                          "error": str(last)})
     raise last
 
 
@@ -115,6 +161,8 @@ def _run_vec(vec, init, ctx, until=None):
 
     flips = {}  # cell -> value changes; the churn set is the oscillator core
     _bout = {}  # torch -> recent flip ticks; burnout bookkeeping (vanilla)
+    _trace = []  # REDSTONE_TRACE=1: first flips per kind (ignition sequence)
+    _traced = [0]
 
     def sched(tick, kind, cell):
         seq[0] += 1
@@ -336,6 +384,9 @@ def _run_vec(vec, init, ctx, until=None):
             if pw.get(c, 0) != v:
                 pw[c] = v
                 flips[c] = flips.get(c, 0) + 1
+                if _os.environ.get("REDSTONE_TRACE") and _traced[0] < 400:
+                    _traced[0] += 1
+                    _trace.append((now, "d", c, v))
                 mark(); wake(now, c)
         elif kind == "c":
             v, s = cob_state(c)
@@ -353,7 +404,10 @@ def _run_vec(vec, init, ctx, until=None):
                 sched(now + 1, "T", c)
         elif kind == "T":
             tsched.discard(c)
-            v = not pb.get(torch[c], False)
+            # a redstone block is permanently powered but is not a cobble, so
+            # it never gets a `pb` entry -- without this a torch standing on one
+            # reads its support as dark and stays lit (vanilla: it is off).
+            v = not (pb.get(torch[c], False) or torch[c] in rblk)
             if tl.get(c, False) != v:
                 # ponytail: vanilla burnout — a torch forced OFF more than
                 # eight times in 60 game ticks (= 30 sim ticks: delay-4 settles
@@ -365,9 +419,18 @@ def _run_vec(vec, init, ctx, until=None):
                     _bout[c] = _bt
                     if len(_bt) > 8:
                         tl[c] = False
+                        if _os.environ.get("REDSTONE_TRACE"):
+                            import json as _json
+                            _json.dump(
+                                [(t, k, f"{cc[0]},{cc[1]},{cc[2]}", vv)
+                                 for t, k, cc, vv in _trace],
+                                open(_os.environ["REDSTONE_TRACE"], "w"))
                         raise RuntimeError(f"TORCH BURNOUT at {c} (shipping red)")
                 tl[c] = v
                 flips[c] = flips.get(c, 0) + 1
+                if _os.environ.get("REDSTONE_TRACE") and _traced[0] < 400:
+                    _traced[0] += 1
+                    _trace.append((now, "T", c, v))
                 mark(); wake(now, c)
         elif kind == "r":
             if rep_on(c) != ron.get(c, False) and c not in rsched:
@@ -435,6 +498,24 @@ def _parse_build(blocks, io):
             face = bid.split("facing=")[1].rstrip("]") if "facing=" in bid else "east"
             back = {"east": (-1, 0), "west": (1, 0), "south": (0, -1), "north": (0, 1)}[face]
             torch[c] = (c[0] + back[0], c[1], c[2] + back[1])
+        elif b == "minecraft:redstone_torch":
+            # ponytail: STANDING torch, added so other people's builds can be
+            # checked by this sim (RDL emits 70 of them in alu1 and nothing
+            # modelled them, so its output was never physics-testable here).
+            # Attaches to the block BELOW, which is what makes it a different
+            # case: a wall torch is triggered by a block on its own level, a
+            # standing one by the block under its feet, so `attach_rev` and
+            # the "t" rule (v = not powered(attach)) both work unchanged.
+            # Wiki: a torch powers every adjacent block EXCEPT the one it is
+            # attached to, and is itself powered by that block. So torch[c]
+            # pointing down gives the four side dust 15 and leaves the block
+            # beneath dark -- which is what dust_lvl's side-only scan already
+            # does. Ceiling (pre-existing, both torch types): a cell directly
+            # ABOVE a torch is also powered in vanilla and this model does not
+            # do it. Never exercised by our tiles (nothing is stacked on a
+            # torch); it can matter for a foreign build. upgrade: add the +y
+            # neighbour to dust_lvl's torch term, gated on a canary.
+            torch[c] = (c[0], c[1] - 1, c[2])
         elif b == "minecraft:redstone_lamp":
             lampat.add(c)
         elif b == "minecraft:repeater":
@@ -734,6 +815,24 @@ if __name__ == "__main__":
     _, _, _mtl, _, _, _ = _run_vec({}, None, _mp)
     assert _mtl.get((2, 1, 1), 0) == 1, _mtl
     print("pointing-mirror ok: corner leaves its unconnected side dark")
+    # ponytail: standing torch (minecraft:redstone_torch). Two cases, one per
+    # direction, so a sign error cannot pass. Built at y=0/1 because
+    # _parse_build's lever/lamp io keys are (x,z) and _y pins them to y=1.
+    # "Does not power the block below" is not asserted: it is structural
+    # (dust_lvl scans only the 4 HORIZONTAL neighbours for a torch, and
+    # cob_state's `up` term only counts dust) and the two cases below bracket
+    # it -- lit on an unpowered support, dark on a powered one.
+    _st = [(1, 0, 0, CB), (1, 1, 0, "minecraft:redstone_torch"),
+           (2, 1, 0, W_), (3, 1, 0, "minecraft:redstone_lamp")]
+    _pst, _iost = _hand(_st, {}, {(3, 0): "side"})
+    assert _run_vec({}, None, _pst)[0].get("side", False) is True, "torch must power its side"
+    # powered from below -> the torch inverts and the side lamp goes out
+    _st3 = [(1, 0, 0, "minecraft:redstone_block"),
+            (1, 1, 0, "minecraft:redstone_torch"),
+            (2, 1, 0, W_), (3, 1, 0, "minecraft:redstone_lamp")]
+    _pst3, _iost3 = _hand(_st3, {}, {(3, 0): "side"})
+    assert _run_vec({}, None, _pst3)[0].get("side", False) is False, "lit torch kills its side"
+    print("standing-torch ok: powers its side, inverts its support below")
     # ponytail: lamp/comparator/burnout oracle checks (wiki + cmc engine).
     # Dust on top lights; powered block beside lights; lit torch (not
     # attached here) lights. Comparator side dust counts (subtract kills).
@@ -773,4 +872,42 @@ if __name__ == "__main__":
     _b, _, _, _st = layout_retry(_r, verify=True)
     assert _st is not None and len(_b) > 0
     print("ladder ok: compose-first returns a verified build")
+    # ponytail: Phase-C infra. Budget guard fires LOUD (a silent short ladder
+    # reads as "verified"); snapshot round-trips a green build through the sim
+    # gate; fail-only mode records nothing for a good build.
+    import pathlib
+    import tempfile
+    import snapshot as _snap
+    _r = parse_recipe("IN a, b\nOUT y\ny = a AND b\n")
+    # alu1 is the budget canary because compose refuses it in 0.03s — so the
+    # seed-loop guard is reached without spending any router time, and the
+    # check cannot pass by the composer short-circuiting the sweep.
+    _dense = parse_recipe(open("alu1.txt").read())
+    _save, _MAX_SECS = _MAX_SECS, 1e-9
+    try:
+        layout_retry(_dense, tries=3, verify=True, grows=1)
+        assert False, "REDSTONE_MAX_SECS should have fired"
+    except RuntimeError as _e:
+        assert "BUDGET" in str(_e), str(_e)[:200]
+    finally:
+        _MAX_SECS = _save
+    _os.environ["REDSTONE_SNAPSHOT_DIR"] = str(
+        pathlib.Path(tempfile.gettempdir()) / "rs-snap-canary")
+    _os.environ["REDSTONE_SNAPSHOT"] = "all"
+    for _old in _snap.target().glob("*.json"):
+        _old.unlink()  # hermetic canary: stale temp snapshots fail the count below
+    try:
+        _b, _, _i, _st = layout_retry(_r, verify=True)
+        _files = sorted(_snap.target().glob("*.json"))
+        assert len(_files) == 1, _files
+        _rb, _ri, _rst, _tk = _snap.replay(_files[0])
+        assert _tk and _rst["vectors"], (_tk, _rst)
+        assert _rb == _b, "replay must rebuild the same build"
+        _os.environ["REDSTONE_SNAPSHOT"] = "fail"
+        _b2, _, _, _ = layout_retry(_r, verify=True)
+        assert len(sorted(_snap.target().glob("*.json"))) == 1, "fail mode wrote a good build"
+    finally:
+        del _os.environ["REDSTONE_SNAPSHOT"]
+        del _os.environ["REDSTONE_SNAPSHOT_DIR"]
+    print("budget+snapshot ok: guard loud, build recorded, replayed, fail-mode clean")
 

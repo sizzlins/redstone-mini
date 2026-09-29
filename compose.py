@@ -112,8 +112,12 @@ def _candidates(ctx, a, b, net, avoid):
     # direct Ls first (identical behavior where they already work), then
     # approach rays: straight final segments into the load from N/E/S/W at
     # distance 1..6. Rays route around tile bodies the straight march would
-    # hit (e.g. a comparator sitting on the port row). Bounded (2 + 24),
-    # deterministic; the single winner walks (loud on surprise).
+    # hit (e.g. a comparator sitting on the port row). Then offset trunks:
+    # parallel corridors u rows north/south of the load row for jogs whose
+    # own row is sealed (input E-W jogs through the top tile band: B's
+    # (-7,16)->(159,16) march). Bounded (2 + 24 + 12), deterministic; the
+    # single winner walks (loud on surprise). Longer detours lose ties
+    # (sort keys bad, then L, then len), so open corridors keep cands[0].
     zc, xc = _path_cells(a, b, True), _path_cells(a, b, False)
     cands = [("L", zc), ("L", xc)]
     for k in range(1, 7):
@@ -122,6 +126,13 @@ def _candidates(ctx, a, b, net, avoid):
             ray = [(rs[0] - i * dx, 1, rs[1] - i * dz) for i in range(1, k + 1)]
             base = _path_cells(a, rs, True)
             cands.append(("ray", base + ray))
+    for u in (2, 4, 6, 8, 10, 12):
+        for dz in (-u, u):
+            rs = (b[0], b[1] + dz)
+            drop = [(rs[0], 1, rs[1] - i * (1 if dz > 0 else -1))
+                    for i in range(1, abs(dz) + 1)]
+            base = _path_cells(a, rs, True)
+            cands.append(("ray", base + drop))
     out = []
     for kind, cells in cands:
         if not cells:
@@ -170,46 +181,64 @@ def lwire(ctx, sup, guard, a, b, net, avoid=frozenset()):
             ctx.solid.clear()
             ctx.solid.update(so)
             del ctx.blocks[sb:]
-    # ponytail: astar corridor. The 26 L/ray trunks miss zigzag corridors
+    # ponytail: astar corridor. The 38 L/ray trunks miss zigzag corridors
     # that provably exist (alu1 AB: BFS finds a violation-free len-53 run;
     # layout.astar confirms under full coupling rules). Reuse the maze
     # search — with its sim-parity coupling, not a re-derivation — as the
     # last candidate. Fires only where today dies loud, so small builds
-    # never reach here and their hashes must not move. Non-negative only:
-    # astar windows clip at 0 while compose lanes run negative. Deterministic
-    # (astar's heap order is total); cost bounded by REDSTONE_ASTAR_CAP.
-    if min(a[0], b[0]) >= 0 and min(a[1], b[1]) >= 0:
-        # ponytail: tight search box. margin=None over a 10^6 field lets a
-        # failed search hold ~100k heap/dict entries (~150MB transient);
-        # box = manhattan + 64 detour slack keeps it under ~30k cells.
-        man = abs(a[0] - b[0]) + abs(a[1] - b[1])
-        found = None
-        if man <= 2000:
-            m = man + 64
-            air = frozenset(c for c, n in ctx.wires.items() if c[1] >= 2 and n != net)
-            # ponytail: halos steer astar softly (it takes no avoid set).
-            # congest is read-only cost; 10^6 effectively forbids halo cells
-            # while staying complete (a halo-only corridor still routes).
-            congest = {(x, 1, z): 10 ** 6 for (x, z) in avoid}
-            found = astar([(a[0], 1, a[1])], (b[0], 1, b[1]), net,
-                          max(a[0], b[0]) + m + 1, max(a[1], b[1]) + m + 1,
-                          ctx.solid, ctx.rings, ctx.wires, ctx.junctions, m,
-                          None, congest, guard, sup, ctx.repeaters, None, True, air)
-        if found and len(found) >= 2:
-            try:
-                return _walk(ctx, sup, guard, a, b, net, [c for c in found[1:-1]])
-            except RuntimeError:
-                sw, ss, sc, so, sb = snap
-                ctx.wires.clear()
-                ctx.wires.update(sw)
-                sup.clear()
-                sup.update(ss)
-                ctx.sup.clear()
-                ctx.sup.update(sc)
-                ctx.solid.clear()
-                ctx.solid.update(so)
-                del ctx.blocks[sb:]
+    # never reach here and their hashes must not move. Deterministic (astar's
+    # heap order is total); cost bounded by REDSTONE_ASTAR_CAP.
+    cells = _astar_wrap(ctx, sup, guard, a, b, net, avoid)
+    if cells:
+        try:
+            return _walk(ctx, sup, guard, a, b, net, cells)
+        except RuntimeError:
+            sw, ss, sc, so, sb = snap
+            ctx.wires.clear()
+            ctx.wires.update(sw)
+            sup.clear()
+            sup.update(ss)
+            ctx.sup.clear()
+            ctx.sup.update(sc)
+            ctx.solid.clear()
+            ctx.solid.update(so)
+            del ctx.blocks[sb:]
     raise first_err
+
+
+def _astar_wrap(ctx, sup, guard, a, b, net, avoid):
+    """layout.astar for compose corridors (any coords).
+
+    ponytail: astar windows clip at 0 while compose lanes run negative, so
+    shift a tight margin box to non-negative (shifted dict copies; unshift
+    the path). O(field content) per call, failure-path only. Deterministic
+    (astar's heap order is total); cost bounded by REDSTONE_ASTAR_CAP and
+    the box (manhattan + 64 detour slack). Halos steer softly via congest
+    (read-only cost; astar takes no avoid set).
+    """
+    man = abs(a[0] - b[0]) + abs(a[1] - b[1])
+    if man > 2000:
+        return None
+    m = man + 64
+    ox = max(0, -min(a[0], b[0])) + 2
+    oz = max(0, -min(a[1], b[1])) + 2
+    solid2 = {(x + ox, z + oz): v for (x, z), v in ctx.solid.items()}
+    rings2 = {(x + ox, z + oz): v for (x, z), v in ctx.rings.items()}
+    wires2 = {(x + ox, y, z + oz): v for (x, y, z), v in ctx.wires.items()}
+    junctions2 = {(x + ox, z + oz): v for (x, z), v in ctx.junctions.items()}
+    reps2 = {(x + ox, y, z + oz): v for (x, y, z), v in ctx.repeaters.items()}
+    sup2 = {(x + ox, y, z + oz): v for (x, y, z), v in sup.items()}
+    guard2 = {(x + ox, z + oz) for (x, z) in guard}
+    air = frozenset(c for c, n in ctx.wires.items() if c[1] >= 2 and n != net)
+    air2 = frozenset((c[0] + ox, c[1], c[2] + oz) for c in air)
+    congest = {(x + ox, 1, z + oz): 10 ** 6 for (x, z) in avoid}
+    found = astar([(a[0] + ox, 1, a[1] + oz)], (b[0] + ox, 1, b[1] + oz), net,
+                  max(a[0], b[0]) + ox + m + 1, max(a[1], b[1]) + oz + m + 1,
+                  solid2, rings2, wires2, junctions2, m,
+                  None, congest, guard2, sup2, reps2, None, True, air2)
+    if not found or len(found) < 2:
+        return None
+    return [(x - ox, y, z - oz) for (x, y, z) in found[1:-1]]
 
 
 def _walk(ctx, sup, guard, a, b, net, cells):
@@ -556,6 +585,13 @@ def compose(recipe):
         halos[net] = frozenset(h)
     flow = {}
     inps = list(recipe["inputs"])
+    # ponytail: input trunk rows — REVERTED (measured, kept as a note).
+    # Routing each input's long E-W travel on reserved rows south of every
+    # tile (open ground, always walks) fixed alu1's B/CIN legs, but
+    # example_and went 182 green -> 314 SIM MISMATCH: the boosted trunk runs
+    # bleed 15->5 before the hop dust and the OR junction reads weak. Two
+    # failure classes at once is not a fix. Levers/loads keep the load-row
+    # lane; the astar wrapper is what actually bought the CIN/B legs.
     # Transit segregation: recursive placement keeps runs short, but runs
     # still share columns without lanes — per-input N-S lanes in the west
     # field (strictly west of all tiles AND levers, pitch 4) give every
@@ -700,6 +736,58 @@ def compose(recipe):
                 return owner
         return None
 
+    def _displace(failed, owner, death):
+        """Move the sealer's wire instead of reordering (cycle-breaker).
+
+        Order repair dead-ends on mutual seals (alu1 AB-t0-n1: every order
+        dies). Displacement deletes the owner's runs, routes the failed net
+        through the freed ground, then re-routes the owner around it —
+        single-victim rip-up, depth 1, no chains. Uses only proven shapes
+        (lwire with its candidates + astar fallback). Restores everything
+        and re-raises the death error if any leg fails. Both nets join
+        `routed`; the caller's order constraints between them go moot.
+        """
+        if failed in inps or owner in inps:
+            raise death
+        snap = (dict(ctx.wires), dict(sup), dict(ctx.solid), len(ctx.blocks))
+        stub = wsnap[0]
+        try:
+            for n in (owner,):
+                for (rn, cells) in [p for p in paths if p[0] == n]:
+                    for c in cells:
+                        if c not in stub and ctx.wires.get(c) == n:
+                            del ctx.wires[c]
+            for c, n in list(sup.items()):
+                if n == owner:
+                    del sup[c]
+                    ctx.blocks[:] = [
+                        b for b in ctx.blocks
+                        if not (b[0] == c[0] and b[1] == c[1] and b[2] == c[2]
+                                and "cobblestone" in b[3])]
+                    if ctx.solid.get((c[0], c[2])) == ("cobble", owner):
+                        del ctx.solid[(c[0], c[2])]
+            paths[:] = [(n, p) for (n, p) in paths
+                        if n != failed and n != owner]
+            for n in (failed, owner):
+                av = halos[n]
+                dv = netspec[n]['drv'] or pos.get(n)
+                for cell in sorted(netspec[n]['loads']):
+                    paths.append((n, lwire(ctx, sup, guard, dv, cell, n, av)))
+            routed.add(failed)
+            routed.add(owner)
+        except RuntimeError:
+            ww, su, so, sb = snap
+            ctx.wires.clear()
+            ctx.wires.update(ww)
+            sup.clear()
+            sup.update(su)
+            ctx.solid.clear()
+            ctx.solid.update(so)
+            del ctx.blocks[sb:]
+            paths[:] = [(n, p) for (n, p) in paths
+                        if n != failed and n != owner]
+            raise death
+
     # ponytail: blame restart. Greedy order still seals nets (alu1: m0 by O,
     # m4 by o1 — the sealer always looks routable when measured). On a loud
     # death, blame the top sealing wire-owner, constrain failed-before-owner,
@@ -710,22 +798,52 @@ def compose(recipe):
     wsnap = (dict(ctx.wires), dict(sup), dict(ctx.solid), len(ctx.blocks))
     precede = set()
     first_err = None
+    last_pair = None
+    displaced = set()
+    paths = []
+    routed = set()
+    keep_staged = False
     for _attempt in range(25):
         try:
             ordered = _order(precede)
         except RuntimeError:
             # ponytail: order cycle = mutual seal (no static order works).
-            # Report the true wall (first attempt's error + blame trail),
-            # not the bookkeeping failure.
-            if first_err is not None:
+            # One displacement shot at the most recent blame pair (geometry
+            # instead of order); the pair's order constraint goes moot.
+            # Beyond that, report the true wall, not the bookkeeping failure.
+            if (first_err is not None and last_pair is not None
+                    and last_pair not in displaced and len(displaced) < 8):
+                displaced.add(last_pair)
+                precede.discard(last_pair)
+                precede.discard((last_pair[1], last_pair[0]))
+                try:
+                    _displace(last_pair[0], last_pair[1], first_err)
+                except RuntimeError:
+                    raise RuntimeError(
+                        f"{first_err} [order cycle in {sorted(precede)}]") from None
+                last_pair = None
+                try:
+                    ordered = _order(precede)
+                except RuntimeError:
+                    raise RuntimeError(
+                        f"{first_err} [order cycle in {sorted(precede)}]") from None
+                keep_staged = True
+            elif first_err is not None:
                 raise RuntimeError(
                     f"{first_err} [order cycle in {sorted(precede)}]") from None
-            raise
-        paths = []
-        try:
-            for net in ordered:
-                avoid = halos[net]
-                drv = netspec[net]['drv'] or pos.get(net)
+            else:
+                raise
+        if not keep_staged:
+            paths = []
+            routed = set()
+        keep_staged = False
+        need_restart = False
+        for net in ordered:
+            if net in routed:
+                continue
+            avoid = halos[net]
+            drv = netspec[net]['drv'] or pos.get(net)
+            try:
                 for cell in sorted(netspec[net]['loads']):
                     if net in inps:
                         lx = minx - 2 - 4 * inps.index(net)
@@ -735,24 +853,48 @@ def compose(recipe):
                         paths.append((net, d1 + d2 + d3))
                     else:
                         paths.append((net, lwire(ctx, sup, guard, drv, cell, net, avoid)))
-        except RuntimeError:
-            if _attempt >= 24:
-                raise
-            if first_err is None:
-                first_err = sys.exc_info()[1]
-            owner = _blame(net, ordered, wsnap[0])
-            if owner is None:
-                raise
-            precede.add((net, owner))
-            print(f"compose restart {_attempt + 1}: {net} sealed by {owner}; precede={sorted(precede)}", flush=True)
-            ww, su, so, sb = wsnap
-            ctx.wires.clear()
-            ctx.wires.update(ww)
-            sup.clear()
-            sup.update(su)
-            ctx.solid.clear()
-            ctx.solid.update(so)
-            del ctx.blocks[sb:]
+            except RuntimeError:
+                # ponytail: drop the failed net's partial runs (their cells
+                # restore away below; stale entries would plant diodes on air
+                # and KeyError).
+                paths[:] = [(n, p) for (n, p) in paths if n != net]
+                if _attempt >= 24:
+                    raise
+                if first_err is None:
+                    first_err = sys.exc_info()[1]
+                owner = _blame(net, ordered, wsnap[0])
+                if owner is None:
+                    raise
+                if (owner, net) in precede:
+                    # direct cycle: order can't separate them; displace the
+                    # sealer's wire once, then resume remaining nets.
+                    if ((net, owner) in displaced or (owner, net) in displaced
+                            or len(displaced) >= 8):
+                        raise
+                    displaced.add((net, owner))
+                    precede.discard((owner, net))
+                    last_pair = None
+                    _displace(net, owner, sys.exc_info()[1])
+                    print(f"compose displace: {net} rerouted around {owner}",
+                          flush=True)
+                    routed.add(net)
+                    routed.add(owner)
+                    continue
+                last_pair = (net, owner)
+                precede.add((net, owner))
+                print(f"compose restart {_attempt + 1}: {net} sealed by {owner}; precede={sorted(precede)}", flush=True)
+                ww, su, so, sb = wsnap
+                ctx.wires.clear()
+                ctx.wires.update(ww)
+                sup.clear()
+                sup.update(su)
+                ctx.solid.clear()
+                ctx.solid.update(so)
+                del ctx.blocks[sb:]
+                need_restart = True
+                break
+            routed.add(net)
+        if need_restart:
             continue
         break
     for net, full in paths:

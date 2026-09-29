@@ -276,6 +276,21 @@ def place_latch(ctx, place, g, i, ox, gz, pos):
                                  (ox + 4, gz - 1)] + Sdust + Rdust + Qdust + Qbdust):
                 for dx, dz in DIRS:
                     ring(ctx, cx_ + dx, cz_ + dz, fam)
+            # ponytail: repeater-front porch guard. The S-row repeater sits
+            # mid-row with tile dust on both sides; a routed run that touches
+            # the front side closes a front-back dust loop around the diode
+            # and the latch rings instead of settling (micro1: S serpentine
+            # via (96,45) completed front(95,46)->back(93,46); _loop_rep
+            # proved it). Ring the porch x in [ox,ox+5], z in [gz+1,gz+5]
+            # with the EMPTY set (no net may enter, not even family) so S
+            # approaches pa=(ox-1,gz+4) from west/north/south only. ASSIGN,
+            # don't update: the family apron above already ringed these
+            # cells (they neighbor tile dust) and setdefault+update cannot
+            # narrow. Tile stamps precede rings, so the tile itself is
+            # unaffected; pa's three approaches sit outside the rect.
+            for _px in range(ox, ox + 6):
+                for _pz in range(gz + 1, gz + 6):
+                    ctx.rings[(_px, _pz)] = set()
             pa, pb, po = (ox - 1, gz + 4), (ox - 2, gz), (ox - 5, gz + 2)
             pos[o] = po
             ctx.recs.append((op, o, a, (pa, pb, po)))
