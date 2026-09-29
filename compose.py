@@ -633,6 +633,16 @@ def compose(recipe):
         # free until the lane turns north/south).
         stamp_wire(ctx, [(cx + 1, lz)], name)
         pos[name] = (cx + 1, lz)
+    # ponytail: lamp taps stamped BEFORE routing, not after. tap_lamps picks
+    # the first of four spots (E/S/N/W) that is clear of wire AND of foreign
+    # wire BESIDE it. On the post-routing field a dense tile band has no such
+    # spot left: alu1 died `lamp spot taken for Y at (239,95)` with OP0's run
+    # filling E and S two cells out and Y's own boosters filling N and W. The
+    # same search on the tile-only field has all four streets open, and the
+    # tap then becomes ordinary fixed geometry the router routes around.
+    # Cost: each lamp's 3x3 own-ring is a hard seal for foreign nets (the old
+    # reason for the late stamp). Measured below, not assumed.
+    tap_lamps(ctx, recipe, pos, 10**6, 10**6)
     # guard from stamped torches, exactly like layout.py:1419-1425.
     for x, y, zz, bid in blocks:
         if "wall_torch" in bid:
@@ -1050,10 +1060,6 @@ def compose(recipe):
         _g = {(x + _dx, z + _dz) for (x, z) in guard}
         guard.clear()
         guard.update(_g)
-    # lamps via the shared tap routine (same E/S/N/W order, same loud
-    # failure) — AFTER wiring (maze order): lamp rings would otherwise seal
-    # lanes routed past them with a foreign-only ring set.
-    tap_lamps(ctx, recipe, pos, 10**6, 10**6)
     check_shorts(wires, junctions, blocks)
     check_opens(wires, junctions, repeaters, solid, pos, blocks)
     return finish_assembly(blocks, solid, wires, rings, junctions, repeaters, pos)

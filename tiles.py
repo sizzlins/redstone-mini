@@ -27,6 +27,19 @@ def stamp_wire(ctx, path, net, ends=()):
         if cell[1] == 1:
             if flat in ctx.solid:
                 raise RuntimeError(f"wire {net} hits solid at {cell}")
+            # ponytail: no burying under a pillar. A y=1 wire with a
+            # FOREIGN y=2 support above it is electrically dead — the
+            # cobble is the lid, and sim's slope rule (support below, no
+            # lid over) never lets it couple to anything. Nothing caught
+            # it: the solid check is 2D (looks for cobble at y=1) and the
+            # sup check tests whether the WIRE is a pillar, not whether a
+            # pillar sits on the wire. Measured: alu1's CIN overflight
+            # descended (142,2,31)->(142,1,30) into the ground a hop had
+            # already roofed with cobble, and check_opens correctly
+            # reported it as unconnected dust 400 cells from its driver.
+            _lid = ctx.sup.get((cell[0], 2, cell[2]))
+            if _lid is not None and _lid != net:
+                raise RuntimeError(f"wire {net} buried under pillar {_lid} at {cell}")
         elif cell in ctx.sup:
             raise RuntimeError(f"wire {net} hits pillar at {cell}")
         # (tile columns never block y>=2 overflight: correction 1)
