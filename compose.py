@@ -1,12 +1,13 @@
 """Compose: deterministic placement + wiring (no search, no seeds)."""
 
+import sys
 from types import SimpleNamespace
 
 from core import DIRS, TORCH_BACK
 from recipe import expand_gates
 from tiles import (new_ctx, footprint, tap_lamps, own, ring, stamp_wire,
                    place_or, place_and, place_not, place_latch, place_xor)
-from layout import build_netspec, check_shorts, check_opens, finish_assembly, _support, bridge_plan
+from layout import build_netspec, check_shorts, check_opens, finish_assembly, _support, bridge_plan, astar
 
 _VEC = {(1, 0): "east", (-1, 0): "west", (0, 1): "south", (0, -1): "north"}
 
@@ -14,8 +15,9 @@ _VEC = {(1, 0): "east", (-1, 0): "west", (0, 1): "south", (0, -1): "north"}
 def _hop_free(ctx, sup, guard, feet, supports, dusts, victim, net):
     # adapted bridge_free (layout.py:582-634): unbounded field, plus sup.
     fx, _, fz = victim
-    if ctx.wires.get((fx, 1, fz)) in (None, net):
-        return False  # nothing foreign to hop
+    if ctx.wires.get((fx, 1, fz)) in (None, net) and not (
+            (fx, fz) in ctx.rings and net not in ctx.rings[(fx, fz)]):
+        return False  # nothing foreign to hop (a foreign ring counts: span it)
     for x, y, z in supports + dusts:
         if (x, z) in guard:
             return False
@@ -142,7 +144,75 @@ def lwire(ctx, sup, guard, a, b, net, avoid=frozenset()):
     cands = _candidates(ctx, a, b, net, avoid)
     if not cands:
         return []  # already there: zero-length run
-    cells = cands[0]
+    # ponytail: candidate fallback. cands[0] wins wherever it walks (open
+    # corridors: always, so small-build hashes must not move); a sealed
+    # trunk falls through to the next-ranked corridor instead of dying
+    # loud while a clean one sits below (alu1 AB: cands[0] dies on a
+    # ring+torch wall, cand4 is open). Roll back each failure — phantom
+    # same-net wire would read live-but-unboosted downstream. Loud iff
+    # all fail, keeping the cands[0] error so sealed nets report as before.
+    snap = (dict(ctx.wires), dict(sup), dict(ctx.sup), dict(ctx.solid),
+            len(ctx.blocks))
+    first_err = None
+    for cells in cands:
+        try:
+            return _walk(ctx, sup, guard, a, b, net, cells)
+        except RuntimeError as e:
+            if first_err is None:
+                first_err = e
+            sw, ss, sc, so, sb = snap
+            ctx.wires.clear()
+            ctx.wires.update(sw)
+            sup.clear()
+            sup.update(ss)
+            ctx.sup.clear()
+            ctx.sup.update(sc)
+            ctx.solid.clear()
+            ctx.solid.update(so)
+            del ctx.blocks[sb:]
+    # ponytail: astar corridor. The 26 L/ray trunks miss zigzag corridors
+    # that provably exist (alu1 AB: BFS finds a violation-free len-53 run;
+    # layout.astar confirms under full coupling rules). Reuse the maze
+    # search — with its sim-parity coupling, not a re-derivation — as the
+    # last candidate. Fires only where today dies loud, so small builds
+    # never reach here and their hashes must not move. Non-negative only:
+    # astar windows clip at 0 while compose lanes run negative. Deterministic
+    # (astar's heap order is total); cost bounded by REDSTONE_ASTAR_CAP.
+    if min(a[0], b[0]) >= 0 and min(a[1], b[1]) >= 0:
+        # ponytail: tight search box. margin=None over a 10^6 field lets a
+        # failed search hold ~100k heap/dict entries (~150MB transient);
+        # box = manhattan + 64 detour slack keeps it under ~30k cells.
+        man = abs(a[0] - b[0]) + abs(a[1] - b[1])
+        found = None
+        if man <= 2000:
+            m = man + 64
+            air = frozenset(c for c, n in ctx.wires.items() if c[1] >= 2 and n != net)
+            # ponytail: halos steer astar softly (it takes no avoid set).
+            # congest is read-only cost; 10^6 effectively forbids halo cells
+            # while staying complete (a halo-only corridor still routes).
+            congest = {(x, 1, z): 10 ** 6 for (x, z) in avoid}
+            found = astar([(a[0], 1, a[1])], (b[0], 1, b[1]), net,
+                          max(a[0], b[0]) + m + 1, max(a[1], b[1]) + m + 1,
+                          ctx.solid, ctx.rings, ctx.wires, ctx.junctions, m,
+                          None, congest, guard, sup, ctx.repeaters, None, True, air)
+        if found and len(found) >= 2:
+            try:
+                return _walk(ctx, sup, guard, a, b, net, [c for c in found[1:-1]])
+            except RuntimeError:
+                sw, ss, sc, so, sb = snap
+                ctx.wires.clear()
+                ctx.wires.update(sw)
+                sup.clear()
+                sup.update(ss)
+                ctx.sup.clear()
+                ctx.sup.update(sc)
+                ctx.solid.clear()
+                ctx.solid.update(so)
+                del ctx.blocks[sb:]
+    raise first_err
+
+
+def _walk(ctx, sup, guard, a, b, net, cells):
     # seq anchors both ends so a hop's feet may land on driver/load cells.
     seq = [(a[0], 1, a[1])] + cells + [(b[0], 1, b[1])]
     done, skip, j = [], set(), 1
@@ -187,7 +257,21 @@ def lwire(ctx, sup, guard, a, b, net, avoid=frozenset()):
                 done.append((cx, 2, cz))
                 j += 1
                 continue
-            raise RuntimeError(f"compose: no ground for {net}: {a} -> {b}")
+            if ((cx, cz) in ctx.rings and net not in ctx.rings[(cx, cz)]
+                    and ctx.solid.get((cx, cz)) is None
+                    and ctx.wires.get((cx, 1, cz)) is None
+                    and ctx.repeaters.get((cx, 1, cz)) is None
+                    and sup.get((cx, 1, cz)) is None
+                    and ctx.sup.get((cx, 1, cz)) is None):
+                # ponytail: ring-hop. A reservation-only ring cell seals a
+                # corridor exactly like a wire does, so span it with the
+                # proven hop shape instead of dying loud. Falls through to
+                # the hop machinery below (same back/front + _hop_free
+                # guards); the sim gates correctness. Open corridors never
+                # reach here, so small-build hashes must not move.
+                victim = (cx, cz)
+            else:
+                raise RuntimeError(f"compose: no ground for {net}: {a} -> {b}")
         vx, vz = victim
         back, front = (vx - 2 * d[0], vz - 2 * d[1]), (vx + 2 * d[0], vz + 2 * d[1])
         seqflats = [(s[0], s[2]) for s in seq]
@@ -318,10 +402,12 @@ def _topo(gates):
 
 
 def _expanded(op, ox, gz):
-    # footprint + 2 halo for disjoint-testing: guarantees ~4-wide streets
-    # between tiles (marches need empty ground, not just non-overlap).
+    # footprint + 4 halo for disjoint-testing: sibling tile yards merge
+    # into one sealed super-block at +2 (alu1 m0/m1: O's feed + AB's
+    # corridor + both stubs exceed a 5-wide street). 9-wide streets fit a
+    # run + shadows + stubs with slack; runs lengthen (repeaters auto).
     fp = footprint(op, ox, gz)
-    return {(x + ax, z + az) for (x, z) in fp for ax in (-2, -1, 0, 1, 2) for az in (-2, -1, 0, 1, 2)}
+    return {(x + ax, z + az) for (x, z) in fp for ax in (-4, -3, -2, -1, 0, 1, 2, 3, 4) for az in (-4, -3, -2, -1, 0, 1, 2, 3, 4)}
 
 
 def compose(recipe):
@@ -419,7 +505,7 @@ def compose(recipe):
         else:
             lz = maxz + 6 + 2 * len(edge_s)
             edge_s[name] = lz
-        blocks.append((cx, 1, lz, "minecraft:lever"))
+        blocks.append((cx, 1, lz, "minecraft:lever[face=floor,facing=north,powered=false]"))
         solid[(cx, lz)] = ("lever", name)
         for dx, dz in DIRS:
             ring(ctx, cx + dx, lz + dz, own(name))
@@ -454,6 +540,19 @@ def compose(recipe):
                 continue
             for (lx, lz) in s:
                 h.update((lx + ax, lz + az) for ax in (-1, 0, 1) for az in (-1, 0, 1))
+        # ponytail: driver halos. Load halos protect future ports, but the
+        # seal that kills is stamped on drivers (alu1 m0's driver pocketed
+        # by O's feed to a SIBLING tile). Reserve every foreign driver +
+        # Chebyshev-1 the same way. Own driver never penalizes self (skipped
+        # as n2 == net). Steers _candidates scoring AND the astar fallback
+        # (via congest below — astar takes no avoid set).
+        for n2, spec in netspec.items():
+            if n2 == net or n2 in ("0", "1"):
+                continue
+            drv2 = spec.get('drv') or pos.get(n2)
+            if drv2 is None:
+                continue
+            h.update((drv2[0] + ax, drv2[1] + az) for ax in (-1, 0, 1) for az in (-1, 0, 1))
         halos[net] = frozenset(h)
     flow = {}
     inps = list(recipe["inputs"])
@@ -463,20 +562,199 @@ def compose(recipe):
     # input private ground; E-W jogs cross them perpendicularly
     # (hop-able). Gate nets route first (short direct runs stamp before
     # lanes fill).
-    ordered = sorted(n for n in netspec if n not in inps and n not in ("0", "1"))
-    ordered += sorted(n for n in netspec if n in inps)
-    for net in ordered:
-        avoid = halos[net]
-        drv = netspec[net]['drv'] or pos.get(net)
-        for cell in sorted(netspec[net]['loads']):
-            if net in inps:
-                lx = minx - 2 - 4 * inps.index(net)
-                d1 = lwire(ctx, sup, guard, drv, (lx, drv[1]), net, avoid)
-                d2 = lwire(ctx, sup, guard, (lx, drv[1]), (lx, cell[1]), net, avoid)
-                d3 = lwire(ctx, sup, guard, (lx, cell[1]), cell, net, avoid)
-                paths.append((net, d1 + d2 + d3))
-            else:
-                paths.append((net, lwire(ctx, sup, guard, drv, cell, net, avoid)))
+    gate_nets = sorted(n for n in netspec if n not in inps and n not in ("0", "1"))
+    # ponytail: confinement ordering. A driver pocketed by already-stamped
+    # wires dies loud at y=1 although ground existed earlier (alu1 m0 sealed
+    # by O's feed: 27-cell pocket, 19-shadow boundary). Greedy: route the
+    # most-confined bottleneck first, re-measuring after every net (shadows
+    # are stamped wires, invisible at placement end). Ties break by name so
+    # open fields keep sorted order; inputs keep lane order (positional).
+    # Ceiling: greedy, no lookahead — blame restart below repairs its misses.
+    def _cell_confined(n, cell):
+        c = 0
+        for ax, az in DIRS:
+            nb = (cell[0] + ax, cell[1] + az)
+            if ctx.solid.get(nb) is not None:
+                c += 1
+                continue
+            w = ctx.wires.get((nb[0], 1, nb[1]))
+            if w is not None and w != n:
+                c += 1
+                continue
+            if nb in ctx.rings and n not in ctx.rings[nb]:
+                c += 1
+                continue
+            if nb in guard:
+                c += 1
+                continue
+            rp = ctx.repeaters.get((nb[0], 1, nb[1]))
+            if rp is not None and rp[0] != n:
+                c += 1
+                continue
+            if ctx.sup.get((nb[0], 1, nb[1])) not in (None, n):
+                c += 1
+        return c
+
+    def _confined(n):
+        # ponytail: bottleneck-first. The driver can sit in open field
+        # while a load is tile-pocketed (alu1 m4: drv pocket 2084, load
+        # pocket 194, disjoint) — driver-only confinement routes the
+        # sealer first. Take the max over driver + loads.
+        cells = []
+        drv = netspec[n]['drv'] or pos.get(n)
+        if drv is not None:
+            cells.append(drv)
+        cells.extend(netspec[n].get('loads', []))
+        if not cells:
+            return -1
+        return max(_cell_confined(n, cell) for cell in cells)
+
+    def _order(precede):
+        # confinement-greedy order honoring (earlier, later) blame
+        # constraints (topo: only nets with placed predecessors are ready).
+        preds = {}
+        for e, l in precede:
+            preds.setdefault(l, set()).add(e)
+        pending = list(gate_nets)
+        out = []
+        while pending:
+            ready = [n for n in pending
+                     if all(p in out for p in preds.get(n, ()))]
+            if not ready:
+                raise RuntimeError(f"compose: order cycle in {sorted(precede)}")
+            ready.sort(key=lambda n: (-_confined(n), n))
+            out.append(ready[0])
+            pending.remove(ready[0])
+        return out + sorted(n for n in netspec if n in inps)
+
+    def _blame(failed, ordered, stub_wires):
+        # top foreign wired-net owner on the failed net's driver+load
+        # pockets (y=1 BFS: solid/foreign-wire/foreign-ring/foreign-rep/
+        # guard/sup/adacency; hops span singles, pockets are the seal).
+        # Must be reorderable (a gate net), earlier this attempt (later nets
+        # cast no shadow), and ROUTED (its wires postdate the placement-end
+        # snapshot — tile stubs never move, so blaming them burns restarts:
+        # alu1 O blamed m2/m3 stubs 5x). Inputs fail loud (lanes positional).
+        # None if the seal is tile geometry.
+        from collections import deque, Counter
+        if failed not in gate_nets:
+            return None
+        seen = set()
+        q = deque()
+        for cell in ([netspec[failed]['drv'] or pos.get(failed)]
+                     + list(netspec[failed].get('loads', []))):
+            if cell is not None and cell not in seen:
+                seen.add(cell)
+                q.append(cell)
+        own = Counter()
+        seals = {}
+        # ponytail: BFS is capped (30k cells). compose's field is unbounded
+        # and early-attempt pockets can flood open ground — the cap bounds
+        # RAM; blame from partial owners stays valid (Counter already fed).
+        while q and len(seen) <= 30000:
+            x, z = q.popleft()
+            for ax, az in DIRS:
+                nb = (x + ax, z + az)
+                if nb in seen:
+                    continue
+                s = ctx.solid.get(nb)
+                w = ctx.wires.get((nb[0], 1, nb[1]))
+                if w is not None and w != failed:
+                    own[w] += 1
+                    seals.setdefault(w, []).append((nb[0], 1, nb[1]))
+                    continue
+                if s is not None and s[0] != 'cobble':
+                    continue
+                if nb in ctx.rings and failed not in ctx.rings[nb]:
+                    continue
+                rp = ctx.repeaters.get((nb[0], 1, nb[1]))
+                if rp is not None and rp[0] != failed:
+                    continue
+                if (nb in guard
+                        or ctx.sup.get((nb[0], 1, nb[1])) not in (None, failed)):
+                    continue
+                shadow = False
+                for bx, bz in DIRS:
+                    nbc = (nb[0] + bx, 1, nb[1] + bz)
+                    nw = ctx.wires.get(nbc)
+                    if nw is not None and nw != failed:
+                        own[nw] += 1
+                        seals.setdefault(nw, []).append(nbc)
+                        shadow = True
+                if shadow:
+                    continue
+                seen.add(nb)
+                q.append(nb)
+        try:
+            cut = ordered.index(failed)
+        except ValueError:
+            return None
+        for owner, _ in own.most_common():
+            # ponytail: the owner's SEALING cells must postdate the snapshot.
+            # A net with runs elsewhere but only stubs on the seal (alu1 O
+            # vs AB) is tile geometry, not order — blaming it burns restarts.
+            if (owner in gate_nets and owner != failed
+                    and owner in ordered[:cut]
+                    and (owner, failed) not in precede
+                    and any(c not in stub_wires for c in seals.get(owner, ()))):
+                return owner
+        return None
+
+    # ponytail: blame restart. Greedy order still seals nets (alu1: m0 by O,
+    # m4 by o1 — the sealer always looks routable when measured). On a loud
+    # death, blame the top sealing wire-owner, constrain failed-before-owner,
+    # and re-run wiring from the placement-end snapshot (wiring is a pure
+    # function of order; snapshot covers exactly what lwire mutates: wires,
+    # sup, solid, appended blocks). Restarts fire only where today dies loud,
+    # so green builds behave bit-identically. Bounded: 8 restarts, then loud.
+    wsnap = (dict(ctx.wires), dict(sup), dict(ctx.solid), len(ctx.blocks))
+    precede = set()
+    first_err = None
+    for _attempt in range(25):
+        try:
+            ordered = _order(precede)
+        except RuntimeError:
+            # ponytail: order cycle = mutual seal (no static order works).
+            # Report the true wall (first attempt's error + blame trail),
+            # not the bookkeeping failure.
+            if first_err is not None:
+                raise RuntimeError(
+                    f"{first_err} [order cycle in {sorted(precede)}]") from None
+            raise
+        paths = []
+        try:
+            for net in ordered:
+                avoid = halos[net]
+                drv = netspec[net]['drv'] or pos.get(net)
+                for cell in sorted(netspec[net]['loads']):
+                    if net in inps:
+                        lx = minx - 2 - 4 * inps.index(net)
+                        d1 = lwire(ctx, sup, guard, drv, (lx, drv[1]), net, avoid)
+                        d2 = lwire(ctx, sup, guard, (lx, drv[1]), (lx, cell[1]), net, avoid)
+                        d3 = lwire(ctx, sup, guard, (lx, cell[1]), cell, net, avoid)
+                        paths.append((net, d1 + d2 + d3))
+                    else:
+                        paths.append((net, lwire(ctx, sup, guard, drv, cell, net, avoid)))
+        except RuntimeError:
+            if _attempt >= 24:
+                raise
+            if first_err is None:
+                first_err = sys.exc_info()[1]
+            owner = _blame(net, ordered, wsnap[0])
+            if owner is None:
+                raise
+            precede.add((net, owner))
+            print(f"compose restart {_attempt + 1}: {net} sealed by {owner}; precede={sorted(precede)}", flush=True)
+            ww, su, so, sb = wsnap
+            ctx.wires.clear()
+            ctx.wires.update(ww)
+            sup.clear()
+            sup.update(su)
+            ctx.solid.clear()
+            ctx.solid.update(so)
+            del ctx.blocks[sb:]
+            continue
+        break
     for net, full in paths:
         for u, v in zip(full, full[1:]):
             d = (v[0] - u[0], v[2] - u[2])
