@@ -37,6 +37,8 @@ _STALL = int(_os.environ.get("REDSTONE_SIM_STALL", "5000"))
 # trigger: revisit when one seed overruns the budget by more than the budget
 # (measured: 80.6s for two cpu4 seeds at grow=0, cap 700).
 _MAX_SECS = float(_os.environ.get("REDSTONE_MAX_SECS", "0") or 0)
+_BOUT_N = int(_os.environ.get("REDSTONE_BURNOUT", "8"))
+_BOUT = {}
 
 
 def layout_retry(recipe, tries=12, verify=False, grows=3):
@@ -417,7 +419,9 @@ def _run_vec(vec, init, ctx, until=None):
                 if tl.get(c, False) and not v:
                     _bt = tuple(t for t in _bout.get(c, ()) if now - t < 30) + (now,)
                     _bout[c] = _bt
-                    if len(_bt) > 8:
+                    if len(_bt) > max(_BOUT.get(c, 0), 0):
+                        _BOUT[c] = len(_bt)
+                    if len(_bt) > _BOUT_N:
                         tl[c] = False
                         if _os.environ.get("REDSTONE_TRACE"):
                             import json as _json

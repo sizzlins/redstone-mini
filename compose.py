@@ -226,7 +226,18 @@ def lwire(ctx, sup, guard, a, b, net, avoid=frozenset()):
                     raise RuntimeError("support sealed")
                 if r is not None and r not in sup and r not in needs:
                     needs.append(r)
+            # ponytail: cobf = every cell that can act as a support, not
+            # just the ones this flight owns. _support returns None ("reuse")
+            # when the cell below is ALREADY cobble — a tile's own body — and
+            # that cobble lives in ctx.solid, not in sup, so the old cobf
+            # missed it and the self-lid test below rejected every descent
+            # that passed a tile. Measured: alu4's carry C1 (107,41)->(195,55)
+            # found a 103-cell flight at y=1..3 and was killed by
+            # "self-lid at (195,2,54)->(195,1,55)" — the last step onto the
+            # load, whose support is the destination tile's own body.
             cobf = set(sup) | set(needs)
+            cobf.update((x, 1, z) for (x, z), (k, _n) in ctx.solid.items()
+                        if k == "cobble")
             for u, v in zip(fly, fly[1:]):
                 if u[1] == v[1]:
                     continue
