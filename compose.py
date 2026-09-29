@@ -6,7 +6,8 @@ from types import SimpleNamespace
 from core import DIRS, TORCH_BACK
 from recipe import expand_gates
 from tiles import (new_ctx, footprint, tap_lamps, own, ring, stamp_wire,
-                   place_or, place_and, place_not, place_latch, place_xor)
+                   place_or, place_and, place_not, place_latch, place_xor,
+                   seal_tiles)
 from layout import build_netspec, check_shorts, check_opens, finish_assembly, _support, bridge_plan, astar
 
 _VEC = {(1, 0): "east", (-1, 0): "west", (0, 1): "south", (0, -1): "north"}
@@ -643,6 +644,11 @@ def compose(recipe):
     # Cost: each lamp's 3x3 own-ring is a hard seal for foreign nets (the old
     # reason for the late stamp). Measured below, not assumed.
     tap_lamps(ctx, recipe, pos, 10**6, 10**6)
+    # Snapshot which nets may sit beside each tile's torch host. Must run
+    # after every tile AND the lamp taps are stamped (those are wire too) and
+    # before any routing: from here on stamp_wire refuses a wire that would
+    # power a foreign tile's host. See tiles.seal_tiles for the measurement.
+    seal_tiles(ctx)
     # guard from stamped torches, exactly like layout.py:1419-1425.
     for x, y, zz, bid in blocks:
         if "wall_torch" in bid:

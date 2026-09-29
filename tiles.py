@@ -8,7 +8,43 @@ from core import DIRS
 def new_ctx(blocks, solid, rings, wires, junctions, repeaters, pos, recs, sup):
     return SimpleNamespace(blocks=blocks, solid=solid, rings=rings, wires=wires,
                            junctions=junctions, repeaters=repeaters, pos=pos,
-                           recs=recs, sup=sup)
+                           recs=recs, sup=sup, tile_adj={})
+
+
+def seal_tiles(ctx):
+    """Record, per tile torch, the nets allowed to sit orthogonally beside it.
+
+    A torch powers every cell it touches except its host, so a routed run one
+    cell away is wired into that tile: the run is driven by its own lever AND
+    by the inverter at the same time. That is a ring oscillator, and vanilla
+    burns the torch out. The apron ring does not stop it — a ring carries the
+    whole tile family including the tile's own INPUT nets, so the tile's input
+    run is free to walk through the apron and short its own gate.
+
+    Measured on a 6-gate OR/AND chain: one AND's A-input run stepped over a
+    cobble pillar at y=2, came back down at the host's north edge, and its
+    cells ended up either side of the A torch. Tick 2: TORCH BURNOUT, all 15
+    cells of the ring flipping 15 -> 0 -> 15.
+
+    Only torches, not cobble hosts: a host is powered by the tile's own stub
+    anyway, so an extra run of that same net beside it changes nothing, and
+    forbidding it walled every dense route (measured: alu1, ctrl_decode and
+    micro1 all went from building to 'no ground'). A torch has no such
+    harmless case — anything beside it is a second driver.
+
+    The fix needs no per-tile knowledge: after placement, a tile's own wires
+    are exactly the ones already beside each torch, so snapshot those. A wire
+    stamped later (routing only — placement is done) must be in the set.
+    """
+    for (x, z), (kind, _net) in ctx.solid.items():
+        if kind != "torch":
+            continue
+        allow = {ctx.wires.get((x + dx, 1, z + dz)) for dx, dz in DIRS}
+        allow.discard(None)
+        if allow:
+            ctx.tile_adj[(x, z)] = allow
+    return ctx.tile_adj
+
 
 
 def own(*nets):
@@ -40,6 +76,17 @@ def stamp_wire(ctx, path, net, ends=()):
             _lid = ctx.sup.get((cell[0], 2, cell[2]))
             if _lid is not None and _lid != net:
                 raise RuntimeError(f"wire {net} buried under pillar {_lid} at {cell}")
+            # ponytail: no routing beside a foreign tile's TORCH. See
+            # seal_tiles: the torch drives that cell, so a run there is
+            # driven by the lever and the inverter at once. Adjacency was
+            # never checked for torches (only wire-vs-wire), so this was a
+            # live shipping failure, not a theoretical one.
+            for ax, az in DIRS:
+                _allow = ctx.tile_adj.get((cell[0] + ax, cell[2] + az))
+                if _allow is not None and net not in _allow:
+                    raise RuntimeError(
+                        f"wire {net} beside foreign tile torch at "
+                        f"{(cell[0] + ax, cell[2] + az)} for {cell}")
         elif cell in ctx.sup:
             raise RuntimeError(f"wire {net} hits pillar at {cell}")
         # (tile columns never block y>=2 overflight: correction 1)
