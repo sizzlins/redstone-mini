@@ -590,6 +590,18 @@ def compose(recipe):
     # Runs stay short: bus hugs the field, loads tap in. Loads come from
     # netspec (same cells the router targets — no second recs walk).
     netspec = build_netspec(recs, recipe, pos)
+    # ponytail: input port approaches — TRIED AND REVERTED (twice, both
+    # measured). A tile's apron seals its west-edge port, so alu1 OP1's leg
+    # (-15,12)->(4,12) has NO flat and NO 3D path: x=3..0 at z=12 are the
+    # NOT tile's reserved apron. Empty-ringing the port fixes the wall and
+    # costs correctness instead: v1 (port + 4 neighbours, all nets) broke
+    # example_xor's input lane outright; v2 (input nets, 3 cells west) made
+    # example_and SIM MISMATCH — the opened approach lengthens the run, and
+    # it reaches the OR junction at level 9 where the junction needs a
+    # strong 15. The two failures are the real shape of this idea: opening a
+    # port buys reach with signal strength, and the booster pass cannot pay
+    # it back. Kept as evidence; a correct fix needs the booster to guarantee
+    # 15 at every port (a `_plant_repeaters` change), not a wider hole.
     edge_n, edge_s = {}, {}
     for k, name in enumerate(recipe["inputs"]):
         loads = netspec.get(name, {}).get('loads', [])
