@@ -1085,6 +1085,23 @@ def compose(recipe):
         _g = {(x + _dx, z + _dz) for (x, z) in guard}
         guard.clear()
         guard.update(_g)
+    # ponytail: a load must never hold a FOREIGN net. "holds nothing" is
+    # legal — a tile's port can be a zero-wire tap satisfied by adjacency to
+    # the driver's own cell, so an unwired load is normal and every green
+    # build has some. Holding a different net is not normal: the port then
+    # reads someone else's signal and the sim reports "SIM MISMATCH x9"
+    # naming no cell. Measured: alu1's n1 load at (82,29) held B, and
+    # ctrl_decode's OP0 loads held OP1, n1 and a lterm repeater.
+    for _n, _s in netspec.items():
+        for _c in _s["loads"]:
+            _c3 = (_c[0], 1, _c[1])
+            _own = ctx.wires.get(_c3)
+            if _own is not None and _own != _n:
+                raise RuntimeError(f"compose: load {_c} of {_n} holds {_own}")
+            _rep = ctx.repeaters.get(_c3)
+            if _rep is not None and _rep[0] != _n:
+                raise RuntimeError(
+                    f"compose: load {_c} of {_n} holds a {_rep[0]} repeater")
     check_shorts(wires, junctions, blocks)
     check_opens(wires, junctions, repeaters, solid, pos, blocks)
     return finish_assembly(blocks, solid, wires, rings, junctions, repeaters, pos)
