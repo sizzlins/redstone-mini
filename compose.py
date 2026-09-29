@@ -191,7 +191,7 @@ def lwire(ctx, sup, guard, a, b, net, avoid=frozenset()):
     cells = _astar_wrap(ctx, sup, guard, a, b, net, avoid)
     if cells:
         try:
-            return _walk(ctx, sup, guard, a, b, net, cells)
+            return _walk(ctx, sup, guard, a, b, net, cells[1:-1])
         except RuntimeError:
             sw, ss, sc, so, sb = snap
             ctx.wires.clear()
@@ -203,18 +203,76 @@ def lwire(ctx, sup, guard, a, b, net, avoid=frozenset()):
             ctx.solid.clear()
             ctx.solid.update(so)
             del ctx.blocks[sb:]
+    # ponytail: 3D overflight, the last resort. Ground routing cannot cross
+    # two parallel wires 2 apart (the 5-cell hop needs 2 clear cells per
+    # side) and every row of a long N-S column is blocked, so no candidate
+    # helps: alu1 CIN faces n1's column at x=8 spanning z=12..36. astar's
+    # 3D search flies over on pillars — the same mechanism the maze backend
+    # already ships (micro1 is green through it). Supports are validated
+    # with layout._support (torch-hug guard) and stamped here, never during
+    # search, so a flyover cannot lid its own later slope. Self-lid and
+    # support refusals fall through to the original loud error.
+    fly = _astar_wrap(ctx, sup, guard, a, b, net, avoid, flat=False)
+    if fly and any(c[1] >= 2 for c in fly):
+        needs = []
+        try:
+            for cell in fly:
+                if cell[1] < 2:
+                    continue
+                r = _support(cell, net, ctx.solid, ctx.wires, sup,
+                             ctx.repeaters, guard)
+                if r is False:
+                    raise RuntimeError("support sealed")
+                if r is not None and r not in sup and r not in needs:
+                    needs.append(r)
+            cobf = set(sup) | set(needs)
+            for u, v in zip(fly, fly[1:]):
+                if u[1] == v[1]:
+                    continue
+                lo, hi = (u, v) if u[1] < v[1] else (v, u)
+                if (hi[0], hi[1] - 1, hi[2]) not in cobf or \
+                        (lo[0], lo[1] + 1, lo[2]) in cobf:
+                    raise RuntimeError("self-lid")
+        except RuntimeError:
+            pass
+        else:
+            for s_ in needs:
+                sup[s_] = net
+                ctx.sup[s_] = net
+                ctx.blocks.append((s_[0], s_[1], s_[2], "minecraft:cobblestone"))
+                if s_[1] == 1:
+                    ctx.solid.setdefault((s_[0], s_[2]), ("cobble", net))
+            try:
+                from tiles import stamp_wire as _sw
+                _sw(ctx, fly, net, (a, b))
+            except RuntimeError:
+                sw, ss, sc, so, sb = snap
+                ctx.wires.clear()
+                ctx.wires.update(sw)
+                sup.clear()
+                sup.update(ss)
+                ctx.sup.clear()
+                ctx.sup.update(sc)
+                ctx.solid.clear()
+                ctx.solid.update(so)
+                del ctx.blocks[sb:]
+            else:
+                return fly[1:-1]
     raise first_err
 
 
-def _astar_wrap(ctx, sup, guard, a, b, net, avoid):
-    """layout.astar for compose corridors (any coords).
+def _astar_wrap(ctx, sup, guard, a, b, net, avoid, flat=True):
+    """layout.astar for compose corridors (any coords, flat or 3D).
 
     ponytail: astar windows clip at 0 while compose lanes run negative, so
     shift a tight margin box to non-negative (shifted dict copies; unshift
     the path). O(field content) per call, failure-path only. Deterministic
     (astar's heap order is total); cost bounded by REDSTONE_ASTAR_CAP and
     the box (manhattan + 64 detour slack). Halos steer softly via congest
-    (read-only cost; astar takes no avoid set).
+    (read-only cost; astar takes no avoid set). flat=False allows y>=2
+    overflight, which is the only way past a long parallel column: the
+    5-cell hop needs 2 clear cells each side, so two wires 2 apart are a
+    canyon no ground candidate can cross (alu1 CIN vs n1@x8).
     """
     man = abs(a[0] - b[0]) + abs(a[1] - b[1])
     if man > 2000:
@@ -232,13 +290,24 @@ def _astar_wrap(ctx, sup, guard, a, b, net, avoid):
     air = frozenset(c for c, n in ctx.wires.items() if c[1] >= 2 and n != net)
     air2 = frozenset((c[0] + ox, c[1], c[2] + oz) for c in air)
     congest = {(x + ox, 1, z + oz): 10 ** 6 for (x, z) in avoid}
+    # ponytail: never overfly an endpoint's own column. A path that climbs
+    # over its goal needs a pillar AT the goal cell, so the load holds
+    # cobble instead of dust — self-lid, and the pillar also lids the
+    # descent. astar cannot see that (it is a post-hoc check), so forbid it
+    # in the cost: endpoints are reached at y=1 from the side, which is
+    # what a hand route does anyway. Cost, not a wall, so a build with no
+    # other way still routes.
+    for _ex, _ez in ((a[0], a[1]), (b[0], b[1])):
+        for _dy in range(2, 5):
+            congest[(_ex + ox, _dy, _ez + oz)] = 10 ** 6
+    W = max(a[0], b[0]) + ox + m + 1
+    D = max(a[1], b[1]) + oz + m + 1
     found = astar([(a[0] + ox, 1, a[1] + oz)], (b[0] + ox, 1, b[1] + oz), net,
-                  max(a[0], b[0]) + ox + m + 1, max(a[1], b[1]) + oz + m + 1,
-                  solid2, rings2, wires2, junctions2, m,
-                  None, congest, guard2, sup2, reps2, None, True, air2)
+                  W, D, solid2, rings2, wires2, junctions2, m,
+                  None, congest, guard2, sup2, reps2, None, flat, air2)
     if not found or len(found) < 2:
         return None
-    return [(x - ox, y, z - oz) for (x, y, z) in found[1:-1]]
+    return [(x - ox, y, z - oz) for (x, y, z) in found]
 
 
 def _walk(ctx, sup, guard, a, b, net, cells):
