@@ -846,6 +846,12 @@ def compose(recipe):
             try:
                 for cell in sorted(netspec[net]['loads']):
                     if net in inps:
+                        # ponytail: offset 8 / pitch 6 was TRIED and REVERTED.
+                        # It does not move the measured wall: alu1 CIN's hop
+                        # still lands its far foot on the neighbouring column
+                        # (B@x6 vs n1@x8 — a gate port, not the input lane),
+                        # 38 refusals unchanged, and small builds grew
+                        # 182/396/250/282 -> 238/492/306/354 for nothing.
                         lx = minx - 2 - 4 * inps.index(net)
                         d1 = lwire(ctx, sup, guard, drv, (lx, drv[1]), net, avoid)
                         d2 = lwire(ctx, sup, guard, (lx, drv[1]), (lx, cell[1]), net, avoid)
