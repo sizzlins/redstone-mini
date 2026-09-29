@@ -63,19 +63,6 @@ def stamp_wire(ctx, path, net, ends=()):
         if cell[1] == 1:
             if flat in ctx.solid:
                 raise RuntimeError(f"wire {net} hits solid at {cell}")
-            # ponytail: no burying under a pillar. A y=1 wire with a
-            # FOREIGN y=2 support above it is electrically dead — the
-            # cobble is the lid, and sim's slope rule (support below, no
-            # lid over) never lets it couple to anything. Nothing caught
-            # it: the solid check is 2D (looks for cobble at y=1) and the
-            # sup check tests whether the WIRE is a pillar, not whether a
-            # pillar sits on the wire. Measured: alu1's CIN overflight
-            # descended (142,2,31)->(142,1,30) into the ground a hop had
-            # already roofed with cobble, and check_opens correctly
-            # reported it as unconnected dust 400 cells from its driver.
-            _lid = ctx.sup.get((cell[0], 2, cell[2]))
-            if _lid is not None and _lid != net:
-                raise RuntimeError(f"wire {net} buried under pillar {_lid} at {cell}")
             # ponytail: no routing beside a foreign tile's TORCH. See
             # seal_tiles: the torch drives that cell, so a run there is
             # driven by the lever and the inverter at once. Adjacency was
@@ -88,6 +75,13 @@ def stamp_wire(ctx, path, net, ends=()):
                         f"wire {net} beside foreign tile torch at "
                         f"{(cell[0] + ax, cell[2] + az)} for {cell}")
         elif cell in ctx.sup:
+            # NOTE: a y=1 wire under a FOREIGN y=2 pillar is NOT refused.
+            # Tried and reverted: cobble above a wire does not break it
+            # (sim couples same-y only, and vanilla neither), and the guard
+            # walled a valid 240-cell flat-astar path that compose_status
+            # then reported as "no ground". The real defect in that family
+            # was a flight descending onto a cell with no y=1 continuation,
+            # which the self-lid support test in compose.lwire now covers.
             raise RuntimeError(f"wire {net} hits pillar at {cell}")
         # (tile columns never block y>=2 overflight: correction 1)
         if cell in ctx.wires and ctx.wires[cell] != net:
