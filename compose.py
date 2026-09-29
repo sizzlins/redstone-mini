@@ -452,13 +452,21 @@ def _plant_repeaters(ctx, cells, net, flow):
                 dist = 0
 
 
-def _strip_buffers(gates):
+def _strip_buffers(gates, outs=()):
     # fanout relay buffers are AND(x,x) = identity, emitted for maze hop-
     # shortening. The composer boosts by construction, so relays are pure
     # overhead (extra tiles + routes on an already-full field — the reverted
     # chaining lesson). Inline them: provably equivalent, maze untouched.
+    # ponytail: never inline a recipe OUTPUT. `ALU1 = OP1 AND OP1` is a
+    # hand-written buffer in a recipe, not an emitted relay, and tap_lamps
+    # needs a real port cell to hang the lamp off — inlining it left
+    # pos['ALU1'] unset and ctrl_decode died with a bare KeyError after
+    # routing. The tile costs one AND; the identity saves nothing here.
+    keep = set(outs)
     buf = {}
     for g in gates:
+        if g["out"] in keep:
+            continue
         if g["op"] == "AND" and g["args"][0] == g["args"][1] and not g.get("rep"):
             buf[g["out"]] = g["args"][0]
     if not buf:
@@ -509,7 +517,8 @@ def _expanded(op, ox, gz):
 
 
 def compose(recipe):
-    gates = _strip_buffers(expand_gates(recipe["gates"], recipe["inputs"]))
+    gates = _strip_buffers(expand_gates(recipe["gates"], recipe["inputs"]),
+                           recipe["outputs"])
     blocks, solid, rings, wires, junctions, repeaters, pos, recs, sup = [], {}, {}, {}, {}, {}, {}, [], {}
     ctx = new_ctx(blocks, solid, rings, wires, junctions, repeaters, pos, recs, sup)
     guard = set()
@@ -935,9 +944,25 @@ def compose(recipe):
                         # 182/396/250/282 -> 238/492/306/354 for nothing.
                         lx = minx - 2 - 4 * inps.index(net)
                         d1 = lwire(ctx, sup, guard, drv, (lx, drv[1]), net, avoid)
-                        d2 = lwire(ctx, sup, guard, (lx, drv[1]), (lx, cell[1]), net, avoid)
-                        d3 = lwire(ctx, sup, guard, (lx, cell[1]), cell, net, avoid)
-                        paths.append((net, d1 + d2 + d3))
+                        # ponytail: ONE lane leg, not two. Splitting the
+                        # N-S march (drv row -> load row) from the E-W
+                        # approach pinned the turn cell (lx, load_row), and
+                        # a turn cell is exactly where an already-routed
+                        # input's E-W run crosses the lane column — a hop
+                        # cannot save it (the hop needs its far foot on the
+                        # path, so a blocked ENDPOINT is unhoppable).
+                        # ctrl_decode OP2 died exactly there: `no ground for
+                        # OP2: (-3,1) -> (-3,12)` with (-3,12) stamped by
+                        # OP1. Merging hands the whole leg the candidate set,
+                        # whose offset trunks jog the turn by u rows and then
+                        # come back into the load. Lane discipline is intact:
+                        # every candidate's zfirst base runs the N-S march at
+                        # x=lx, only the final approach varies. On an open
+                        # field cands[0] IS the old two legs concatenated
+                        # (same cells, same order), so green builds are
+                        # bit-identical — verified by scratch/blockhash.py.
+                        d2 = lwire(ctx, sup, guard, (lx, drv[1]), cell, net, avoid)
+                        paths.append((net, d1 + d2))
                     else:
                         paths.append((net, lwire(ctx, sup, guard, drv, cell, net, avoid)))
             except RuntimeError:
