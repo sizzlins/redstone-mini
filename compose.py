@@ -1030,6 +1030,14 @@ def compose(recipe):
                 ctx.solid.clear()
                 ctx.solid.update(so)
                 del ctx.blocks[sb:]
+                # The wire field just went back to the placement-end
+                # snapshot, so any staged work is void: keep_staged would
+                # carry `routed` across the restart, and a net still listed
+                # there is SKIPPED with no run to its loads. Measured on
+                # ctrl_decode: net OP0's port at (112,29) held n1's dust and
+                # OP0 had no route at all, while the build sailed through
+                # check_shorts and check_opens.
+                keep_staged = False
                 need_restart = True
                 break
             routed.add(net)
