@@ -122,6 +122,22 @@ def _sealed(ctx, x, z, net, ownset, near_end):
     return 0
 
 
+def _score_cells(ctx, cells, net, avoid, a, b):
+    """Precheck cost of one corridor (0 = perfect). Factored out of
+    _candidates so lwire's fast path can score just the L-paths."""
+    ownset = {(c[0], c[2]) for c in cells} | {a, b}
+    bad = 0
+    # near_end exempts a cell from needing clearance around foreign wires.
+    # Only the port cell itself may do that: a port genuinely lives inside
+    # a tile's wire neighbourhood, but the outbound run must not hug —
+    # the 3-cell window let parallel input stubs run one cell apart down
+    # the port row and die on a touch (alu4 B3/A1 at y=1, z=7).
+    for i, (x, _, z) in enumerate(cells):
+        bad += _sealed(ctx, x, z, net, ownset, i < 1 or i >= len(cells) - 1)
+    bad += sum(100 for (x, _, z) in cells if (x, z) in avoid)
+    return bad
+
+
 def _candidates(ctx, a, b, net, avoid):
     # direct Ls first (identical behavior where they already work), then
     # approach rays: straight final segments into the load from N/E/S/W at
@@ -151,16 +167,7 @@ def _candidates(ctx, a, b, net, avoid):
     for kind, cells in cands:
         if not cells:
             continue
-        ownset = {(c[0], c[2]) for c in cells} | {a, b}
-        bad = 0
-        # near_end exempts a cell from needing clearance around foreign wires.
-        # Only the port cell itself may do that: a port genuinely lives inside
-        # a tile's wire neighbourhood, but the outbound run must not hug —
-        # the 3-cell window let parallel input stubs run one cell apart down
-        # the port row and die on a touch (alu4 B3/A1 at y=1, z=7).
-        for i, (x, _, z) in enumerate(cells):
-            bad += _sealed(ctx, x, z, net, ownset, i < 1 or i >= len(cells) - 1)
-        bad += sum(100 for (x, _, z) in cells if (x, z) in avoid)
+        bad = _score_cells(ctx, cells, net, avoid, a, b)
         out.append((bad, len(cells), kind, cells))
     out.sort(key=lambda t: (t[0], t[2] != "L", t[1]))
     return [c for _, _, _, c in out]
@@ -179,6 +186,36 @@ def lwire(ctx, sup, guard, a, b, net, avoid=frozenset()):
         cands = _candidates(ctx, a, b, net, avoid)
     if not cands and (a == b or not os.environ.get("REDSTONE_NOFLAT")):
         return []  # already there: zero-length run
+    # ponytail: fast path. Score just the 2 L-paths (O(2L), not O(38L)).
+    # A perfect L (bad=0) is GUARANTEED to be cands[0] under full scoring:
+    # nothing beats bad=0, and L wins every tie on kind. So if the best L
+    # is perfect and walks, the other 36 corridors could never have won —
+    # skip building and scoring them. If it fails to walk, or neither L is
+    # perfect, fall through to full scoring (identical behavior).
+    # Big-O: per net, O(L) amortized in open field vs O(38L); dense fields
+    # pay the full O(38L) exactly as before. No layout can change: the fast
+    # path only fires when full scoring would have picked the same cells.
+    if not os.environ.get("REDSTONE_NOFLAT") and cands:
+        _zc, _xc = _path_cells(a, b, True), _path_cells(a, b, False)
+        _ls = [(c, _score_cells(ctx, c, net, avoid, a, b))
+               for c in (_zc, _xc) if c]
+        _ls.sort(key=lambda t: (t[1], len(t[0])))
+        if _ls and _ls[0][1] == 0:
+            _snap = (dict(ctx.wires), dict(sup), dict(ctx.sup),
+                     dict(ctx.solid), len(ctx.blocks))
+            try:
+                return _walk(ctx, sup, guard, a, b, net, _ls[0][0])
+            except RuntimeError:
+                _sw, _ss, _sc, _so, _sb = _snap
+                ctx.wires.clear()
+                ctx.wires.update(_sw)
+                sup.clear()
+                sup.update(_ss)
+                ctx.sup.clear()
+                ctx.sup.update(_sc)
+                ctx.solid.clear()
+                ctx.solid.update(_so)
+                del ctx.blocks[_sb:]
     # ponytail: candidate fallback. cands[0] wins wherever it walks (open
     # corridors: always, so small-build hashes must not move); a sealed
     # trunk falls through to the next-ranked corridor instead of dying
@@ -669,13 +706,21 @@ def _topo(gates):
     return [gates[i] for i in order]
 
 
+import functools as _functools
+
+
+@_functools.lru_cache(maxsize=None)
 def _expanded(op, ox, gz):
     # footprint + 4 halo for disjoint-testing: sibling tile yards merge
     # into one sealed super-block at +2 (alu1 m0/m1: O's feed + AB's
     # corridor + both stubs exceed a 5-wide street). 9-wide streets fit a
     # run + shadows + stubs with slack; runs lengthen (repeaters auto).
+    # Pure in (op, ox, gz), so memoized: placement bumps east retrying the
+    # same yards, and every rung re-places. O(1) amortized per repeat vs
+    # O(footprint x 81) to rebuild. frozenset: callers only isdisjoint(),
+    # and sharing a mutable set across placements would be a landmine.
     fp = footprint(op, ox, gz)
-    return {(x + ax, z + az) for (x, z) in fp for ax in (-4, -3, -2, -1, 0, 1, 2, 3, 4) for az in (-4, -3, -2, -1, 0, 1, 2, 3, 4)}
+    return frozenset((x + ax, z + az) for (x, z) in fp for ax in (-4, -3, -2, -1, 0, 1, 2, 3, 4) for az in (-4, -3, -2, -1, 0, 1, 2, 3, 4))
 
 
 def _compose_once(recipe):
