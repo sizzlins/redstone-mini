@@ -764,8 +764,9 @@ def _compose_once(recipe):
         for cell in spec['loads']:
             allloads.setdefault(n2, set()).add(cell)
     halos = {}
-    for net in netspec:
+    for net in list(netspec) + ["0"]:
         if net in ("0", "1"):
+            halos[net] = frozenset()   # "1" routes now; it has no halo of its own
             continue
         h = set()
         for n2, s in allloads.items():
@@ -802,7 +803,14 @@ def _compose_once(recipe):
     # input private ground; E-W jogs cross them perpendicularly
     # (hop-able). Gate nets route first (short direct runs stamp before
     # lanes fill).
-    gate_nets = sorted(n for n in netspec if n not in inps and n not in ("0", "1"))
+    # ponytail: "1" is a ROUTABLE net, "0" is not. Any tile that consumes a
+    # constant stamps a real wire stub for it, so excluding "1" from routing
+    # left every such stub stranded unless it happened to touch the tie —
+    # check_opens then reported the constant's own dust as unconnected.
+    # Measured: cmp2 (uses `s0 = d0 XOR 1`) died with `OPEN ... '1'` on five
+    # cells. "0" stays unrouted: build_netspec never records a load for it
+    # (dark by absence) so there is nothing to route.
+    gate_nets = sorted(n for n in netspec if n not in inps and n != "0")
     # ponytail: confinement ordering. A driver pocketed by already-stamped
     # wires dies loud at y=1 although ground existed earlier (alu1 m0 sealed
     # by O's feed: 27-cell pocket, 19-shadow boundary). Greedy: route the

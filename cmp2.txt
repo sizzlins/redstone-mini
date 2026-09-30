@@ -1,0 +1,22 @@
+IN A1, A0, B1, B0
+OUT GT, EQ, LT
+nA0 = NOT A0
+nA1 = NOT A1
+nB0 = NOT B0
+nB1 = NOT B1
+d0 = A0 XOR nB0
+s0 = d0 XOR 1
+u0 = A0 AND nB0
+v0 = d0 AND 1
+c0 = u0 OR v0
+d1 = A1 XOR nB1
+s1 = d1 XOR c0
+u1 = A1 AND nB1
+v1 = d1 AND c0
+c1 = u1 OR v1
+z = s1 OR s0
+EQ = NOT z
+nEQ = NOT EQ
+GT = c1 AND nEQ
+LTn = NOT c1
+LT = LTn AND LTn
