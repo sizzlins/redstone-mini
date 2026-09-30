@@ -274,8 +274,77 @@ def lwire(ctx, sup, guard, a, b, net, avoid=frozenset()):
                 ctx.solid.update(so)
                 del ctx.blocks[sb:]
             else:
-                return fly[1:-1]
+                if not _flight_live(ctx, net, a, b, fly):
+                    sw, ss, sc, so, sb = snap
+                    ctx.wires.clear()
+                    ctx.wires.update(sw)
+                    sup.clear()
+                    sup.update(ss)
+                    ctx.sup.clear()
+                    ctx.sup.update(sc)
+                    ctx.solid.clear()
+                    ctx.solid.update(so)
+                    del ctx.blocks[sb:]
+                else:
+                    return fly[1:-1]
     raise first_err
+
+
+def _flight_live(ctx, net, a, b, flight):
+    """Does the just-stamped flight actually deliver power from a to b?
+
+    check_opens runs once at the very end, so a flight that stamps cleanly
+    but lands on an isolated pocket is only caught 400 cells from its
+    driver. Run the same coupling rules (same-y dust, repeaters, slope
+    links with support-below/no-lid) as a BFS from a over THIS FLIGHT's
+    cells, and require b. Cheap (flight cells only) and it lets lwire
+    reject the flight and try another candidate instead of emitting a
+    dead tail. Measured on alu1's CIN: the overflight ended in a 2-cell
+    pocket with no coupling to the run, and check_opens reported it
+    unconnected.
+
+    BFS is over the flight's own cells plus a ONLY — never pre-existing
+    own wires. Those can be dead stubs themselves (a tile port powered
+    solely from the flight's endpoint), so walking through them proves
+    nothing; the flight must deliver independently.
+    """
+    from core import DIRS as _D
+    # NOTE: fly[1:-1] excludes a and b; re-add them for the walk.
+    start, goal = (a[0], 1, a[1]), (b[0], 1, b[1])
+    _FC = set(flight) | {start, goal}
+    reps = ctx.repeaters
+    cob = {(x, y, z) for x, y, z, bid in ctx.blocks
+           if bid.split("[")[0] == "minecraft:cobblestone"}
+    wires = ctx.wires
+    seen, stack = set(), [start]
+    while stack:
+        c = stack.pop()
+        if c in seen:
+            continue
+        seen.add(c)
+        if c == goal:
+            return True
+        for dx, dz in _D:
+            m = (c[0] + dx, c[1], c[2] + dz)
+            # same-y step: only onto a flight cell (or goal), never a
+            # pre-existing wire — see docstring.
+            if m == goal or (wires.get(m) == net and m in _FC):
+                if m not in seen:
+                    stack.append(m)
+            elif m in reps and reps[m][0] == net and m in _FC:
+                if m not in seen:
+                    stack.append(m)
+            up = (c[0] + dx, c[1] + 1, c[2] + dz)
+            if (up == goal or (wires.get(up) == net and up in _FC)) \
+                    and (c[0] + dx, c[1], c[2] + dz) in cob \
+                    and (c[0], c[1] + 1, c[2]) not in cob and up not in seen:
+                stack.append(up)
+            dn = (c[0] + dx, c[1] - 1, c[2] + dz)
+            if (dn == goal or (wires.get(dn) == net and dn in _FC)) \
+                    and (c[0], c[1] - 1, c[2]) in cob \
+                    and (c[0] + dx, c[1], c[2] + dz) not in cob and dn not in seen:
+                stack.append(dn)
+    return False
 
 
 def _astar_wrap(ctx, sup, guard, a, b, net, avoid, flat=True):
