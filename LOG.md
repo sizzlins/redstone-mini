@@ -487,3 +487,10 @@ NEXT: pickle-dump harness for second-scale stitch iteration (bands cost
 - Killed 45-min probe (user). Lesson: stage the pipeline (pin winning sub-rungs
   once via short standalone probes, then merge+stitch in seconds). No more
   30-min tool calls.
+
+### Staged pipeline results (all short calls)
+Band files extracted (hb0..hb4, byte-identical to hier subs). Standalone:
+hb3 (3 gates) rung1 0.1s; hb2 (19) 9.4s; hb1 (21) rung2 20.7s;
+hb0 (16) long-spread-1 129s; hb4 (24) deep ladder 553s. ALL route + sim green.
+Rung-subset pinning (REDSTONE_HIER_RUNGS) added, unset by default.
+Full hier next (bands ~12 min + merge/sim, inside proven-safe durations).

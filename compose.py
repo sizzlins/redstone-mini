@@ -1478,9 +1478,21 @@ def compose_hier(recipe):
         # Shared deadline bounds the climb; force is saved/restored.
         from sim import sim_verify as _simv
         _force_saved = os.environ.get("REDSTONE_FORCE")
-        _rungs = [(j, s, o) for j in ("short", "long")
-                  for s in (1, 2, 3, 4, 5, 6, 8, 10)
-                  for o in ("gates_first", "inputs_first")]
+        # ponytail: staged pipeline. Pin a short rung subset once per recipe
+        # (REDSTONE_HIER_RUNGS="jog,spread,order;jog,spread,order;...") so
+        # merge+stitch probes run in seconds instead of re-climbing 44-rung
+        # ladders (30 min) every iteration. Discovered from standalone band
+        # probes; first compose+sim-green rung wins as usual.
+        _hr = os.environ.get("REDSTONE_HIER_RUNGS", "").strip()
+        if _hr:
+            _rungs = []
+            for _spec in _hr.split(";"):
+                _j, _s, _o = _spec.split(",")
+                _rungs.append((_j.strip(), int(_s), _o.strip()))
+        else:
+            _rungs = [(j, s, o) for j in ("short", "long")
+                      for s in (1, 2, 3, 4, 5, 6, 8, 10)
+                      for o in ("gates_first", "inputs_first")]
         _err = None
         for (_jog, _s, _o) in _rungs:
             if _dl_saved is not None and time.monotonic() > _dl_saved:
