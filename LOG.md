@@ -327,3 +327,21 @@ Did NOT green them: rung 1 still fails the same way (seals, not space).
 Confirms the wall is greedy-ordering, not gate count. Restarts already
 explore all orders (25 per rung), so single rip-up would not help either.
 The wall stands: needs a bus/hierarchical router (new subsystem).
+
+### Backup plans queued (full-ladder runs in flight, 3h budgets)
+1. 100 restarts (committed, gated >9): if 25-restart ladder fails, relaunch.
+   Rationale: 25 orders under-samples a 72-gate space; 100 gives 4x samples.
+2. Nearest-edge levers (not yet implemented): all input levers sit on the
+   west edge, forcing every route to cross from west. For >9 inputs, place
+   each lever on the edge nearest its loads centroid. ~20 lines, gated, so
+   greens keep the banked-lever contract. Only for red builds.
+3. Territorial placement (last resort): partition field by input cone.
+   Invasive; only if 1+2 fail.
+
+### Seed-diverse ordering (7th approach, in flight)
+compose() is deterministic; the maze backend already uses seeds. Added
+REDSTONE_ORDER_SEED: ties in confinement ordering break by hash(seed:name)
+instead of name. Topology + precede preserved; only tie order shuffles.
+Off by default (micro1 SEED=7 greens bit-identical). 6 seeds x 2 recipes
+in parallel, 900s budgets. If ANY trajectory routes, DONE. 2 full-ladder
+(25-restart, pre-seed) runs also in flight with 3h budgets as backup.
