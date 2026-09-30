@@ -1115,8 +1115,20 @@ def _compose_once(recipe):
                 continue
             avoid = halos[net]
             drv = netspec[net]['drv'] or pos.get(net)
+            # Load order decides how far each successive leg has to reach, and
+            # a leg that starts far away is the one that crosses the other
+            # inputs' cones. With 10+ inputs the (x,z)-lexicographic order
+            # sends the last leg clean across the field. Nearest-first from
+            # the port keeps every leg short. Gated at >9 inputs so the 13
+            # green builds (max 9, mux4) keep their exact geometry.
+            _loads = netspec[net]['loads']
+            if net in inps and len(inps) > 9:
+                _loads = sorted(_loads, key=lambda c: (abs(c[0] - drv[0])
+                                                       + abs(c[1] - drv[1]), c))
+            else:
+                _loads = sorted(_loads)
             try:
-                for cell in sorted(netspec[net]['loads']):
+                for cell in _loads:
                     if net in inps:
                         # ponytail: offset 8 / pitch 6 was TRIED and REVERTED.
                         # It does not move the measured wall: alu1 CIN's hop
