@@ -1272,7 +1272,7 @@ def compose(recipe):
     deadline = time.monotonic() + _COMPOSE_SECS if _COMPOSE_SECS else None
     attempts = [(j, s, o)
                 for j in ("short", "long")
-                for s in (1, 2, 3, 4, 5)
+                for s in (1, 2, 3, 4, 5, 6, 8, 10)
                 for o in ("gates_first", "inputs_first")]
     for i, (jog, spread, order) in enumerate(attempts):
         _SPREAD, _ORDER = spread, order
