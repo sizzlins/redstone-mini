@@ -33,8 +33,9 @@ function Invoke-Gate {
 }
 
 if ($Recipe) {
-  Invoke-Gate $Recipe "scratch/gate_one.log"
-  Get-Content scratch/gate_one.log |
+  $leaf = (Split-Path -Leaf $Recipe) -replace '\.txt$', ''
+  Invoke-Gate $Recipe "scratch/gate_$leaf.log"
+  Get-Content "scratch/gate_$leaf.log" |
     Select-String -Pattern '^\S+\s+(OK|RED)\s' | Select-Object -First 1
   exit 0
 }
