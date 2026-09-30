@@ -220,3 +220,18 @@ Also added scratch/recipe_check.py: checks a recipe's arithmetic against a refer
 - shift4 - TORCH BURNOUT at (64,1,47) during compose. LATCH chain placement, untouched so far.
 
 Reverted/narrowed: the slope-link lid pass was first written too broadly and moved proven builds (latch_sr 224->226, micro1 2925->2942). Narrowed to mirror check_shorts exactly, which restores every hash.
+
+## Night session 2 (assumption + start)
+
+User named MAIN REPO D:\redstone-compiler, but DONE item 1 says "folder
+redstone-mini". Checked: D:\redstone-compiler is a separate Rust project
+(crates/src/Cargo.toml) with zero .txt recipes and no redstone-mini folder.
+All recipes, LOG, tools, and verified builds live in D:\redstone-mini.
+ASSUMPTION: D:\redstone-mini is the work target. Proceeding there.
+
+Start state (authoritative dense_status, final code f19fa33):
+OK 13: add2, alu1, andor8, chainmix, ctrl_decode, decode3, example_2gates,
+example_and, example_xor, latch_sr, micro1, mux4, sub2.
+RED 4: cmp2 (compose passes; maze "no route for nB1, grid full"),
+alu4/cpu4 (>=10-input approach cone), shift4 (LATCH chain, grid full).
+New dense builds already at 6 (decode3, add2, chainmix, mux4, sub2, andor8).
