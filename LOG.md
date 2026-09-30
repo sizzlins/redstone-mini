@@ -351,3 +351,8 @@ Fixed the rule-7 hole (deadline now checked per restart; 30s budget exits
 at 31s, verified). Reverted 100 restarts to 25 (precede converges; seeds
 give diversity, not more orders). 6 seeds x 900s, each a full 44-rung
 ladder with a different order trajectory. If ANY greens, DONE.
+
+### Vertical envelope (8th approach, in flight)
+_REDSTONE_COMPOSE_YMAX=8_ (wide envelope was -4..6). Env-only, no code.
+example_and with YMAX=8 greens bit-identical (144), so safe. 2 probes
+(alu4/cpu4, 900s) + 6 seeds = 8 parallel trajectories.
