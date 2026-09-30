@@ -1925,11 +1925,24 @@ def compose_hier_parts(built, gates, recipe):
                 return p1 + p2
             except RuntimeError as e:
                 _err = e
-        # ponytail: pick the hop row FROM THE MERGED FIELD, not from the
-        # consumer's lever-bank min (that bookkeeping predates edge levers
-        # and names a row the field does not have). Take the nearest row
-        # above both endpoints whose whole horizontal span is empty of
-        # wires and solid: a real empty corridor, measured, not assumed.
+        # ponytail: 3-segment stitch (up / along / down) that needs only
+        # LOCAL clearance, not a globally empty row. The whole-span test
+        # below fails on the first tile it meets, which is every row of a
+        # dense field, so it never fired; instead walk out of the port
+        # vertically a few rows, run east, then come down onto the stub.
+        # Each leg is a normal lwire, so hops/bridge-over still apply.
+        for _k in range(1, 24):
+            _m = (drv[0], max(0, drv[1] - _k))
+            _side = (_m[0], stub[0]) if _m[0] != stub[0] else None
+            if _side is None:
+                continue
+            try:
+                p1 = lwire(mctx, sup, guard, drv, _m, n)
+                p2 = lwire(mctx, sup, guard, _m, _side, n)
+                p3 = lwire(mctx, sup, guard, _side, stub, n)
+                return p1 + p2 + p3
+            except RuntimeError as e:
+                _err = e
         _lo, _hi = sorted((drv[0], stub[0]))
         for _z in range(max(0, min(drv[1], stub[1]) - 1), -1, -1):
             if any(wires.get((x, 1, _z)) is not None
