@@ -893,7 +893,7 @@ if __name__ == "__main__":
     # alu1 is the budget canary because compose refuses it in 0.03s — so the
     # seed-loop guard is reached without spending any router time, and the
     # check cannot pass by the composer short-circuiting the sweep.
-    _dense = parse_recipe(open("alu1.txt").read())
+    _dense = parse_recipe(open("recipes/alu1.txt").read())
     _save, _MAX_SECS = _MAX_SECS, 1e-9
     try:
         layout_retry(_dense, tries=3, verify=True, grows=1)

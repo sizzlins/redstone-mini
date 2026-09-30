@@ -1,9 +1,0 @@
-IN a, b, c, d, e
-OUT Y
-ab = a AND b
-cd = c AND d
-abe = ab AND e
-cdb = cd AND b
-cda = cd AND a
-p = abe OR cdb
-Y = p OR cda

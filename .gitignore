@@ -4,3 +4,5 @@ build*.mcfunction
 build*.schem
 scratch/
 .snapshots/
+
+cand_*.txt

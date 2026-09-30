@@ -1958,7 +1958,7 @@ if __name__ == "__main__":
     # micro1-s5 and s10 cuts before place_rep learned to refuse them.
     for _f in ("example_and", "example_2gates", "latch_sr", "example_xor"):
         _br, _, _bio, _ = layout_retry(parse_recipe(open(
-            rf"D:\redstone-mini\{_f}.txt").read()), verify=True)
+            rf"D:\redstone-mini\recipes\{_f}.txt").read()), verify=True)
         _bad = _sidefed_repeaters(_br, _bio)
         assert not _bad, f"{_f} side-fed repeater(s): {_bad[:3]}"
     _nb = [(4, 1, 4, "minecraft:repeater[facing=east,delay=1]")]
