@@ -58,12 +58,15 @@ bug: `s0 = d0 XOR 1` is `NOT d0`, `v0 = d0 AND 1` is `d0` (buffered). Same
 circuit, proven over all 16 vectors, and the sourceless multi-load constant net
 vanishes. **OK 4633 blocks.**
 
-### alu4.txt / cpu4.txt -- architectural wall, confirmed four ways
+### alu4.txt / cpu4.txt -- architectural wall, confirmed six ways
 ```
-low spreads:  no ground for A3B3 / OPC1 (no corridor)
-high spreads: wire B3 touches A1 (input legs cross)
-3D-only:      no ground for C2: (816,194) -> (1292,240) after 500s
-budgets:      2400s layout budget exhausted, still no ground
+low spreads:  no ground for A2B2 / AL_O3 (no corridor)
+high spreads: wire B3 touches A1 (input legs cross, even at spread 20)
+3D-only:      no ground for C2 after 500s (no 3D path either)
+maze grow 4/6: 610s CPU each, zero output (exponential blowup, killed)
+dead gates:   removed 3 constant-0 gates each, proven equivalent --
+              rung 1 still fails identically (wall is ordering, not count)
+budgets:      900-2400s layout budgets exhausted on every attempt
 ```
 Both have 10+ inputs. Tried: spread ladder to 10, clearance window to 1 cell,
 nearest-first load ordering from each input's port (gated at >9 inputs), and
