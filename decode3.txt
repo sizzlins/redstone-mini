@@ -1,0 +1,21 @@
+IN A, B, C
+OUT Y0, Y1, Y2, Y3, Y4, Y5, Y6, Y7
+nA = NOT A
+nB = NOT B
+nC = NOT C
+t0a = nA AND nB
+Y0 = t0a AND nC
+t1a = nA AND nB
+Y1 = t1a AND C
+t2a = nA AND B
+Y2 = t2a AND nC
+t3a = nA AND B
+Y3 = t3a AND C
+t4a = A AND nB
+Y4 = t4a AND nC
+t5a = A AND nB
+Y5 = t5a AND C
+t6a = A AND B
+Y6 = t6a AND nC
+t7a = A AND B
+Y7 = t7a AND C

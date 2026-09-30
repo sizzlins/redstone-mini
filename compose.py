@@ -615,7 +615,7 @@ def _expanded(op, ox, gz):
     return {(x + ax, z + az) for (x, z) in fp for ax in (-4, -3, -2, -1, 0, 1, 2, 3, 4) for az in (-4, -3, -2, -1, 0, 1, 2, 3, 4)}
 
 
-def compose(recipe):
+def _compose_once(recipe):
     gates = _strip_buffers(expand_gates(recipe["gates"], recipe["inputs"]),
                            recipe["outputs"])
     blocks, solid, rings, wires, junctions, repeaters, pos, recs, sup = [], {}, {}, {}, {}, {}, {}, [], {}
@@ -638,7 +638,7 @@ def compose(recipe):
     def c_gridrows(ox, gz):
         while True:
             yield ox, gz
-            gz += 14
+            gz += 14 * _SPREAD
 
     c_place = SimpleNamespace(spot_free=c_spot_free, gridrows=c_gridrows,
                               snap=lambda: None, restore=lambda s: None)
@@ -647,15 +647,15 @@ def compose(recipe):
         drvs = [a for a in g["args"] if a in placed]
         if not drvs:
             ox, gz = topx, 12
-            topx += 30
+            topx += 30 * _SPREAD
         else:
             bottom = max(z for a in drvs for (_, z) in placed[a][3])
             n = sum(len(placed[a][3]) for a in drvs)
             cx = sum(x for a in drvs for (x, _) in placed[a][3]) // n
-            gz = bottom + 8
+            gz = bottom + 8 * _SPREAD
             ox = max(4, cx)
             while any(not _expanded(g["op"], ox, gz).isdisjoint(u) for u in used_fp):
-                ox += 2
+                ox += 2 * _SPREAD
         for ox2, gz2 in c_gridrows(ox, gz):
             if not c_spot_free(g["op"], ox2, gz2, i):
                 continue
@@ -1059,7 +1059,7 @@ def compose(recipe):
                         # (B@x6 vs n1@x8 — a gate port, not the input lane),
                         # 38 refusals unchanged, and small builds grew
                         # 182/396/250/282 -> 238/492/306/354 for nothing.
-                        lx = minx - 2 - 4 * inps.index(net)
+                        lx = minx - 2 - 4 * _SPREAD * inps.index(net)
                         d1 = lwire(ctx, sup, guard, drv, (lx, drv[1]), net, avoid)
                         # ponytail: ONE lane leg, not two. Splitting the
                         # N-S march (drv row -> load row) from the E-W
@@ -1198,6 +1198,39 @@ def compose(recipe):
     check_shorts(wires, junctions, blocks)
     check_opens(wires, junctions, repeaters, solid, pos, blocks)
     return finish_assembly(blocks, solid, wires, rings, junctions, repeaters, pos)
+
+
+# Placement spread factor (module-global so _compose_once's spacing reads
+# it). 1 = the tight layout every green build was verified on.
+_SPREAD = 1
+
+# Routing/geometry failures worth retrying with more room (NOT logic or
+# sim failures — those are deterministic and spread cannot fix them).
+_RETRYABLE = ("no ground", "no route", "OPEN ", "blocked", "lamp spot taken",
+              "order cycle", "SHORT", "repeater loop", "compose blocked")
+
+
+def compose(recipe):
+    """Deterministic place+route, retrying wider on geometry failure.
+
+    Spread 1 first: every green build succeeds here, bit-identical, so the
+    gates never move. Only a routing/geometry death retries at spread 2
+    then 3 — the build may sprawl across chunks (wires run long, repeaters
+    carry them), which is exactly what unseals a dense field.
+    """
+    global _SPREAD
+    last = None
+    for spread in (1, 2, 3, 4, 5):
+        _SPREAD = spread
+        try:
+            return _compose_once(recipe)
+        except RuntimeError as e:
+            last = e
+            if spread >= 5 or not any(k in str(e) for k in _RETRYABLE):
+                raise
+            print(f"compose spread {spread} failed ({str(e)[:60]}); "
+                  f"retrying wider", flush=True)
+    raise last
 
 
 if __name__ == "__main__":

@@ -336,7 +336,14 @@ def _run_vec(vec, init, ctx, until=None):
     while pending and (until is None or pending[0][0] <= until):
         now, _, kind, c = _hq.heappop(pending)
         steps[0] += 1
-        if steps[0] - last_change[0] > _STALL:
+        # ponytail: the stall cap scales with build size. It used to be a
+        # flat 5000, which a 7000-block build trips during normal tick-0
+        # startup (every cell evaluates once = 7000 steps with no change
+        # yet). A wedged run processes cells over and over, so 3x the cell
+        # count still catches it fast while letting big builds start up.
+        _stall_cap = max(_STALL, 3 * (len(dust) + len(cob) + len(torch)
+                                     + len(rep) + len(comp)))
+        if steps[0] - last_change[0] > _stall_cap:
             raise RuntimeError(
                 f"sim STALLED on {vec}: no value change for "
                 f"{steps[0] - last_change[0]} steps at tick {now} "
