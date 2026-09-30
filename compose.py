@@ -1135,10 +1135,12 @@ def _compose_once(recipe):
     # and re-run wiring from the placement-end snapshot (wiring is a pure
     # function of order; snapshot covers exactly what lwire mutates: wires,
     # sup, solid, appended blocks). Restarts fire only where today dies loud,
-    # so green builds behave bit-identically.
-    # 100 restarts past 9 inputs (alu4/cpu4): 25 orders is a tiny sample of
-    # a 72-gate order space. Gated so the 16 greens keep exactly 25.
-    _restart_cap = 100 if len(inps) > 9 else 25
+    # so green builds behave bit-identically. 25 restarts: precede constraints
+    # converge, so more orders do not help (100 was tried: 50min per rung).
+    # Diversity comes from REDSTONE_ORDER_SEED across processes.
+    # Rule 7: restarts respect the compose() deadline. 25 restarts x 30s
+    # routing = 12min per rung; without this check the ladder's
+    # REDSTONE_COMPOSE_SECS never fires mid-rung and a doomed rung grinds.
     wsnap = (dict(ctx.wires), dict(sup), dict(ctx.solid), len(ctx.blocks))
     precede = set()
     if os.environ.get("RS_WATCH82"):
@@ -1150,7 +1152,11 @@ def _compose_once(recipe):
     paths = []
     routed = set()
     keep_staged = False
-    for _attempt in range(_restart_cap):
+    for _attempt in range(25):
+        if _DEADLINE is not None and time.monotonic() > _DEADLINE:
+            if first_err is not None:
+                raise first_err
+            raise RuntimeError("compose: deadline exceeded before first route")
         try:
             ordered = _order(precede)
         except RuntimeError:
@@ -1376,6 +1382,10 @@ _JOGS = _JOGS_SHORT
 # REDSTONE_MAX_SECS still bounds a single attempt inside layout/sim.
 _COMPOSE_SECS = float(os.environ.get("REDSTONE_COMPOSE_SECS", "0") or 0)
 
+# Live deadline for the current compose() ladder, checked inside
+# _compose_once's restart loop (rule 7). None when unset or outside compose().
+_DEADLINE = None
+
 # Routing/geometry failures worth retrying with more room (NOT logic or
 # sim failures — those are deterministic and spread cannot fix them).
 _RETRYABLE = ("no ground", "no route", "OPEN ", "blocked", "lamp spot taken",
@@ -1393,9 +1403,10 @@ def compose(recipe):
     escalates. The build may sprawl across chunks (wires run long,
     repeaters carry them).
     """
-    global _SPREAD, _ORDER, _JOGS
+    global _SPREAD, _ORDER, _JOGS, _DEADLINE
     last = None
     deadline = time.monotonic() + _COMPOSE_SECS if _COMPOSE_SECS else None
+    _DEADLINE = deadline
     # REDSTONE_FORCE="spread,order,jog" pins one rung (diagnostics: bisect a
     # single config instead of climbing the whole ladder).
     force = os.environ.get("REDSTONE_FORCE", "").strip()
@@ -1408,20 +1419,23 @@ def compose(recipe):
                     for j in ("short", "long")
                     for s in (1, 2, 3, 4, 5, 6, 8, 10)
                     for o in ("gates_first", "inputs_first")]
-    for i, (jog, spread, order) in enumerate(attempts):
-        _SPREAD, _ORDER = spread, order
-        _JOGS = _JOGS_SHORT if jog == "short" else _JOGS_LONG
-        try:
-            return _compose_once(recipe)
-        except RuntimeError as e:
-            last = e
-            if (i == len(attempts) - 1
-                    or (deadline and time.monotonic() > deadline)
-                    or not any(k in str(e) for k in _RETRYABLE)):
-                raise
-            print(f"compose {jog} spread {spread} {order} failed "
-                  f"({str(e)[:60]}); retrying", flush=True)
-    raise last
+    try:
+        for i, (jog, spread, order) in enumerate(attempts):
+            _SPREAD, _ORDER = spread, order
+            _JOGS = _JOGS_SHORT if jog == "short" else _JOGS_LONG
+            try:
+                return _compose_once(recipe)
+            except RuntimeError as e:
+                last = e
+                if (i == len(attempts) - 1
+                        or (deadline and time.monotonic() > deadline)
+                        or not any(k in str(e) for k in _RETRYABLE)):
+                    raise
+                print(f"compose {jog} spread {spread} {order} failed "
+                      f"({str(e)[:60]}); retrying", flush=True)
+        raise last
+    finally:
+        _DEADLINE = None
 
 
 if __name__ == "__main__":
