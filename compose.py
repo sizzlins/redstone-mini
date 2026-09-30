@@ -139,11 +139,10 @@ def _candidates(ctx, a, b, net, avoid):
             ray = [(rs[0] - i * dx, 1, rs[1] - i * dz) for i in range(1, k + 1)]
             base = _path_cells(a, rs, True)
             cands.append(("ray", base + ray))
-    for u in (2, 4, 6, 8, 10, 12, 16, 20, 24, 32):
-        # ponytail: longer jogs for long blocked marches. u<=12 sufficed
-        # when the field was tight; on a sprawling field a blocked E-W run
-        # may need a 20+ row detour to find open ground. Purely additive —
-        # open corridors still take cands[0], so greens don't move.
+    for u in (2, 4, 6, 8, 10, 12):
+        # (16,20,24,32 removed: they let add2's A1 jog into a repeater loop.
+        # Longer jogs help sprawling fields but the loop risk isn't worth it
+        # without a loop-aware plant. Revisit with _loop_rep in the scorer.)
         for dz in (-u, u):
             rs = (b[0], b[1] + dz)
             drop = [(rs[0], 1, rs[1] - i * (1 if dz > 0 else -1))
