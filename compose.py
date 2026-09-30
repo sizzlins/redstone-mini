@@ -15,6 +15,13 @@ from layout import build_netspec, check_shorts, check_opens, finish_assembly, _s
 # for offline probes. Not part of the build contract.
 _last_shift = (0, 0)
 
+# Composer's vertical envelope for the astar fallback (env-tunable).
+# Narrow y=1..3 is tried first (the proven band); the full envelope only
+# runs if narrow finds nothing, because a marginal wide success poisons
+# downstream routing worse than a loud failure.
+_WIDE_YMIN = int(os.environ.get("REDSTONE_COMPOSE_YMIN", "-4"))
+_WIDE_YMAX = int(os.environ.get("REDSTONE_COMPOSE_YMAX", "6"))
+
 _VEC = {(1, 0): "east", (-1, 0): "west", (0, 1): "south", (0, -1): "north"}
 
 
@@ -218,8 +225,14 @@ def lwire(ctx, sup, guard, a, b, net, avoid=frozenset()):
     # with layout._support (torch-hug guard) and stamped here, never during
     # search, so a flyover cannot lid its own later slope. Self-lid and
     # support refusals fall through to the original loud error.
-    fly = _astar_wrap(ctx, sup, guard, a, b, net, avoid, flat=False)
-    if fly and any(c[1] >= 2 for c in fly):
+    # The proven y=1..3 band runs first; the full vertical envelope
+    # (trenches + high decks) only runs if narrow finds nothing.
+    for _ymin, _ymax in ((1, 3), (_WIDE_YMIN, _WIDE_YMAX)):
+        _fly = _astar_wrap(ctx, sup, guard, a, b, net, avoid, flat=False,
+                           ymin=_ymin, ymax=_ymax)
+        if not (_fly and any(c[1] >= 2 for c in _fly)):
+            continue
+        fly = _fly
         needs = []
         try:
             for cell in fly:
@@ -347,7 +360,8 @@ def _flight_live(ctx, net, a, b, flight):
     return False
 
 
-def _astar_wrap(ctx, sup, guard, a, b, net, avoid, flat=True):
+def _astar_wrap(ctx, sup, guard, a, b, net, avoid, flat=True,
+                ymin=None, ymax=None):
     """layout.astar for compose corridors (any coords, flat or 3D).
 
     ponytail: astar windows clip at 0 while compose lanes run negative, so
@@ -390,7 +404,8 @@ def _astar_wrap(ctx, sup, guard, a, b, net, avoid, flat=True):
     D = max(a[1], b[1]) + oz + m + 1
     found = astar([(a[0] + ox, 1, a[1] + oz)], (b[0] + ox, 1, b[1] + oz), net,
                   W, D, solid2, rings2, wires2, junctions2, m,
-                  None, congest, guard2, sup2, reps2, None, flat, air2)
+                  None, congest, guard2, sup2, reps2, None, flat, air2,
+                  ymin, ymax)
     if not found or len(found) < 2:
         return None
     return [(x - ox, y, z - oz) for (x, y, z) in found]
