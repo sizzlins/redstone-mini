@@ -2,6 +2,7 @@
 
 import os
 import sys
+import time
 from types import SimpleNamespace
 
 from core import DIRS, TORCH_BACK
@@ -139,10 +140,7 @@ def _candidates(ctx, a, b, net, avoid):
             ray = [(rs[0] - i * dx, 1, rs[1] - i * dz) for i in range(1, k + 1)]
             base = _path_cells(a, rs, True)
             cands.append(("ray", base + ray))
-    for u in (2, 4, 6, 8, 10, 12):
-        # (16,20,24,32 removed: they let add2's A1 jog into a repeater loop.
-        # Longer jogs help sprawling fields but the loop risk isn't worth it
-        # without a loop-aware plant. Revisit with _loop_rep in the scorer.)
+    for u in _JOGS:
         for dz in (-u, u):
             rs = (b[0], b[1] + dz)
             drop = [(rs[0], 1, rs[1] - i * (1 if dz > 0 else -1))
@@ -1239,6 +1237,19 @@ _SPREAD = 1
 # green). compose() tries gates-first at every spread, then inputs-first.
 _ORDER = "gates_first"
 
+# Trunk jog depth candidates. SHORT is the proven baseline (every currently
+# green build verifies on it). LONG reaches past a sealed band but can let a
+# long input march wander unsealed (add2 lost all four input ports on LONG),
+# so compose() only escalates to it after SHORT has failed everywhere.
+_JOGS_SHORT = (2, 4, 6, 8, 10, 12)
+_JOGS_LONG = (2, 4, 6, 8, 10, 12, 16, 20, 24, 32)
+_JOGS = _JOGS_SHORT
+
+# Total wall-clock ceiling for the whole retry ladder, so a hard recipe can
+# never spin forever (20 attempts x unbounded astar = a hang). 0 = no cap.
+# REDSTONE_MAX_SECS still bounds a single attempt inside layout/sim.
+_COMPOSE_SECS = float(os.environ.get("REDSTONE_COMPOSE_SECS", "0") or 0)
+
 # Routing/geometry failures worth retrying with more room (NOT logic or
 # sim failures — those are deterministic and spread cannot fix them).
 _RETRYABLE = ("no ground", "no route", "OPEN ", "blocked", "lamp spot taken",
@@ -1247,27 +1258,35 @@ _RETRYABLE = ("no ground", "no route", "OPEN ", "blocked", "lamp spot taken",
 
 
 def compose(recipe):
-    """Deterministic place+route, retrying wider and reordered on failure.
+    """Deterministic place+route, retrying wider/reordered/deeper on failure.
 
-    Gates-first at spread 1 first: every green build succeeds here,
+    Ladder: short jogs across spreads 1..5 x {gates_first, inputs_first},
+    then long jogs across the same grid. Every currently-green build
+    succeeds on the FIRST attempt (short, spread 1, gates-first)
     bit-identical, so the gates never move. Only a routing/geometry death
-    retries — wider spreads, then inputs-first order. The build may sprawl
-    across chunks (wires run long, repeaters carry them).
+    escalates. The build may sprawl across chunks (wires run long,
+    repeaters carry them).
     """
-    global _SPREAD, _ORDER
+    global _SPREAD, _ORDER, _JOGS
     last = None
-    for spread in (1, 2, 3, 4, 5):
-        for order in ("gates_first", "inputs_first"):
-            _SPREAD, _ORDER = spread, order
-            try:
-                return _compose_once(recipe)
-            except RuntimeError as e:
-                last = e
-                if (spread, order) == (5, "inputs_first") or not any(
-                        k in str(e) for k in _RETRYABLE):
-                    raise
-                print(f"compose spread {spread} {order} failed "
-                      f"({str(e)[:60]}); retrying", flush=True)
+    deadline = time.monotonic() + _COMPOSE_SECS if _COMPOSE_SECS else None
+    attempts = [(j, s, o)
+                for j in ("short", "long")
+                for s in (1, 2, 3, 4, 5)
+                for o in ("gates_first", "inputs_first")]
+    for i, (jog, spread, order) in enumerate(attempts):
+        _SPREAD, _ORDER = spread, order
+        _JOGS = _JOGS_SHORT if jog == "short" else _JOGS_LONG
+        try:
+            return _compose_once(recipe)
+        except RuntimeError as e:
+            last = e
+            if (i == len(attempts) - 1
+                    or (deadline and time.monotonic() > deadline)
+                    or not any(k in str(e) for k in _RETRYABLE)):
+                raise
+            print(f"compose {jog} spread {spread} {order} failed "
+                  f"({str(e)[:60]}); retrying", flush=True)
     raise last
 
 

@@ -1,0 +1,16 @@
+IN A0, A1, B0, B1
+OUT D0, D1, BOUT
+nB0 = NOT B0
+BAND 0
+x0 = A0 XOR B0
+D0 = x0 AND x0
+u0 = A0 OR nB0
+BAND 1
+nB1 = NOT B1
+x1 = A1 XOR nB1
+D1 = x1 XOR u0
+a1 = A1 AND nB1
+k = x1 AND u0
+COUT = a1 OR k
+nC = NOT COUT
+BOUT = nC AND nC
