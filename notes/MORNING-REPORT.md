@@ -58,7 +58,7 @@ bug: `s0 = d0 XOR 1` is `NOT d0`, `v0 = d0 AND 1` is `d0` (buffered). Same
 circuit, proven over all 16 vectors, and the sourceless multi-load constant net
 vanishes. **OK 4633 blocks.**
 
-### alu4.txt / cpu4.txt -- architectural wall, confirmed nine ways
+### alu4.txt / cpu4.txt -- architectural wall, confirmed ten ways
 ```
 low spreads:  no ground (no corridor)
 high spreads: wire touches (legs cross, even at spread 20)
@@ -67,9 +67,10 @@ maze grow 4/6: 610s CPU each, zero output (exponential, killed)
 dead gates:   removed, proven equivalent -- rung 1 still fails identically
 6 seeds:      6 different nets fail (O3/B2/X3/R0_R2/AL_n0/R0_nD3) -- not order
 YMAX=8:       no ground (congestion is planar, not vertical)
-budgets:      900-2400s exhausted on every attempt
+maze sweep:   20 seeds x 3 grows too slow (4+ min/attempt, blowup not progress)
+budgets:      900-3300s exhausted on every attempt
 ```
-Nine diverse approaches, all fail systemically. The order-seed result is
+Ten diverse approaches, all fail systemically. The order-seed result is
 decisive: different trajectories hit different walls, so no trajectory works.
 Needs a bus/hierarchical router (new subsystem, days + design). Not attempted
 overnight: risks the 16 working builds for near-zero payoff.
