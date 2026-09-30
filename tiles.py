@@ -57,6 +57,16 @@ def ring(ctx, x, z, nets):
 
 def stamp_wire(ctx, path, net, ends=()):
     for cell in path:
+        # ponytail: re-stamping our OWN wire is a no-op. The guards below
+        # (adjacency, torch, ring) all raise on a foreign neighbour even when
+        # the cell already holds this net, so a route that legitimately
+        # starts at a tile port (the port's own dust, stamped at placement)
+        # died on the first cell whenever the port sits beside a foreign run.
+        # Measured: every hier stitch failed "wire <net> touches <foreign>
+        # beside (<driver x>,1,<z>)" — the driver cell itself, already ours.
+        # Nothing can short by re-stamping our own signal, so return first.
+        if ctx.wires.get(cell) == net:
+            continue
         if len(cell) == 2:
             cell = (cell[0], 1, cell[1])  # placement stubs are y=1
         flat = (cell[0], cell[2])

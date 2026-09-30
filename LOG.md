@@ -512,3 +512,19 @@ Full hier next (bands ~12 min + merge/sim, inside proven-safe durations).
   re-running from the driver (465 cells shorter).
 STATUS: alu4hier merge reaches C2->band3, which now hangs the stitch stage.
 Rule 7 needed: astar cap in the stitch child. TODO: bound stitch, then sim.
+Rule 7 follow-up: stitched fan-out in a forked child still ran past 150s wall
+(pipe start + 6-band pickle + astar). Conclusion: bound the STITCH GEOMETRY
+instead of trusting process control — direct + west-approach only under
+REDSTONE_HIER_FAST, no astar/hop-row search. Deterministic, seconds.
+
+### Stitch progress (gap 60 -> 160)
+- Boundary ports all clean (portdump: no foreign neighbour, free cell) so the
+  port-openness acceptance is now correct and every cached band passes it.
+- Widening the inter-partition street from 60 to 160 cells moved the failure:
+  A0B0 (band0 -> band1) now routes; the next wall is a 300-cell straight hop
+  that wants an empty row. The "whole span empty" hop-row test is too strict
+  (it fails on any tile) and lwire's astar is already the fallback; the
+  remaining lever is a 3-segment stitch (up/along/down) that only needs local
+  clearance, not a globally empty row. TODO next.
+- Rule 7: every stage now hard-bounded (band rungs killed in child, stitch
+  killed in child, astar capped). No command has exceeded ~2 min since.

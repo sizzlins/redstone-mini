@@ -1426,7 +1426,12 @@ def _compose_once(recipe):
     return finish_assembly(blocks, solid, wires, rings, junctions, repeaters, pos)
 
 
-_HIER_GAP = 60
+# Space between merged partitions. Wide on purpose: the stitch has to jog
+# around a whole field to reach a boundary port (measured: with a 60-cell
+# street every hop row was blocked, because "the whole span is empty" fails
+# the moment it crosses any tile). The street costs blocks — reported, never
+# scored — and buys the route a corridor.
+_HIER_GAP = int(os.environ.get("REDSTONE_HIER_GAP", "160"))
 
 # Hard kill for one pinned band rung (REDSTONE_HIER_RUNG_SECS, default 90s).
 _RUNG_SECS = float(os.environ.get("REDSTONE_HIER_RUNG_SECS", "90") or 90)
@@ -1654,13 +1659,21 @@ def compose_hier(recipe):
                 if _c is None:
                     continue
                 _d = (_c[0] + _sh[0], _c[1] + _sh[1])
+                _free = (solid_free := _pctx["solid"].get((_d[0], _d[1])) is None
+                         and _pctx["wires"].get((_d[0], 1, _d[1])) in (None, _n))
                 _open = 0
                 for _ax, _az in DIRS:
                     _w = _pctx["wires"].get((_d[0] + _ax, 1, _d[1] + _az))
                     _sd = _pctx["solid"].get((_d[0] + _ax, _d[1] + _az))
                     if _sd is None and _w in (None, _n):
                         _open += 1
-                if _open < 2:
+                # ponytail: the port cell must be STAMPABLE (free), not just
+                # have an open side. A port whose own cell is a foreign wire
+                # is a short waiting to happen: the stitch must lay dust
+                # there, and stamp_wire refuses it (measured: A2B2 "touches
+                # n1_2 beside (708,1,46)"). One open side is enough to leave
+                # by; a free cell plus one exit is the real bar.
+                if not _free or _open < 1:
                     _closed = _n
                     break
             if _closed is not None:
@@ -1684,6 +1697,47 @@ def compose_hier(recipe):
     if _hier_saved is not None:
         os.environ["REDSTONE_HIER"] = _hier_saved
     return compose_hier_parts(built, gates, recipe)
+
+
+def check_hier_ports(sub, ctx, shift, cross=None, prod=None):
+    """Reject a partition whose produced boundary port cannot be stitched.
+
+    The bar (measured, both halves necessary):
+      - the port cell itself must be free (no solid, no foreign wire): the
+        stitch lays dust there and stamp_wire refuses a foreign neighbour
+        (A2B2 "touches n1_2 beside (708,1,46)"), and
+      - at least one orthogonal must be free-or-own to leave by.
+    Shared by compose_hier's rung acceptance and scratch/hier_bands.py so the
+    parallel cache rejects exactly what the ladder would.
+    """
+    if not cross:
+        return
+    for _n in cross:
+        if prod.get(_n) != sub.get("_band"):
+            continue
+        _c = _hier_drv(ctx.recs, _n)
+        if _c is None:
+            continue
+        _d = (_c[0] + shift[0], _c[1] + shift[1])
+        _free = (ctx.solid.get((_d[0], _d[1])) is None
+                 and ctx.wires.get((_d[0], 1, _d[1])) in (None, _n))
+        # A foreign wire ORTHOGONALLY BESIDE the port blocks the stamp, not
+        # just the exit: stamp_wire's same-level adjacency guard raises when
+        # the port's own dust would touch it (measured: A2B2 "touches n1_2
+        # beside (708,1,46)"). So the bar is zero foreign neighbours, plus at
+        # least one free side to leave by.
+        _bad = 0
+        _open = 0
+        for _ax, _az in DIRS:
+            _w = ctx.wires.get((_d[0] + _ax, 1, _d[1] + _az))
+            if _w is not None and _w != _n:
+                _bad += 1
+            if (ctx.solid.get((_d[0] + _ax, _d[1] + _az)) is None
+                    and _w in (None, _n)):
+                _open += 1
+        if not _free or _bad or _open < 1:
+            raise RuntimeError(f"port {_n} at {_d} not stitchable "
+                               f"(free={_free} foreign={_bad} open={_open})")
 
 
 def compose_hier_parts(built, gates, recipe):
@@ -1829,6 +1883,13 @@ def compose_hier_parts(built, gates, recipe):
         # Last resort: two-hop via a hop row just north of the consumer
         # lever bank (street north, east-west along the empty margin, step
         # south into the stub).
+        # ponytail: REDSTONE_HIER_FAST bounds the SEARCH, not the process. A
+        # chained fan-out leg 400+ cells long makes astar the dominant cost
+        # (measured: >150s wall even forked, twice). Fast mode tries the
+        # cheap deterministic strategies only — direct from each open port
+        # neighbour, then the west approach — and skips astar-backed hop rows
+        # entirely, so the stage is seconds. Default stays exhaustive.
+        _fast = os.environ.get("REDSTONE_HIER_FAST") == "1"
         starts = [drv] + [(drv[0] + dx, drv[1] + dz) for dx, dz in DIRS
                           if solid.get((drv[0] + dx, drv[1] + dz)) is None
                           and wires.get((drv[0] + dx, 1, drv[1] + dz)) is None]
@@ -1838,6 +1899,18 @@ def compose_hier_parts(built, gates, recipe):
                 return lwire(mctx, sup, guard, s, stub, n)
             except RuntimeError as e:
                 _err = e
+        if _fast:
+            for _k in (2, 4, 6):
+                _ax, _az = stub[0] - _k, stub[1]
+                if solid.get((_ax, _az)) is not None:
+                    continue
+                try:
+                    p1 = lwire(mctx, sup, guard, drv, (_ax, _az), n)
+                    p2 = lwire(mctx, sup, guard, (_ax, _az), stub, n)
+                    return p1 + p2
+                except RuntimeError as e:
+                    _err = e
+            raise _err
         # ponytail: west approach — an edge-lever stub sits at the head of a
         # lane that runs INTO the field, so the cell west of it on its own
         # row is the empty lever row, not tile. Drive to that cell, then one
@@ -1852,6 +1925,26 @@ def compose_hier_parts(built, gates, recipe):
                 return p1 + p2
             except RuntimeError as e:
                 _err = e
+        # ponytail: pick the hop row FROM THE MERGED FIELD, not from the
+        # consumer's lever-bank min (that bookkeeping predates edge levers
+        # and names a row the field does not have). Take the nearest row
+        # above both endpoints whose whole horizontal span is empty of
+        # wires and solid: a real empty corridor, measured, not assumed.
+        _lo, _hi = sorted((drv[0], stub[0]))
+        for _z in range(max(0, min(drv[1], stub[1]) - 1), -1, -1):
+            if any(wires.get((x, 1, _z)) is not None
+                   or solid.get((x, _z)) is not None
+                   for x in range(_lo, _hi + 1)):
+                continue
+            for _px in (offs[b] - _HIER_GAP // 2, _lo + 2, _hi - 2):
+                if solid.get((_px, _z)) is not None or wires.get((_px, 1, _z)) is not None:
+                    continue
+                try:
+                    p1 = lwire(mctx, sup, guard, drv, (_px, _z), n)
+                    p2 = lwire(mctx, sup, guard, (_px, _z), stub, n)
+                    return p1 + p2
+                except RuntimeError as e:
+                    _err = e
         hz0 = max(1, levermin.get(b, 2) - 1)
         px = offs[b] - _HIER_GAP // 2
         # ponytail: several hop rows, not one. A hop row that a small
