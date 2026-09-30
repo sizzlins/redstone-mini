@@ -726,18 +726,21 @@ def _compose_once(recipe):
     # it back. Kept as evidence; a correct fix needs the booster to guarantee
     # 15 at every port (a `_plant_repeaters` change), not a wider hole.
     edge_n, edge_s = {}, {}
+    # ponytail: each lever sits AT its lane, so d1 is zero-length. The old
+    # code put the lever at its loads' centroid x (deep in the tile field)
+    # and marched 100+ cells to the lane — a march that dies on any dense
+    # field (alu1 OP1, decode3 C, every new candidate). Lane x is shared
+    # with the router below (minx-2-4*SPREAD*index); the lever goes one
+    # west so its stub IS the lane start. Levers stay banked along the
+    # north edge (2-pitch in z) per the build contract.
     for k, name in enumerate(recipe["inputs"]):
         loads = netspec.get(name, {}).get('loads', [])
         if not loads:
             continue  # unused input: no lever, nothing to drive
-        cz = sum(z for _, z in loads) // len(loads)
-        cx = min(max(sum(x for x, _ in loads) // len(loads), minx), maxx)
-        if cz - minz <= maxz - cz:
-            lz = minz - 6 - 2 * len(edge_n)
-            edge_n[name] = lz
-        else:
-            lz = maxz + 6 + 2 * len(edge_s)
-            edge_s[name] = lz
+        lx = minx - 2 - 8 * _SPREAD * recipe["inputs"].index(name)
+        lz = minz - 6 - 2 * len(edge_n)
+        edge_n[name] = lz
+        cx = lx - 1
         blocks.append((cx, 1, lz, "minecraft:lever[face=floor,facing=north,powered=false]"))
         solid[(cx, lz)] = ("lever", name)
         for dx, dz in DIRS:
@@ -1079,7 +1082,7 @@ def _compose_once(recipe):
                         # (B@x6 vs n1@x8 — a gate port, not the input lane),
                         # 38 refusals unchanged, and small builds grew
                         # 182/396/250/282 -> 238/492/306/354 for nothing.
-                        lx = minx - 2 - 4 * _SPREAD * inps.index(net)
+                        lx = minx - 2 - 8 * _SPREAD * inps.index(net)
                         d1 = lwire(ctx, sup, guard, drv, (lx, drv[1]), net, avoid)
                         # ponytail: ONE lane leg, not two. Splitting the
                         # N-S march (drv row -> load row) from the E-W
