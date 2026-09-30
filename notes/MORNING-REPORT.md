@@ -46,31 +46,31 @@ session cracked.
 
 ## Still failing, with logs
 
-### cmp2.txt -- compose wall, budget-sensitive
+### cmp2.txt -- compose now passes; the maze layout is the wall
 ```
-compose long spread 10 gates_first failed (compose: no ground for A0: (-43,-17) -> (4,12))
+RED 1684.3s  no route for nB1: (80, 12) -> (222, 10) (grid full, widen W)
 ```
-Two distinct walls depending on budget:
-- At 300s cap: compose *succeeds*, then the maze step dies on
-  `BUDGET: layout_retry hit REDSTONE_MAX_SECS=300`.
-- At 2400s cap: compose exhausts all 32 rungs on `no ground for A0`.
-- Earlier, at a mid budget, compose reached the end and left the **constant
-  net** orphaned: `OPEN (unconnected dust): [((751,1,190),'1'), ((752,1,190),'1')]`
+Journey, in order: `SHORT3D` on a hop slope-linking net `d0` (fixed by the
+slope-link lids) -> the constant net orphaned (`OPEN` on `'1'` at
+`(751,1,190)`) -> `no ground for A0` at 300s budgets (needs the full 32-rung
+ladder) -> **compose succeeds**, and the failure moved into the *maze layout*
+step: it cannot find a route for `nB1` and reports the grid full.
 
-So the shape is: input `A0` cannot reach ground, and the constant `1` net has
-no driver path to its two loads. The constant is the more tractable of the two.
+So cmp2 is one layer from green. The remaining problem is space, not logic:
+a 142-cell route in a saturated maze grid.
 
 ### alu4.txt / cpu4.txt -- the >=10-input approach cone
 ```
-alu4: compose spread 2 inputs_first failed (no ground for A3B3: (672,13) -> (500,34))
-alu4 at spread 6/10: wire B3 touches A1 beside (1268,1,7)   (and 2108,1,7 at s10)
-cpu4: no ground for OPC1: (-43,-9) -> (428,347)
+alu4: BUDGET: layout_retry hit REDSTONE_MAX_SECS=2400s (compose: no ground)
+cpu4: BUDGET: layout_retry hit REDSTONE_MAX_SECS=2400s (compose: no ground)
 ```
-Both have 10+ inputs. Low spreads have no corridor; high spreads route but the
-input-to-load legs cross each other and `stamp_wire` refuses the touch.
-Already ruled out: lever rows are staggered 2 per input index, lane columns are
-`4*spread` apart, and the near-end clearance window is already down to 1 cell.
-So it is the approach cone, not the port row.
+Both exhaust a full 2400s layout budget and the composed route still has no
+ground; the compose side fails on input-leg collisions (`wire B3 touches A1`
+at high spreads; `no ground for A3B3/OPC1` at low spreads). Already ruled out:
+lever rows staggered 2 per input, lane columns `4*spread` apart, near-end
+clearance down to 1 cell, and now **nearest-first load ordering from each
+input's port** (gated at >9 inputs, so greens are untouched). Low spreads have
+no corridor; high spreads route but the input-to-load legs cross each other.
 
 **`mux4` at 9 inputs is the proven ceiling.** That is the useful number.
 
@@ -155,12 +155,9 @@ Nothing blocking. Decisions I made on your behalf, flagged in case you disagree:
 
 ## Ordered next steps
 
-1. cmp2: give the constant `1` net a real driver path. It is a *source* net with
-   two loads and no lever, and `check_opens` reports it orphaned at
-   `(751,1,190)`. Start by looking at how `pos`/lever seeding treats a net whose
-   name is a literal `1` (`layout.py:800-812` seeds from `pos` and from lever
-   islands only).
-2. cmp2: then the `A0` `no ground` at `(-43,-17) -> (4,12)`.
+1. cmp2: the maze layout cannot place `nB1`'s 142-cell route (`grid full`). It
+   composes now. Try a wider maze grid or a lighter `nB1` route; the constant
+   `'1'` net and the `A0` `no ground` that haunted it all night are gone.
 3. alu4/cpu4: attack the approach cone, not the port row. Cheapest experiment is
    ordering each input's loads by distance from its port instead of by
    `(x, z)` lexicographic -- currently `sorted(netspec[net]['loads'])`. Expect
