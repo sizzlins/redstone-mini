@@ -1,149 +1,115 @@
-# MORNING REPORT — redstone-mini dense builds (2026-09-30)
+# MORNING REPORT — redstone-mini dense builds (2026-09-30, session 3)
 
 ## Headline: NOT DONE. 1 of 5 dense builds verified. 0 new dense builds.
 
-I did not reach the bar. Here is the honest state, what works, what does
-not, and the three decisions only you can make.
+The bar was not met. 7 commits landed, each gated on the 4 small builds
+staying sim-green (182/396/250/272). The stuck process you saw was the
+final maze verify on alu4+cpu4 grinding for ~6h; I killed it — the numbers
+it would have produced were already known.
 
-## Verify command
+## Verify commands
 
 ```powershell
 cd D:\redstone-mini
-python scratch/dense_status.py            # all 5 dense, exit 0 iff all green
-python scratch/dense_status.py micro1.txt # just micro1
-python scratch/compose_check.py           # 4 small builds, sim-gate each
+python scratch/compose_check.py     # 4 small builds, sim-gated (fast)
+python scratch/compose_status.py    # dense ladder, compose only (fast)
+python scratch/dense_status.py      # dense ladder, compose->maze (SLOW)
 ```
 
 ## What now generates AND verifies
 
 | recipe | status | evidence |
 |---|---|---|
-| `micro1.txt` | **OK, verified** | 2301 blocks, 6.8s, via the maze backend |
+| `micro1.txt` | **OK, verified** | 2301 blocks, 6.7s, via the maze backend |
 | `example_and.txt` | OK, verified | 182 blocks |
 | `example_2gates.txt` | OK, verified | 396 blocks |
 | `latch_sr.txt` | OK, verified | 250 blocks |
-| `example_xor.txt` | OK, verified | 282 blocks |
+| `example_xor.txt` | OK, verified | 272 blocks (was 282; routes got shorter) |
 
-`micro1` is a genuine improvement: it is in the dense family and it now
-comes out of `layout_retry(verify=True)` sim-verified. It gets there
-through the maze fallback, not the new compose backend.
+## What changed (session 3, commits 34f2607 … 66cc52a)
 
-## What still fails
+All in `compose.py` / `tiles.py` unless noted. Small-build hashes confirm
+nothing moved except where a shorter route now wins.
 
-| recipe | wall (verbatim) | time |
+1. **Single-leg input routes.** The N-S lane + E-W approach pinned the turn
+   cell, and a blocked ENDPOINT is unhoppable. Whole leg now routes as one
+   lwire; offset-trunk candidates jog the turn. Cleared the walls both
+   backends were dying on: alu1 `OP1 (-15,12)->(4,12)`, ctrl_decode
+   `OP2 (-3,1)->(-3,12)`.
+2. **Outputs never inlined.** `_strip_buffers` ate hand-written buffers that
+   were recipe outputs (`ALU1 = OP1 AND OP1`), leaving a bare `KeyError`
+   after routing had already succeeded. Cost: one AND tile.
+3. **Lamp taps before routing.** The post-routing field has no clear lamp
+   spot in a dense band (`lamp spot taken for Y`).
+4. **Torch-adjacency seal** (`tiles.seal_tiles`). A run beside a foreign
+   torch is driven by lever AND inverter = ring oscillator. Measured on a
+   6-gate OR/AND chain: TORCH BURNOUT -> GREEN (1186 blocks).
+5. **Self-lid counts tile-body cobble.** `_support` legitimately reuses tile
+   bodies; the flight check didn't count them and rejected every descent
+   past a tile. alu4's carry `C1 (107,41)->(195,55)` now routes.
+6. **Load-held-by-foreign-net is loud.** This is the diagnostic, not a fix:
+   a netspec load holding another net's dust/repeater is a hard error with
+   the exact cell. It fires on 4 of 5 dense recipes — the mis-wiring is
+   everywhere and used to surface as `SIM MISMATCH x9` with no cell named.
+
+Reverted with evidence kept in-file: buried-wire guard (walled a valid
+240-cell flat-astar path), cobble-side seal (walled every dense route),
+two speculative orphan guards (never fired).
+
+## What still fails (verbatim)
+
+| recipe | wall | time |
 |---|---|---|
-| `alu1.txt` | compose: `no ground for CIN: (-11,30) -> (142,30)`; maze: `no route for A: (31,393) -> (57,96) (3D: self-lid)`, 25 tasks unroutable | 408s |
-| `ctrl_decode.txt` | maze: `no route for OP1: (391,83) -> (373,23) (3D: self-lid)`, 17 tasks unroutable | 811s |
-| `alu4.txt` | not re-measured this session (known RED; too slow to re-run) | — |
-| `cpu4.txt` | not re-measured this session (known RED; too slow to re-run) | — |
+| `micro1` (compose) | `load (34,15) of W holds D` | 0.2s |
+| `alu1` (compose) | `load (82,29) of n1 holds B` | 3.9s |
+| `ctrl_decode` (compose) | `load (94,12) of OP2 holds a` | 2.1s |
+| `alu4` (compose) | `no ground for t33: (492,42) -> (446,154)` | 129s |
+| `cpu4` (compose) | `no ground for AL_n1: (398,12) -> (744,118)` | 152s |
+| `alu1` (maze) | `no route for B (34,398)->(28,399) (3D: self-lid)`, 30 unroutable | 798s |
+| `ctrl_decode` (maze) | `no route for OP0 (344,76)->(484,12) (3D: self-lid)`, 15 unroutable | 409s |
 
-### The one wall that matters (alu1, `CIN`)
+New dense builds: 0. Authored 5 candidates (minterms/pairfuncs/muxlattice/
+popcount/group4), all died on long input routes; files removed, nothing
+committed. Sequential (counter/D-FF) shapes are not orderable by `_topo` —
+a LATCH back-edge is a cycle — so new dense work must be combinational.
 
-Reproduce: `python scratch/astarprobe.py alu1.txt CIN` and
-`python scratch/hopclause.py alu1.txt CIN`.
+## The one thing the next session should do
 
-The input's long east-west leg runs at the *load's* row, straight through
-the tile field — a 153-cell ground march. It fails 38 hop attempts, and
-**every refusal is `feet-wire`**: the hop's far foot (victim + 2 cells)
-lands on the next column's dust. Two north-south columns sit 2 cells apart
-(`B@x6`, `n1@x8`), and the proven 5-cell hop needs 2 clear cells on each
-side, so a 2-wide canyon is geometrically unhoppable.
+**Fix why a netspec load cell ends up holding a foreign net** (or nothing at
+all: OP0's five loads held OP1, n1, a lterm repeater, and two empty cells).
+Routes exist for every one of those ports — the legs are in the path list —
+but the final field disagrees. Prime suspects, in order:
 
-This is not a search-budget problem. `astar_wrap` also finds no flat path,
-because A* cannot see hop-over crossings at all. More field, more seeds,
-or more candidates cannot fix it — the hop shape is the limit.
+1. `place_and` can relocate a tile to `(dv+3, dv[1])` but compose records
+   the *requested* origin in `used_fp`/`placed` (`compose.py` ~line 590) —
+   later placements and halos can be built on a lie. Check `recs` coords
+   vs the stamped tile first.
+2. A route of net X stamped onto a cell where a tile port of net Y was
+   supposed to go — audit `stamp_wire`'s `setdefault` + `ends` interplay.
+3. `_displace`/rollback asymmetry (one defensive commit landed; may not
+   be the path taken).
 
-For the record, these alu1 nets used to die and now route: `m0`, `m4`,
-`O`, `AB`, `n0`, `n1`.
-
-### micro1's remaining defect (compose path only)
-
-compose builds micro1 (3367 blocks) but the sim reports TORCH BURNOUT on
-the latch's cross-coupled pair. I traced it: the latch's S/R arrive
-through long diode runs, so the fuse on one torch trips before the other
-torch's S arrives to break the ring. A porch guard I added around the
-latch's S-row repeater removed the previous 329-cell dust ring — the
-failure mode changed, it did not disappear. The maze path avoids it.
-
-## What changed (commits 67044ba, a7dc462, aa29f26, 96d8faf)
-
-All in `compose.py` unless noted. Every change is gated: green open
-corridors take the identical path, so small builds stay sim-green
-(182/396/250/282).
-
-- `_walk` / `lwire`: ring-hop (span a reservation-only ring cell), ranked
-  candidate fallback with per-candidate rollback, `_astar_wrap` — the
-  maze A* reused as a last candidate for negative lane coordinates, and
-  a **3D overflight** fallback (astar's y>=2 search with
-  `layout._support`-validated pillars). The overflight is a real
-  capability: it is the only thing that crosses a long N-S column, and it
-  made alu1's `CIN` route (that leg had no flat and no ground-hop path).
-- `_candidates`: 12 offset-trunk corridors.
-- Halos: foreign *drivers* reserved, not just loads.
-- `_expanded`: sibling streets widened (halo 2 -> 4).
-- `_order` / `_blame` / `_displace`: most-bottlenecked-first ordering,
-  blame-based order restarts (bounded 24), and single-victim displacement
-  to break mutual seals that ordering cannot.
-- `tiles.py`: latch repeater porch guard.
-- `scratch/` probes: `dense_status`, `compose_status`, `wallpanel`,
-  `astarprobe`, `flywhy`, `hopclause`, `netdump`, `rectdump`,
-  `churnedge`, `plantlog`, `vecsweep`, `traceview` (gitignored).
-
-### Reverted, with the evidence kept in-file as `ponytail:` notes
-- **Input trunk rows** — fixed alu1's B/CIN legs, but example_and went
-  182 GREEN -> 314 SIM MISMATCH (trunk runs bleed 15->5 before the hop
-  dust; the OR junction reads weak).
-- **Lane offset 8 / pitch 6** — did not move the wall (the 2-wide canyon
-  is a gate port, not the input lane) and cost small builds 30% more.
-- **Parity-staggered torch power-on in the sim** — made micro1 worse
-  (4 green vectors -> 0, all burnout).
-- **Input port-approach opening, twice.** This is the important one and it
-  is the next session's opening move. alu1's `OP1` leg
-  `(-15,12) -> (4,12)` has **no flat and no 3D path** because a tile's
-  own apron seals its west-edge port cell — the route must cross 4 cells
-  of the NOT tile's reserved halo to reach it. Empty-ringing the port
-  fixes reach and costs correctness instead: v1 (port + 4 neighbours,
-  all nets) broke example_xor's input lane outright; v2 (input nets, 3
-  cells west) made example_and SIM MISMATCH because the opened approach
-  lengthens the run and it reaches the OR junction at **level 9 where a
-  diode input needs a strong 15**. Opening a port buys reach with signal
-  strength.
-
-## TODO, in order (this is the concrete next session's plan)
-
-1. **Guarantee a strong 15 at OR-diode rears in `_plant_repeaters`.**
-   This is the blocker for everything above: a comparator side and an OR
-   diode rear are the only places that need 15, and the current 8-cell
-   spacing lets a long run arrive at 9. A per-net "last N cells before
-   each OR load get boosted" rule is small and makes the port opening
-   safe. Verify: 4 small builds stay green.
-2. **Then re-open input port approaches** (v2 above). Expect alu1's `OP1`
-   to route, which is the last compose wall measured on it.
-3. **Then re-measure the dense family** with `scratch/compose_status.py`
-   (fast, compose only) before spending minutes on the maze fallback.
-4. **micro1's compose SIM failure** (TORCH BURNOUT on the latch pair) is
-   independent of all the above: S/R arrive through long diode runs, so
-   one fuse trips before the other's S breaks the ring. Needs a defined
-   power-on (reset-then-set) or a shorter S/R approach.
+Supporting evidence already in the repo: `scratch/repadj.py` (rules out
+the booster pass: 0 repeaters beside foreign wire on all builds),
+`scratch/gatewhy.py` (first-wrong-gate per vector),
+`scratch/whopowers.py` + `scratch/q.py` (consistent-frame cell queries),
+`scratch/shrink.py` (delta-debugs a failing recipe), `scratch/ortopo.py`
+(small OR/AND/NOT topology ladder, all green except regw_shape).
 
 ## What I need from you
 
-No credentials or payments. Two decisions:
-
-1. **Is a defined latch power-on acceptable** (drive R for a tick before
-   each vector, i.e. reset-then-set), or must every build settle from a
-   cold, unbiased start? micro1's last compose defect is a power-on race
-   and this decides whether it is a bug or a spec question.
-2. **alu4 / cpu4 were not re-measured** this session (each is minutes per
-   attempt; the machine also restarted once under memory pressure). If you
-   want them measured, say whether to spend the wall-clock — otherwise I
-   will treat the compose-only ladder as the gate and report maze timings
-   only for a recipe that compose greens first.
+Nothing credential-related. One standing decision, answered or not — the
+builds gate on your answer eventually: a 2-NOR SR latch with both inputs
+low at power-on genuinely hunts (micro1's pair peaks at 10 OFF-transitions
+in 30 ticks vs vanilla's 8; genuine rings peak at 15 *and* trip the
+independent not-settling check at churn=210). Is a defined latch power-on
+(reset-then-set) acceptable, or must every build settle from cold? Until
+then the latch stays green-via-maze only.
 
 ## Housekeeping
 
-- Your PC restarted mid-run and separately ran out of RAM. Both were mine:
-  a 10^6-wide A* window held ~100k heap entries. It is now bounded to
-  manhattan+64. Diagnostic BFS is capped at 30k cells for the same reason.
-- Branch `phase2-design`, HEAD `a7dc462`, working tree clean apart from
-  the gitignored `scratch/` probes and `docs/plans/`.
+- Killed PID 14948 (the ~6h `dense_status alu4 cpu4`); do not rerun the
+  full maze ladder on alu4/cpu4 in one shot.
+- Branch `phase2-design`. Working tree clean. Head is the LOG.md commit
+  below this report.
+- `scratch/` probes are gitignored by policy — never merge.
