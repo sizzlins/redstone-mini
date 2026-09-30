@@ -8,7 +8,7 @@ from core import DIRS
 def new_ctx(blocks, solid, rings, wires, junctions, repeaters, pos, recs, sup):
     return SimpleNamespace(blocks=blocks, solid=solid, rings=rings, wires=wires,
                            junctions=junctions, repeaters=repeaters, pos=pos,
-                           recs=recs, sup=sup, tile_adj={})
+                           recs=recs, sup=sup, tile_adj={}, ports=set())
 
 
 def seal_tiles(ctx):

@@ -762,7 +762,7 @@ def _compose_once(recipe):
     # before any routing: from here on stamp_wire refuses a wire that would
     # power a foreign tile's host. See tiles.seal_tiles for the measurement.
     seal_tiles(ctx)
-    # guard from stamped torches, exactly like layout.py:1419-1425.
+    # guard from stamped torches, exactly like layout.py:1419-1425.    # guard from stamped torches, exactly like layout.py:1419-1425.
     for x, y, zz, bid in blocks:
         if "wall_torch" in bid:
             guard.add((x, zz))
