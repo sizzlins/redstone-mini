@@ -785,7 +785,12 @@ def _compose_once(recipe):
         loads = netspec.get(name, {}).get('loads', [])
         if not loads:
             continue  # unused input: no lever, nothing to drive
-        lx = minx - 2 - 4 * _SPREAD * recipe["inputs"].index(name)
+        # ponytail: lane pitch doubles past 9 inputs. 10 input lanes at
+        # 4*spread collide in the approach cone (alu4 B3/A1 touch); at
+        # 8*spread each lane owns twice the room. Gated so the 16 green
+        # builds (max 9 inputs, mux4) keep their exact geometry.
+        _pitch = (8 if len(recipe["inputs"]) > 9 else 4) * _SPREAD
+        lx = minx - 2 - _pitch * recipe["inputs"].index(name)
         lz = minz - 6 - 2 * len(edge_n)
         edge_n[name] = lz
         cx = lx - 1
@@ -1146,7 +1151,9 @@ def _compose_once(recipe):
                         # (B@x6 vs n1@x8 — a gate port, not the input lane),
                         # 38 refusals unchanged, and small builds grew
                         # 182/396/250/282 -> 238/492/306/354 for nothing.
-                        lx = minx - 2 - 4 * _SPREAD * inps.index(net)
+                        # (same _pitch as port placement above; lanes must align).
+                        _pitch = (8 if len(inps) > 9 else 4) * _SPREAD
+                        lx = minx - 2 - _pitch * inps.index(net)
                         d1 = lwire(ctx, sup, guard, drv, (lx, drv[1]), net, avoid)
                         # ponytail: ONE lane leg, not two. Splitting the
                         # N-S march (drv row -> load row) from the E-W
