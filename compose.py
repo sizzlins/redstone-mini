@@ -153,8 +153,13 @@ def _candidates(ctx, a, b, net, avoid):
             continue
         ownset = {(c[0], c[2]) for c in cells} | {a, b}
         bad = 0
+        # near_end exempts a cell from needing clearance around foreign wires.
+        # Only the port cell itself may do that: a port genuinely lives inside
+        # a tile's wire neighbourhood, but the outbound run must not hug —
+        # the 3-cell window let parallel input stubs run one cell apart down
+        # the port row and die on a touch (alu4 B3/A1 at y=1, z=7).
         for i, (x, _, z) in enumerate(cells):
-            bad += _sealed(ctx, x, z, net, ownset, i < 3 or i >= len(cells) - 3)
+            bad += _sealed(ctx, x, z, net, ownset, i < 1 or i >= len(cells) - 1)
         bad += sum(100 for (x, _, z) in cells if (x, z) in avoid)
         out.append((bad, len(cells), kind, cells))
     out.sort(key=lambda t: (t[0], t[2] != "L", t[1]))
@@ -1270,10 +1275,18 @@ def compose(recipe):
     global _SPREAD, _ORDER, _JOGS
     last = None
     deadline = time.monotonic() + _COMPOSE_SECS if _COMPOSE_SECS else None
-    attempts = [(j, s, o)
-                for j in ("short", "long")
-                for s in (1, 2, 3, 4, 5, 6, 8, 10)
-                for o in ("gates_first", "inputs_first")]
+    # REDSTONE_FORCE="spread,order,jog" pins one rung (diagnostics: bisect a
+    # single config instead of climbing the whole ladder).
+    force = os.environ.get("REDSTONE_FORCE", "").strip()
+    if force:
+        f_spread, _, rest = force.partition(",")
+        f_order, _, f_jog = rest.partition(",")
+        attempts = [(f_jog or "short", int(f_spread), f_order or "gates_first")]
+    else:
+        attempts = [(j, s, o)
+                    for j in ("short", "long")
+                    for s in (1, 2, 3, 4, 5, 6, 8, 10)
+                    for o in ("gates_first", "inputs_first")]
     for i, (jog, spread, order) in enumerate(attempts):
         _SPREAD, _ORDER = spread, order
         _JOGS = _JOGS_SHORT if jog == "short" else _JOGS_LONG
