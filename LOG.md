@@ -259,3 +259,34 @@ prior three (decode3, add2, chainmix) that is 8 total.
 
 Running total: 16/19 green (14 original + sub4 + cmp4, of 19 recipes).
 Red: alu4, cpu4 (architectural >=10-input wall), shift4 (LATCH chain).
+
+### Lane pitch doubled past 9 inputs (5th alu4/cpu4 attempt)
+10 input lanes at 4*spread collide in the approach cone. Pitch is now 8*spread
+when a recipe has >9 inputs (ports and routing lanes together, so they align).
+Gated so all green builds (max 9 inputs) keep exact geometry - verified
+bit-identical on the 4 small + micro1. alu4/cpu4 still fail with the same
+"no ground" on inputs. The wall is not spacing; it is the greedy routing
+itself. Final answer: needs a bus/hierarchical router (new subsystem).
+
+Session totals: 16/18 recipes green in recipes/ (alu4, cpu4 red). 8 new dense
+builds total (5 this session: mux4, sub2, andor8, sub4, cmp4). shift2/shift4
+moved to known-hard/ (gate-driven LATCH burnout, distinct architectural gap).
+
+### Optimization: Big-O, measured clean (user request)
+Profiled compose+sim. Sim is already event-driven O(events) with
+change-checks before propagation - tight, left alone. Two safe wins:
+
+1. lwire fast path: score 2 L-paths O(2L); a perfect L (bad=0) is
+   GUARANTEED cands[0] (nothing beats 0, L wins ties), so skip the other
+   36 corridors. Amortized O(L) vs O(38L) in open field.
+2. _expanded memoized (lru_cache, frozenset): O(1) vs O(fp x 81) rebuild.
+
+Clean before/after on a quiet machine (stashed to HEAD~1 for BEFORE):
+  micro1: BEFORE compose 0.18s / AFTER 0.11s (39% faster). sim 0.48s both.
+  decode3: BEFORE compose 21.4s / AFTER 19.6s (8% faster). sim 0.8s both.
+All hashes identical (4 small + micro1 2925 verified).
+
+Honest limit: hard builds are dominated by astar on doomed rungs
+(decode3 rung 1: 28 searches, 8s; 3.3M ok() calls) and sim is O(2^n).
+Those are structural (need fail-fast / parallel sim), not scoring.
+Documented, not attempted in this pass.

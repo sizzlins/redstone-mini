@@ -5,8 +5,9 @@ Started from 2/5 dense green. Nothing is committed that isn't verified.
 
 ## DONE bar
 
-**1. All dense recipes build and verify** — 16 of 19 do. Three are still red,
-each with an identified wall (details below). Not fully met.
+**1. All dense recipes build and verify** — 16 of 18 do. Two are still red
+(`alu4`, `cpu4`), both with the same identified architectural wall. Not fully
+met.
 
 **2. 3+ new dense builds that never built before** — **met, with margin: 8.**
 
