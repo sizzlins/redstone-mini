@@ -235,3 +235,16 @@ example_and, example_xor, latch_sr, micro1, mux4, sub2.
 RED 4: cmp2 (compose passes; maze "no route for nB1, grid full"),
 alu4/cpu4 (>=10-input approach cone), shift4 (LATCH chain, grid full).
 New dense builds already at 6 (decode3, add2, chainmix, mux4, sub2, andor8).
+
+### alu4/cpu4: 3D-only routing also fails (architectural wall confirmed)
+Added REDSTONE_NOFLAT (skip flat candidates, astar corridor + 3D overflight
+only) as a diagnostic. alu4 with NOFLAT runs 500s and dies on "no ground for
+C2: (816,194) -> (1292,240)". So even the full 3D envelope cannot place it.
+Combined with: spread 1-10 exhausted, clearance window at 1 cell, nearest-first
+load order. The current flat+overflight architecture cannot route a 10-input
+72-gate field. Needs a bus/hierarchical router or much sparser placement, which
+is a new subsystem, not a rung. Documented in MORNING-REPORT. Greens unaffected
+(NOFLAT is env-gated; 4 small + micro1/chainmix re-verified bit-identical).
+
+Final: 14/17 green. cmp2 joined via constant elimination. alu4/cpu4/shift4 red
+with identified architectural walls.

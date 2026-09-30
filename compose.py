@@ -171,8 +171,13 @@ def lwire(ctx, sup, guard, a, b, net, avoid=frozenset()):
     the proven 5-cell staircase hop over foreign dust (bridge_plan shape:
     y1->y2->y3->y2->y1), single y=2 span over tile cobble; boosters per
     full net-path after wiring. Anything that seals is a loud no-ground."""
-    cands = _candidates(ctx, a, b, net, avoid)
-    if not cands:
+    # REDSTONE_NOFLAT=1: skip the flat candidates, go straight to the astar
+    # corridor and 3D overflight (diagnostic: do 3D paths even exist here?).
+    if os.environ.get("REDSTONE_NOFLAT"):
+        cands = []
+    else:
+        cands = _candidates(ctx, a, b, net, avoid)
+    if not cands and (a == b or not os.environ.get("REDSTONE_NOFLAT")):
         return []  # already there: zero-length run
     # ponytail: candidate fallback. cands[0] wins wherever it walks (open
     # corridors: always, so small-build hashes must not move); a sealed
@@ -306,6 +311,11 @@ def lwire(ctx, sup, guard, a, b, net, avoid=frozenset()):
                     del ctx.blocks[sb:]
                 else:
                     return fly[1:-1]
+    if first_err is None:
+        # REDSTONE_NOFLAT and the astar/3D paths all refused without a
+        # recorded flat error: raise a generic no-ground so the ladder
+        # treats it as retryable geometry, not a crash.
+        raise RuntimeError(f"compose: no ground for {net}: {a} -> {b}")
     raise first_err
 
 

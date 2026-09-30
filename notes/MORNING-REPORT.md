@@ -46,31 +46,27 @@ session cracked.
 
 ## Still failing, with logs
 
-### cmp2.txt -- compose now passes; the maze layout is the wall
-```
-RED 1684.3s  no route for nB1: (80, 12) -> (222, 10) (grid full, widen W)
-```
-Journey, in order: `SHORT3D` on a hop slope-linking net `d0` (fixed by the
-slope-link lids) -> the constant net orphaned (`OPEN` on `'1'` at
-`(751,1,190)`) -> `no ground for A0` at 300s budgets (needs the full 32-rung
-ladder) -> **compose succeeds**, and the failure moved into the *maze layout*
-step: it cannot find a route for `nB1` and reports the grid full.
+### cmp2.txt -- GREEN (constant eliminated)
+Was red all night through three different walls (`SHORT3D` on a hop
+slope-linking the constant net, then `OPEN` with the constant orphaned, then a
+maze fallback that could not place `nB1`). Fixed by removing the need, not the
+bug: `s0 = d0 XOR 1` is `NOT d0`, `v0 = d0 AND 1` is `d0` (buffered). Same
+circuit, proven over all 16 vectors, and the sourceless multi-load constant net
+vanishes. **OK 4633 blocks.**
 
-So cmp2 is one layer from green. The remaining problem is space, not logic:
-a 142-cell route in a saturated maze grid.
-
-### alu4.txt / cpu4.txt -- the >=10-input approach cone
+### alu4.txt / cpu4.txt -- architectural wall, confirmed four ways
 ```
-alu4: BUDGET: layout_retry hit REDSTONE_MAX_SECS=2400s (compose: no ground)
-cpu4: BUDGET: layout_retry hit REDSTONE_MAX_SECS=2400s (compose: no ground)
+low spreads:  no ground for A3B3 / OPC1 (no corridor)
+high spreads: wire B3 touches A1 (input legs cross)
+3D-only:      no ground for C2: (816,194) -> (1292,240) after 500s
+budgets:      2400s layout budget exhausted, still no ground
 ```
-Both exhaust a full 2400s layout budget and the composed route still has no
-ground; the compose side fails on input-leg collisions (`wire B3 touches A1`
-at high spreads; `no ground for A3B3/OPC1` at low spreads). Already ruled out:
-lever rows staggered 2 per input, lane columns `4*spread` apart, near-end
-clearance down to 1 cell, and now **nearest-first load ordering from each
-input's port** (gated at >9 inputs, so greens are untouched). Low spreads have
-no corridor; high spreads route but the input-to-load legs cross each other.
+Both have 10+ inputs. Tried: spread ladder to 10, clearance window to 1 cell,
+nearest-first load ordering from each input's port (gated at >9 inputs), and
+`REDSTONE_NOFLAT` (skip flat entirely, astar + full 3D envelope only). The 3D
+run proves it is not an ordering problem: the field is genuinely unroutable by
+flat candidates plus overflights. Needs a bus/hierarchical router or much
+sparser placement -- a new subsystem, not a ladder rung.
 
 **`mux4` at 9 inputs is the proven ceiling.** That is the useful number.
 
