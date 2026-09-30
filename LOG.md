@@ -290,3 +290,31 @@ Honest limit: hard builds are dominated by astar on doomed rungs
 (decode3 rung 1: 28 searches, 8s; 3.3M ok() calls) and sim is O(2^n).
 Those are structural (need fail-fast / parallel sim), not scoring.
 Documented, not attempted in this pass.
+
+## Night session 3 (DONE = all recipes green; item 2 dropped)
+User simplified DONE to item 1 only: every recipe in redstone-mini/recipes
+must generate + verify. New-build quota is gone (already at 8 anyway).
+ASSUMPTION (as before): D:\redstone-mini is the target; D:\redstone-compiler
+is a separate Rust project with no recipes.
+
+Start: 16/18 green. Red: alu4 (10in/72g), cpu4 (7in/126g). Note cpu4 has
+only 7 inputs, so the wall is NOT input count alone - it is total
+gate-count congestion. known-hard/shift2+shift4 stay out (latch gap).
+
+Plan: test ultra-high spreads (12/16/20/24) directly. Ladder stops at 10;
+if 16+ gives room, add it. All runs detached + bounded (rule 7) with
+Big-O-clean scripts (one process per recipe, no sleeps in shell).
+
+### Spread 16/20 probed and rejected (4 fast fails)
+alu4 @16/@20: "no ground for A2B2" (30s). cpu4 @16/@20: "no ground for
+AL_AB1 / AL_O3" (8s/46s). Ultra-high spread does NOT move the wall, so it
+is algorithmic (greedy, no lookahead), not spacing. Per rule 3, switching
+to the maze backend at high grows (different algorithm, untried above
+grow=2). 4 probes launched (alu4/cpu4 x grow 4/6), detached + bounded.
+
+### Maze at grow 4/6: intractable (killed after 610s CPU each, zero output)
+4 probes (alu4/cpu4 x grow 4/6) burned 2440s total with not one byte of
+output. A single layout() call that grinds 10min+ on 72-126 nets in a
+W x11 field is an exponential blowup, not slow progress. Killed.
+Maze high-grow is rejected. run_maze.ps1 now hard-kills via Wait-Process
+(layout() checks no deadline; rule 7 demanded the wrapper).
