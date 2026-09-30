@@ -422,3 +422,17 @@ key=lambda t: t[0] (stable). Self-checks pass; 4 small bit-identical
 (144/322/224/214); mux2/decode2 still green. Banded candidate compose routes
 (_rc clones live) but ladder still climbing (inputs B0/OP0/B1 + clone seals).
 Full bounded run queued.
+
+### Try 1 verdict: BAND-sliced alu4 RED (bounded, hang-safe)
+probe_one (compose+sim, no maze ladder) COMPOSE_SECS=240: COMPOSE-RED 246s
+"no ground for X3 (5404,18)->(4754,437)". Blame restarts fire (t32 sealed by
+clones, precede converges) but field stays unroutable. Different net than
+unbanded walls, same systemic congestion (11th approach). PARKED with TODO:
+needs bus/hierarchical router (new subsystem, days). No full maze ladder run
+(rule 7: dense_status on 70+ gate recipes hangs for hours; two long probes
+this session had to be user-killed).
+ENGINE FIX no-op proof (no slow re-routes needed): expand_gates probe over all
+21 recipes shows 0 replicated nets except mux4 (4, distinct bands) and alu1
+(_rc1 band1, _rc2 band2, distinct) -- key-sort == tuple-sort wherever mins are
+distinct, so all 19 greens are bit-identical by construction. 4 small verified
+bit-identical post-fix; mux2/decode2 re-verified green post-fix.
