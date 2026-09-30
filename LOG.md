@@ -159,3 +159,21 @@ o ground for AL_n1 (398,12)->(744,118) 152s
 
 ### The hung process (for the record)
 The final dense_status.py alu4.txt cpu4.txt ran ~6h without output and was killed 09:24. It was the maze backend grinding on alu4 (minutes per attempt, 6 tries x grows). Do not run the full maze ladder on alu4/cpu4 in one shot again.
+
+
+## Session 4 (user present, 'continue') — 2/5 + 3/3, then stop
+
+User clarified: builds may sprawl across chunks, wires may run long, levers stay banked. Implemented levers-at-lanes (d1 zero-length) + spread retry + vertical envelope.
+
+Landed: lever-at-lane (micro1 compose-green, latch race gone), longer trunk jogs (add2 12539->8083 blocks), constant-1 routing, size-aware stall cap, full vertical envelope narrow-first, per-leg/flight liveness, load-foreign loud check.
+
+New builds (all generate + verify, stop at 3): decode3 (19g, 9799 blocks), add2 (12g CORRECT adder, 8083 blocks), chainmix (24g, 11497 blocks).
+
+Verified via authoritative dense_status: micro1 OK 2925, ctrl_decode OK 6111, decode3/add2/chainmix OK.
+
+Still red: alu1 (OP1/OP0 y=3 collision + CIN lanes), alu4 (t33), cpu4 (AL_n1). All three share input-crossing/long-march walls needing 3D blame, highway router, or bus architecture — documented in MORNING-REPORT with ordered next steps.
+
+Caught and fixed along the way: add2 shipped with a wrong carry (C1=A0 OR B0) and still went green — sim checks fidelity to recipe, not recipe correctness. Fixed to a correct adder, re-verified.
+
+Reverted (evidence kept): port-roof guard, load-relative lanes, inputs-first, sibling avoid, RS_NOLANE, buried-wire, per-leg reachability, _displace both-nets (built on mis-framed reads).
+
