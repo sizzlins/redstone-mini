@@ -892,6 +892,10 @@ def _compose_once(recipe):
             ready.sort(key=lambda n: (-_confined(n), n))
             out.append(ready[0])
             pending.remove(ready[0])
+        # _ORDER selects gates-first (proven) vs inputs-first (inputs get
+        # clean ground; gates route around lanes). Set by compose()'s retry.
+        if _ORDER == "inputs_first":
+            return sorted(n for n in netspec if n in inps) + out
         return out + sorted(n for n in netspec if n in inps)
 
     def _blame(failed, ordered, stub_wires):
@@ -1231,32 +1235,40 @@ def _compose_once(recipe):
 # it). 1 = the tight layout every green build was verified on.
 _SPREAD = 1
 
+# Routing order: gates-first is proven; inputs-first gives inputs clean
+# ground (measured: alu1's OP1/OP0 input collision vanishes, micro1 stays
+# green). compose() tries gates-first at every spread, then inputs-first.
+_ORDER = "gates_first"
+
 # Routing/geometry failures worth retrying with more room (NOT logic or
 # sim failures — those are deterministic and spread cannot fix them).
 _RETRYABLE = ("no ground", "no route", "OPEN ", "blocked", "lamp spot taken",
-              "order cycle", "SHORT", "repeater loop", "compose blocked")
+              "order cycle", "SHORT", "touches", "repeater loop",
+              "compose blocked")
 
 
 def compose(recipe):
-    """Deterministic place+route, retrying wider on geometry failure.
+    """Deterministic place+route, retrying wider and reordered on failure.
 
-    Spread 1 first: every green build succeeds here, bit-identical, so the
-    gates never move. Only a routing/geometry death retries at spread 2
-    then 3 — the build may sprawl across chunks (wires run long, repeaters
-    carry them), which is exactly what unseals a dense field.
+    Gates-first at spread 1 first: every green build succeeds here,
+    bit-identical, so the gates never move. Only a routing/geometry death
+    retries — wider spreads, then inputs-first order. The build may sprawl
+    across chunks (wires run long, repeaters carry them).
     """
-    global _SPREAD
+    global _SPREAD, _ORDER
     last = None
     for spread in (1, 2, 3, 4, 5):
-        _SPREAD = spread
-        try:
-            return _compose_once(recipe)
-        except RuntimeError as e:
-            last = e
-            if spread >= 5 or not any(k in str(e) for k in _RETRYABLE):
-                raise
-            print(f"compose spread {spread} failed ({str(e)[:60]}); "
-                  f"retrying wider", flush=True)
+        for order in ("gates_first", "inputs_first"):
+            _SPREAD, _ORDER = spread, order
+            try:
+                return _compose_once(recipe)
+            except RuntimeError as e:
+                last = e
+                if (spread, order) == (5, "inputs_first") or not any(
+                        k in str(e) for k in _RETRYABLE):
+                    raise
+                print(f"compose spread {spread} {order} failed "
+                      f"({str(e)[:60]}); retrying", flush=True)
     raise last
 
 
