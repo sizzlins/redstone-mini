@@ -1,0 +1,26 @@
+IN A, B, C
+OUT Y0, Y1, Y2, Y3
+n0 = NOT A
+t0 = n0 AND B
+u0 = t0 OR C
+v0 = u0 XOR A
+w0 = v0 AND B
+x0 = w0 OR C
+y0 = x0 XOR A
+Y0 = y0 AND y0
+n1 = NOT y0
+t1 = n1 AND B
+u1 = t1 OR C
+v1 = u1 XOR A
+w1 = v1 AND B
+x1 = w1 OR C
+y1 = x1 XOR A
+Y1 = y1 AND y1
+n2 = NOT y1
+t2 = n2 AND B
+u2 = t2 OR C
+v2 = u2 XOR A
+Y2 = v2 AND v2
+n3 = NOT v2
+t3 = n3 AND B
+Y3 = t3 OR t3
