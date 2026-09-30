@@ -1,5 +1,6 @@
 """Compose: deterministic placement + wiring (no search, no seeds)."""
 
+import os
 import sys
 from types import SimpleNamespace
 
@@ -9,6 +10,10 @@ from tiles import (new_ctx, footprint, tap_lamps, own, ring, stamp_wire,
                    place_or, place_and, place_not, place_latch, place_xor,
                    seal_tiles)
 from layout import build_netspec, check_shorts, check_opens, finish_assembly, _support, bridge_plan, astar
+
+# last compose() run's coordinate shift (netspec frame -> check frame),
+# for offline probes. Not part of the build contract.
+_last_shift = (0, 0)
 
 _VEC = {(1, 0): "east", (-1, 0): "west", (0, 1): "south", (0, -1): "north"}
 
@@ -458,7 +463,20 @@ def _plant_repeaters(ctx, cells, net, flow):
             if len(flow.get((cx, cy, cz), {(0, 0)})) != 1:
                 continue
             dx, dz = cx - px, cz - pz
-            if dist >= 8 and (dx, dz) == (nx - cx, nz - cz) and (dx, dz) in _VEC and py == cy == ny == 1:
+            # ponytail: boost elevated runs too. _plant_repeaters only fired
+            # at y==1, so a 3D overflight (y=2/3, twenty cells of flat) bled
+            # 15->0 and arrived dark — measured on ctrl_decode's OP2 lane,
+            # whose y=3 span read 13,12,11..0 and never recovered. A repeater
+            # needs flat ground and a solid foot: the triple must be level
+            # (stairs are never planted, so bridge slopes keep their dust)
+            # and y>1 needs cobble below (the flight guarantees a pillar).
+            # Same straight-triple + single-flow rules as y=1; sim judges.
+            if dist >= 8 and (dx, dz) == (nx - cx, nz - cz) and (dx, dz) in _VEC \
+                    and py == cy == ny:
+                if cy > 1 and not any(
+                        b[:3] == (cx, cy - 1, cz) and "cobblestone" in b[3]
+                        for b in ctx.blocks):
+                    continue
                 del ctx.wires[(cx, cy, cz)]
                 ctx.repeaters[(cx, cy, cz)] = (net, _VEC[(dx, dz)])
                 dist = 0
@@ -914,6 +932,9 @@ def compose(recipe):
     # so green builds behave bit-identically. Bounded: 8 restarts, then loud.
     wsnap = (dict(ctx.wires), dict(sup), dict(ctx.solid), len(ctx.blocks))
     precede = set()
+    if os.environ.get("RS_WATCH82"):
+        print(f"WATCH after placement (82,1,29)={ctx.wires.get((82,1,29))}",
+              flush=True)
     first_err = None
     last_pair = None
     displaced = set()
@@ -1051,12 +1072,17 @@ def compose(recipe):
             flow.setdefault((v[0], v[1], v[2]), set()).add(d)
     for net, full in paths:
         _plant_repeaters(ctx, full, net, flow)
+    if os.environ.get("RS_WATCH82"):
+        print(f"WATCH after boost (82,1,29)={ctx.wires.get((82,1,29))} "
+              f"rep={ctx.repeaters.get((82,1,29))}", flush=True)
     # normalize to non-negative coords (lanes run west of zero; the shared
     # tap routine bounds-checks 0<=lx<W like the maze field). Shift every
     # live structure; recs is dead past wiring (netspec already built).
     _minx = min([x for (x, z) in ctx.solid] + [x for (x, _, z) in ctx.wires] + [x for (x, _, z) in ctx.repeaters])
     _minz = min([z for (x, z) in ctx.solid] + [z for (x, _, z) in ctx.wires] + [z for (x, _, z) in ctx.repeaters])
     _dx, _dz = max(0, 1 - _minx), max(0, 1 - _minz)
+    global _last_shift
+    _last_shift = (_dx, _dz)
     if _dx or _dz:
         ctx.blocks[:] = [(x + _dx, y, z + _dz, b) for x, y, z, b in ctx.blocks]
         # clear+update (never pop-and-set: an eastward shift overwrites
@@ -1086,15 +1112,13 @@ def compose(recipe):
         guard.clear()
         guard.update(_g)
     # ponytail: a load must never hold a FOREIGN net. "holds nothing" is
-    # legal — a tile's port can be a zero-wire tap satisfied by adjacency to
+    # legal - a tile's port can be a zero-wire tap satisfied by adjacency to
     # the driver's own cell, so an unwired load is normal and every green
-    # build has some. Holding a different net is not normal: the port then
-    # reads someone else's signal and the sim reports "SIM MISMATCH x9"
-    # naming no cell. Measured: alu1's n1 load at (82,29) held B, and
-    # ctrl_decode's OP0 loads held OP1, n1 and a lterm repeater.
+    # build has some. Holding a different net is not normal.
+    # Coordinates: netspec is pre-shift, wires are post-shift, so translate.
     for _n, _s in netspec.items():
         for _c in _s["loads"]:
-            _c3 = (_c[0], 1, _c[1])
+            _c3 = (_c[0] + _dx, 1, _c[1] + _dz)
             _own = ctx.wires.get(_c3)
             if _own is not None and _own != _n:
                 raise RuntimeError(f"compose: load {_c} of {_n} holds {_own}")
