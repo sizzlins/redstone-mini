@@ -318,3 +318,12 @@ output. A single layout() call that grinds 10min+ on 72-126 nets in a
 W x11 field is an exponential blowup, not slow progress. Killed.
 Maze high-grow is rejected. run_maze.ps1 now hard-kills via Wait-Process
 (layout() checks no deadline; rule 7 demanded the wrapper).
+
+### Dead-gate elimination in alu4/cpu4 (correct, insufficient)
+Both carried U=X AND 0 (always 0), C=AB OR U (=AB), S=X XOR 0 (=X).
+Removed by substitution. scratch/recipe_equiv.py proves old==new on all
+vectors (alu4: 1024, cpu4: 128). 3 fewer gates and 4 fewer routes each.
+Did NOT green them: rung 1 still fails the same way (seals, not space).
+Confirms the wall is greedy-ordering, not gate count. Restarts already
+explore all orders (25 per rung), so single rip-up would not help either.
+The wall stands: needs a bus/hierarchical router (new subsystem).
