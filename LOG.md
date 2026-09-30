@@ -345,3 +345,9 @@ instead of name. Topology + precede preserved; only tie order shuffles.
 Off by default (micro1 SEED=7 greens bit-identical). 6 seeds x 2 recipes
 in parallel, 900s budgets. If ANY trajectory routes, DONE. 2 full-ladder
 (25-restart, pre-seed) runs also in flight with 3h budgets as backup.
+
+### Seeds relaunched with deadline-safe code (6 parallel trajectories)
+Fixed the rule-7 hole (deadline now checked per restart; 30s budget exits
+at 31s, verified). Reverted 100 restarts to 25 (precede converges; seeds
+give diversity, not more orders). 6 seeds x 900s, each a full 44-rung
+ladder with a different order trajectory. If ANY greens, DONE.
