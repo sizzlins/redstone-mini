@@ -1858,13 +1858,13 @@ def compose_hier_parts(built, gates, recipe):
     _dump = os.environ.get("REDSTONE_HIERDUMP")
     if _dump:
         metas = [{"b": b, "sub": sub, "shift": sh, "dx": offs[b],
-                  "recs": pctx.recs, "pos": dict(pctx.pos)}
-                 for (b, sub, out, pctx, sh) in built]
+                   "recs": pctx.recs, "pos": dict(pctx.pos)}
+                  for (b, sub, out, pctx, sh) in built]
         hier_dump(_dump,
                   {"blocks": blocks, "solid": solid, "rings": rings,
                    "wires": wires, "junctions": junctions,
                    "repeaters": repeaters, "pos": pos, "sup": sup},
-                  metas, cross, prod, recipe["inputs"])
+                   metas, cross, prod, recipe["inputs"])
     # ponytail: consumer lever-bank minima (post-shift z; merge offsets x
     # only, so partition z applies directly). A stitch target stub sits in
     # its band's live lever row; the row north of the bank is empty margin.
@@ -1925,24 +1925,26 @@ def compose_hier_parts(built, gates, recipe):
                 return p1 + p2
             except RuntimeError as e:
                 _err = e
-        # ponytail: 3-segment stitch (up / along / down) that needs only
-        # LOCAL clearance, not a globally empty row. The whole-span test
-        # below fails on the first tile it meets, which is every row of a
-        # dense field, so it never fired; instead walk out of the port
-        # vertically a few rows, run east, then come down onto the stub.
-        # Each leg is a normal lwire, so hops/bridge-over still apply.
-        for _k in range(1, 24):
-            _m = (drv[0], max(0, drv[1] - _k))
-            _side = (_m[0], stub[0]) if _m[0] != stub[0] else None
-            if _side is None:
-                continue
-            try:
-                p1 = lwire(mctx, sup, guard, drv, _m, n)
-                p2 = lwire(mctx, sup, guard, _m, _side, n)
-                p3 = lwire(mctx, sup, guard, _side, stub, n)
-                return p1 + p2 + p3
-            except RuntimeError as e:
-                _err = e
+        # ponytail: 3-segment corridor stitch. lwire's own L-paths are
+        # 2-segment (one turn); a port walled on its row AND column needs two
+        # turns: out along the driver's row to an intermediate x, across to
+        # the stub's row, then into the stub. Measured: A0B0 drv(89,22) dies
+        # on every 2-segment shape (B0's lever row walls the north exit, the
+        # leg walls the south one) but (89,22)>(200,22)>(200,39)>(413,39)
+        # routes in 0.3s — the corridor row z=22 runs open for 100+ cells.
+        # Try intermediate x at quarters between the endpoints, both row
+        # orders; each leg is one bounded lwire, so the whole attempt is
+        # seconds, never the minutes a blind astar burns.
+        _xs = sorted({drv[0] + (stub[0] - drv[0]) * _q // 4 for _q in (1, 2, 3)})
+        for _mx in _xs:
+            for _za, _zb in ((drv[1], stub[1]), (stub[1], drv[1])):
+                try:
+                    p1 = lwire(mctx, sup, guard, drv, (_mx, _za), n)
+                    p2 = lwire(mctx, sup, guard, (_mx, _za), (_mx, _zb), n)
+                    p3 = lwire(mctx, sup, guard, (_mx, _zb), stub, n)
+                    return p1 + p2 + p3
+                except RuntimeError as e:
+                    _err = e
         _lo, _hi = sorted((drv[0], stub[0]))
         for _z in range(max(0, min(drv[1], stub[1]) - 1), -1, -1):
             if any(wires.get((x, 1, _z)) is not None
