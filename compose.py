@@ -1123,7 +1123,10 @@ def _compose_once(recipe):
     # and re-run wiring from the placement-end snapshot (wiring is a pure
     # function of order; snapshot covers exactly what lwire mutates: wires,
     # sup, solid, appended blocks). Restarts fire only where today dies loud,
-    # so green builds behave bit-identically. Bounded: 8 restarts, then loud.
+    # so green builds behave bit-identically.
+    # 100 restarts past 9 inputs (alu4/cpu4): 25 orders is a tiny sample of
+    # a 72-gate order space. Gated so the 16 greens keep exactly 25.
+    _restart_cap = 100 if len(inps) > 9 else 25
     wsnap = (dict(ctx.wires), dict(sup), dict(ctx.solid), len(ctx.blocks))
     precede = set()
     if os.environ.get("RS_WATCH82"):
@@ -1135,7 +1138,7 @@ def _compose_once(recipe):
     paths = []
     routed = set()
     keep_staged = False
-    for _attempt in range(25):
+    for _attempt in range(_restart_cap):
         try:
             ordered = _order(precede)
         except RuntimeError:
