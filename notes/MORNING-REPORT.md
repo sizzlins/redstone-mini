@@ -5,21 +5,24 @@ Started from 2/5 dense green. Nothing is committed that isn't verified.
 
 ## DONE bar
 
-**1. All dense recipes build and verify** — 13 of 17 do. Four are still red,
+**1. All dense recipes build and verify** — 16 of 19 do. Three are still red,
 each with an identified wall (details below). Not fully met.
 
-**2. 3+ new dense builds that never built before** — **met, with margin: 6.**
+**2. 3+ new dense builds that never built before** — **met, with margin: 8.**
 
 | new recipe | what it is | blocks | size |
 |---|---|---|---|
 | `sub2.txt` | 2-bit subtractor with borrow out | 3487 | 187x129 |
+| `sub4.txt` | 4-bit subtractor with borrow out | 12501 | 471x290 |
+| `cmp4.txt` | 4-bit comparator (GT/EQ/LT) | 25408 | 735x266 |
 | `mux4.txt` | 4-bit 2:1 mux, 9 inputs | 20239 | 991x106 |
 | `andor8.txt` | 8-input AND tree + 8-input OR tree | 17997 | 739x117 |
 | `decode3.txt` | 3-to-8 decoder | 9799 | 541x99 |
 | `add2.txt` | 2-bit adder (corrected carry) | 12539 | 689x87 |
 | `chainmix.txt` | 24-gate logic chain | 11497 | 415x273 |
 
-`mux4` at 20239 blocks is now the largest build in the repo.
+`mux4` at 20239 blocks was the largest build in the repo until `cmp4`
+landed at 25408 blocks.
 
 ## Verified green (authoritative: compose -> maze -> verify)
 

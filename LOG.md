@@ -248,3 +248,14 @@ is a new subsystem, not a rung. Documented in MORNING-REPORT. Greens unaffected
 
 Final: 14/17 green. cmp2 joined via constant elimination. alu4/cpu4/shift4 red
 with identified architectural walls.
+
+### cmp4 GREEN (25408 blocks, authoritative)
+4-bit comparator (GT/EQ/LT), 8 inputs, De Morgan LT so no dust OR trees.
+Arithmetic proven over all 256 vectors by scratch/recipe_check.py before
+routing. Largest build in the repo. (Recipe file shipped in the sub4 commit;
+green confirmed after.)
+New dense builds this session: mux4, sub2, andor8, sub4, cmp4 = 5. With the
+prior three (decode3, add2, chainmix) that is 8 total.
+
+Running total: 16/19 green (14 original + sub4 + cmp4, of 19 recipes).
+Red: alu4, cpu4 (architectural >=10-input wall), shift4 (LATCH chain).
