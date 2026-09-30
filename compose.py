@@ -978,12 +978,24 @@ def _compose_once(recipe):
             preds.setdefault(l, set()).add(e)
         pending = list(gate_nets)
         out = []
+        # REDSTONE_ORDER_SEED: diversify tie-breaks for parallel search.
+        # _confined ties are broken by name deterministically; with a seed
+        # they break by hash(seed:name), giving each seed a different
+        # starting trajectory through order space. Precede constraints still
+        # hold (topology preserved, only ties shuffled). Off by default:
+        # greens keep exact name order. O(1) per comparison.
+        _oseed = os.environ.get("REDSTONE_ORDER_SEED")
+        def _tie(n):
+            if not _oseed:
+                return n
+            import hashlib as _hl
+            return _hl.md5(f"{_oseed}:{n}".encode()).hexdigest()
         while pending:
             ready = [n for n in pending
                      if all(p in out for p in preds.get(n, ()))]
             if not ready:
                 raise RuntimeError(f"compose: order cycle in {sorted(precede)}")
-            ready.sort(key=lambda n: (-_confined(n), n))
+            ready.sort(key=lambda n: (-_confined(n), _tie(n)))
             out.append(ready[0])
             pending.remove(ready[0])
         # _ORDER selects gates-first (proven) vs inputs-first (inputs get
