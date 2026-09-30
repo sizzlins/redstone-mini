@@ -244,6 +244,18 @@ def _run_vec(vec, init, ctx, until=None):
                 pwrd = True
             if m in rblk:
                 pwrd, strong = True, True
+            # ponytail: a LEVER powers the block it is attached to (wiki:
+            # levers and buttons strongly power their host). This was a model
+            # gap, not a layout choice: every other strong source above is
+            # here, levers were not, so a cobble under a wall lever read
+            # dark and dust on top of it stayed unlit. It is the one
+            # direction-agnostic, ZERO-WIRE source available: the dust is on
+            # top of the pedestal, the lever is on its side, so the run that
+            # feeds it can arrive from any direction without touching the
+            # lever cell. Used for hier boundary stubs, where a lane-crossing
+            # route is otherwise unroutable.
+            if m in lever and vec.get(lever[m], False):
+                pwrd, strong = True, True
             if m in rep:
                 d = rep[m]
                 if (m[0] + d[0], m[1], m[2] + d[1]) == c and ron.get(m, False):
@@ -860,7 +872,20 @@ if __name__ == "__main__":
            (0, 1, 0, CB), (1, 1, 1, "minecraft:redstone_lamp")]
     _tp, _ = _hand(_tb, {}, {(1, 1): "y"})
     assert _run_vec({}, None, _tp)[0].get("y", False) is True, "lit torch must light"
-    print("lamp-sources ok: top dust, powered block, free torch")
+    # ponytail: lever -> host block -> dust on top, with the lever on the
+    # SIDE and the feeding run arriving from the far side (wiki: a lever
+    # strongly powers the block it is attached to). This is the zero-wire,
+    # direction-agnostic source the hier boundary stubs need; assert both
+    # directions so a future "levers are weak-power only" edit fails here.
+    _lv = [(0, 1, 0, "minecraft:lever[face=wall,facing=east,powered=false]"),
+           (0, 1, 1, CB), (0, 2, 1, W_),
+           (-1, 1, 1, W_), (-2, 1, 1, CB), (-3, 1, 1, W_)]
+    _lp3, _ = _hand(_lv, {(0, 0): "a"}, {(0, 2): "y"})
+    assert _run_vec({"a": 1}, None, _lp3)[0].get("y", False) is True, \
+        "lever must power its host block and the dust on top"
+    assert _run_vec({"a": 0}, None, _lp3)[0].get("y", False) is False, \
+        "unpowered lever must not light the pedestal"
+    print("lamp-sources ok: top dust, powered block, free torch, lever-pedestal")
     _sb = [(2, 1, 0, "minecraft:lever"), (1, 1, 0, W_),
            (0, 1, 0, CMP + "[facing=east,mode=subtract]"),
            (0, 1, 1, W_), (0, 1, 2, "minecraft:lever"),
@@ -890,17 +915,27 @@ if __name__ == "__main__":
     import tempfile
     import snapshot as _snap
     _r = parse_recipe("IN a, b\nOUT y\ny = a AND b\n")
-    # alu1 is the budget canary because compose refuses it in 0.03s — so the
-    # seed-loop guard is reached without spending any router time, and the
-    # check cannot pass by the composer short-circuiting the sweep.
+    # The canary must not depend on any recipe staying red: this check used
+    # alu1 on the belief that compose refuses it, and it went stale the moment
+    # alu1 went green (layout_retry returned a verified build, assert fired).
+    # Force the precondition instead — a composer that always fails — so the
+    # seed-loop budget guard is what is actually under test, in microseconds.
     _dense = parse_recipe(open("recipes/alu1.txt").read())
     _save, _MAX_SECS = _MAX_SECS, 1e-9
+    _real = compose
     try:
+        # ponytail: patch THIS module's from-import binding (layout_retry
+        # reads the sim-module global, not compose.compose — patching the
+        # attribute on the compose module is a silent no-op, measured).
+        def _nope(_r):
+            raise RuntimeError("compose: no ground for canary: (0,0)->(1,1)")
+        globals()["compose"] = _nope
         layout_retry(_dense, tries=3, verify=True, grows=1)
         assert False, "REDSTONE_MAX_SECS should have fired"
     except RuntimeError as _e:
         assert "BUDGET" in str(_e), str(_e)[:200]
     finally:
+        globals()["compose"] = _real
         _MAX_SECS = _save
     _os.environ["REDSTONE_SNAPSHOT_DIR"] = str(
         pathlib.Path(tempfile.gettempdir()) / "rs-snap-canary")

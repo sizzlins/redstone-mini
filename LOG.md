@@ -528,3 +528,14 @@ REDSTONE_HIER_FAST, no astar/hop-row search. Deterministic, seconds.
   clearance, not a globally empty row. TODO next.
 - Rule 7: every stage now hard-bounded (band rungs killed in child, stitch
   killed in child, astar capped). No command has exceeded ~2 min since.
+
+### Lever-pedestal source (user-confirmed in-game, wiki-confirmed online)
+User image: wall lever + dust on top of host + side-adjacent dust on a second
+block, both lit. Wiki: lever strongly powers its attachment block (full solid
+opaque); strongly powered blocks power ADJACENT dust (on top, beneath, sides).
+Two sim gaps closed: (1) cob_state ignored levers -> wall lever never powered
+its host (fix + lever-pedestal self-check, both directions); (2) stale budget
+canary (assumed alu1 stays red; broke when alu1 went green) -> forced-fail
+precondition + fixed a silent-no-op monkeypatch (patched compose.compose while
+layout_retry reads sim.compose). Full sim.py suite green, exit 0.
+Use: zero-wire direction-agnostic boundary driver for hier stitches.
