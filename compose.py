@@ -522,6 +522,38 @@ def _walk(ctx, sup, guard, a, b, net, cells):
         stamp_wire(ctx, [front], net)
         done.append((front[0], 1, front[1]))
         j = fi + 1
+    # ponytail: slope-link lids. sim couples a y=1 wire to a diagonal y=2
+    # wire only when the upper has support AND the lower has no lid over it.
+    # Hops and 3D overflights both mint y=2 dust on fresh cobble, and the
+    # search that placed them could not see the foreign wire that lands
+    # diagonally below (cmp2: d0 at (751,1,190) vs bridge dust at
+    # (751,2,189)). Dropping one cobble directly ABOVE the lower foreign
+    # wire is exactly the breaker the rule looks for, and a block over a
+    # ground wire is inert. Runs once per walk over own elevated cells;
+    # green builds never place y=2 dust beside foreign dust, so no hash moves.
+    if any(y >= 2 for _, y, _ in done):
+        # derived from ctx.blocks, not a side set, so lwire's rollback
+        # (which truncates ctx.blocks) can never desync it.
+        cob = {(bx, by, bz) for bx, by, bz, bid in ctx.blocks
+               if bid.split("[")[0] == "minecraft:cobblestone"}
+        for (x, y, z) in done:
+            # mirrors check_shorts' dy=-1 case exactly: the UPPER cell is
+            # ours, the LOWER is one step down and diagonal, and the link
+            # needs support under us and no lid over it. Anything else is
+            # already legal, so a build that passes check_shorts gets zero
+            # extra blocks here.
+            if y < 2 or (x, y - 1, z) not in cob:
+                continue
+            for dx, dz in DIRS:
+                lx, ly, lz = x + dx, y - 1, z + dz
+                fw = ctx.wires.get((lx, ly, lz))
+                if fw is None or fw == net or (lx, y, lz) in cob:
+                    continue
+                if (ctx.wires.get((lx, y, lz)) is not None
+                        or (lx, ly, lz) in ctx.repeaters):
+                    continue
+                cob.add((lx, y, lz))
+                ctx.blocks.append((lx, y, lz, "minecraft:cobblestone"))
     # no planting here: boosters run per full net-path after all wiring
     # (a leg starts wherever the previous leg decayed to, so per-leg
     # spacing plants on dead wire). See compose() below.
