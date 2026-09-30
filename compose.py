@@ -15,6 +15,17 @@ from layout import build_netspec, check_shorts, check_opens, finish_assembly, _s
 # for offline probes. Not part of the build contract.
 _last_shift = (0, 0)
 
+# Composer's vertical envelope for the astar fallback: BOTH directions.
+# A route may leave a lever at y=1, climb, fly over the tile band, come
+# back down to a torch host, or trench below the surface when the ground
+# above is saturated. The maze keeps its verified y=1..3 band (a wider one
+# lets it return paths its own stamper then rejects as self-lid); composer
+# validates flights with _flight_live/_leg_live instead, so it can afford
+# a wide band. A search needs some bound to terminate, so these are wide
+# defaults, not a wall.
+_ASTAR_YMIN = int(os.environ.get("REDSTONE_COMPOSE_YMIN", "-4"))
+_ASTAR_YMAX = int(os.environ.get("REDSTONE_COMPOSE_YMAX", "6"))
+
 _VEC = {(1, 0): "east", (-1, 0): "west", (0, 1): "south", (0, -1): "north"}
 
 
@@ -218,77 +229,80 @@ def lwire(ctx, sup, guard, a, b, net, avoid=frozenset()):
     # with layout._support (torch-hug guard) and stamped here, never during
     # search, so a flyover cannot lid its own later slope. Self-lid and
     # support refusals fall through to the original loud error.
-    fly = _astar_wrap(ctx, sup, guard, a, b, net, avoid, flat=False)
-    if fly and any(c[1] >= 2 for c in fly):
-        needs = []
-        try:
-            for cell in fly:
-                if cell[1] < 2:
-                    continue
-                r = _support(cell, net, ctx.solid, ctx.wires, sup,
-                             ctx.repeaters, guard)
-                if r is False:
-                    raise RuntimeError("support sealed")
-                if r is not None and r not in sup and r not in needs:
-                    needs.append(r)
-            # ponytail: cobf = every cell that can act as a support, not
-            # just the ones this flight owns. _support returns None ("reuse")
-            # when the cell below is ALREADY cobble — a tile's own body — and
-            # that cobble lives in ctx.solid, not in sup, so the old cobf
-            # missed it and the self-lid test below rejected every descent
-            # that passed a tile. Measured: alu4's carry C1 (107,41)->(195,55)
-            # found a 103-cell flight at y=1..3 and was killed by
-            # "self-lid at (195,2,54)->(195,1,55)" — the last step onto the
-            # load, whose support is the destination tile's own body.
-            cobf = set(sup) | set(needs)
-            cobf.update((x, 1, z) for (x, z), (k, _n) in ctx.solid.items()
-                        if k == "cobble")
-            for u, v in zip(fly, fly[1:]):
-                if u[1] == v[1]:
-                    continue
-                lo, hi = (u, v) if u[1] < v[1] else (v, u)
-                if (hi[0], hi[1] - 1, hi[2]) not in cobf or \
-                        (lo[0], lo[1] + 1, lo[2]) in cobf:
-                    raise RuntimeError("self-lid")
-        except RuntimeError:
-            pass
-        else:
-            for s_ in needs:
-                sup[s_] = net
-                ctx.sup[s_] = net
-                ctx.blocks.append((s_[0], s_[1], s_[2], "minecraft:cobblestone"))
-                if s_[1] == 1:
-                    ctx.solid.setdefault((s_[0], s_[2]), ("cobble", net))
-            try:
-                from tiles import stamp_wire as _sw
-                _sw(ctx, fly, net, (a, b))
-            except RuntimeError:
-                sw, ss, sc, so, sb = snap
-                ctx.wires.clear()
-                ctx.wires.update(sw)
-                sup.clear()
-                sup.update(ss)
-                ctx.sup.clear()
-                ctx.sup.update(sc)
-                ctx.solid.clear()
-                ctx.solid.update(so)
-                del ctx.blocks[sb:]
-            else:
-                if not _flight_live(ctx, net, a, b, fly) or not _leg_live(
-                        ctx, net, a, fly[1:-1], b):
-                    sw, ss, sc, so, sb = snap
-                    ctx.wires.clear()
-                    ctx.wires.update(sw)
-                    sup.clear()
-                    sup.update(ss)
-                    ctx.sup.clear()
-                    ctx.sup.update(sc)
-                    ctx.solid.clear()
-                    ctx.solid.update(so)
-                    del ctx.blocks[sb:]
-                else:
-                    return fly[1:-1]
+    # ponytail: narrow 3D band first, wide band only if it finds nothing.
+    # A marginal wide success poisons downstream routing worse than a loud
+    # failure, so the proven y=1..3 band runs before the full envelope.
+    for _ymin, _ymax in ((1, 3), (_ASTAR_YMIN, _ASTAR_YMAX)):
+        _got = _try_flight(ctx, sup, guard, snap, a, b, net, avoid,
+                           _ymin, _ymax)
+        if _got:
+            return _got
     raise first_err
+
+
+def _try_flight(ctx, sup, guard, snap, a, b, net, avoid, ymin, ymax):
+    """One 3D-flight attempt in a given vertical band; accepted cells or None.
+
+    All-or-nothing: any failure (no path, sealed support, self-lid, bad
+    stamp, dead flight) rolls back to snap and returns None. Lets lwire try
+    the proven narrow band first and the wide band only if that finds
+    nothing — a marginal wide success poisons downstream routing worse than
+    a loud failure (measured: ctrl_decode went GREEN to no-ground when the
+    wide band ran co-equal).
+    """
+    sw, ss, sc, so, sb = snap
+    fly = _astar_wrap(ctx, sup, guard, a, b, net, avoid, flat=False,
+                      ymin=ymin, ymax=ymax)
+    if not (fly and any(c[1] >= 2 for c in fly)):
+        return None
+    needs = []
+    try:
+        for cell in fly:
+            if cell[1] < 2:
+                continue
+            r = _support(cell, net, ctx.solid, ctx.wires, sup,
+                         ctx.repeaters, guard)
+            if r is False:
+                raise RuntimeError("support sealed")
+            if r is not None and r not in sup and r not in needs:
+                needs.append(r)
+        cobf = set(sup) | set(needs)
+        cobf.update((x, 1, z) for (x, z), (k, _n) in ctx.solid.items()
+                    if k == "cobble")
+        for u, v in zip(fly, fly[1:]):
+            if u[1] == v[1]:
+                continue
+            lo, hi = (u, v) if u[1] < v[1] else (v, u)
+            if (hi[0], hi[1] - 1, hi[2]) not in cobf or \
+                    (lo[0], lo[1] + 1, lo[2]) in cobf:
+                raise RuntimeError("self-lid")
+    except RuntimeError:
+        return None
+    for s_ in needs:
+        sup[s_] = net
+        ctx.sup[s_] = net
+        ctx.blocks.append((s_[0], s_[1], s_[2], "minecraft:cobblestone"))
+        if s_[1] == 1:
+            ctx.solid.setdefault((s_[0], s_[2]), ("cobble", net))
+    try:
+        from tiles import stamp_wire as _sw
+        _sw(ctx, fly, net, (a, b))
+    except RuntimeError:
+        pass
+    else:
+        if _flight_live(ctx, net, a, b, fly) and _leg_live(
+                ctx, net, a, fly[1:-1], b):
+            return fly[1:-1]
+    ctx.wires.clear()
+    ctx.wires.update(sw)
+    sup.clear()
+    sup.update(ss)
+    ctx.sup.clear()
+    ctx.sup.update(sc)
+    ctx.solid.clear()
+    ctx.solid.update(so)
+    del ctx.blocks[sb:]
+    return None
 
 
 def _flight_live(ctx, net, a, b, flight):
@@ -348,7 +362,8 @@ def _flight_live(ctx, net, a, b, flight):
     return False
 
 
-def _astar_wrap(ctx, sup, guard, a, b, net, avoid, flat=True):
+def _astar_wrap(ctx, sup, guard, a, b, net, avoid, flat=True,
+                ymin=None, ymax=None):
     """layout.astar for compose corridors (any coords, flat or 3D).
 
     ponytail: astar windows clip at 0 while compose lanes run negative, so
@@ -385,13 +400,15 @@ def _astar_wrap(ctx, sup, guard, a, b, net, avoid, flat=True):
     # what a hand route does anyway. Cost, not a wall, so a build with no
     # other way still routes.
     for _ex, _ez in ((a[0], a[1]), (b[0], b[1])):
-        for _dy in range(2, 5):
+        for _dy in range(2, _ASTAR_YMAX + 1):
             congest[(_ex + ox, _dy, _ez + oz)] = 10 ** 6
     W = max(a[0], b[0]) + ox + m + 1
     D = max(a[1], b[1]) + oz + m + 1
     found = astar([(a[0] + ox, 1, a[1] + oz)], (b[0] + ox, 1, b[1] + oz), net,
                   W, D, solid2, rings2, wires2, junctions2, m,
-                  None, congest, guard2, sup2, reps2, None, flat, air2)
+                  None, congest, guard2, sup2, reps2, None, flat, air2,
+                  ymin if ymin is not None else _ASTAR_YMIN,
+                  ymax if ymax is not None else _ASTAR_YMAX)
     if not found or len(found) < 2:
         return None
     return [(x - ox, y, z - oz) for (x, y, z) in found]

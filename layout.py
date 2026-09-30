@@ -17,10 +17,20 @@ from recipe import expand_gates
 _ASTAR_CAP = int(_os.environ.get("REDSTONE_ASTAR_CAP", "100000"))
 
 # ponytail: 3D wires Attempt 1 (tiles stay flat). y=1 ground, y=2 ramp,
-# y=3 flyover. Level-change moves cost _STEPCOST vs flat 1 (priced, ground
-# preferred; seals pay for height). Ceiling: H=3, raise if a dump names a
-# sealer needing a higher deck.
-_H = 3
+# y=3 flyover, and NEGATIVE y for trenches. Level-change moves cost
+# _STEPCOST vs flat 1 (priced, ground preferred; seals pay for height).
+#
+# The build may use as much vertical room as it likes in BOTH directions:
+# a route can leave a lever at y=1, climb, fly over the tile band and come
+# back down to a torch host — or trench below the surface when the ground
+# above is saturated. Bounds are per astar call (ymin/ymax); these
+# defaults are the maze's verified y=1..3 band, and compose passes a wider
+# one (see compose._ASTAR_YMIN/_ASTAR_YMAX). A search needs *some* bound
+# to terminate, so "unbounded" is a wide default rather than a wall.
+# Raise REDSTONE_YMIN/REDSTONE_YMAX (or the COMPOSE_ variants) if a dense
+# build ever names a sealer needing a deeper/wider deck.
+_YMIN = int(_os.environ.get("REDSTONE_YMIN", "1"))
+_H = int(_os.environ.get("REDSTONE_YMAX", "3"))
 _STEPCOST = 4
 # ponytail: 2 = ground-first passes (a net may only fly after every net has had
 # its flat attempt). 1 = fly as soon as a net is stuck. Env-switched because the
@@ -84,13 +94,18 @@ def wire_bid(cell, dust):
 
 
 def _support(cell, net, solid, wires, sup, reps, guard):
-    """Support under a y>=2 wire cell: None=reuse, (x,y,z)=stamp once,
-    False=infeasible. Never share foreign pillars (no refcounting), never
-    reuse torch-attached cobble (dust powers it, flips the tile torch),
-    never bury dust/diodes, never pillar directly under foreign dust
-    (that would create a link the search never assumed)."""
+    """Support under an off-ground (y>=2 or y<=0) wire cell: None=reuse,
+    (x,y,z)=stamp once, False=infeasible. Never share foreign pillars (no
+    refcounting), never reuse torch-attached cobble (dust powers it, flips
+    the tile torch), never bury dust/diodes, never pillar directly under
+    foreign dust (that would create a link the search never assumed).
+
+    y==1 is the surface: it rests on the world, so no support. Above and
+    below it alike, a wire needs a real block under it — which is what lets
+    a route trench downward when the ground above is saturated.
+    """
     x, y, z = cell
-    if y <= 1:
+    if y == 1:
         return None
     b = (x, y - 1, z)
     if b in sup:
@@ -312,7 +327,7 @@ def _has_support(cell, sup, solid):
     return solid.get((b[0], b[2]), (None,))[0] == "cobble"
 
 
-def astar(starts, goal, net, W, D, solid, rings, wires, junctions, margin=None, blocked=None, congest=None, guard=None, sup=None, reps=None, cob3=None, flat_only=False, aircells=frozenset()):
+def astar(starts, goal, net, W, D, solid, rings, wires, junctions, margin=None, blocked=None, congest=None, guard=None, sup=None, reps=None, cob3=None, flat_only=False, aircells=frozenset(), ymin=None, ymax=None):
     """6-dir maze route for one wire (multi-source: fanout taps nearest own wire).
     None if blocked (loud fail, never silent wrong). Cells are (x, y, z),
     y in 1.._H; starts/goal are y=1 tile ports. Guards are per-level: y=1
@@ -321,6 +336,15 @@ def astar(starts, goal, net, W, D, solid, rings, wires, junctions, margin=None, 
     Supports are feasibility-checked here, stamped once by route()."""
     if sup is None:
         sup = {}
+    # per-call vertical envelope: the maze keeps its verified y=1.._H band
+    # (a wider band lets astar return a cheap path route() then rejects as
+    # self-lid, with no fallback � measured: micro1's maze ladder died
+    # 'no route for nD (3D: self-lid)' when the band was widened globally).
+    # compose asks for the full envelope explicitly.
+    if ymin is None:
+        ymin = _YMIN
+    if ymax is None:
+        ymax = _H
     if reps is None:
         reps = {}
     if guard is None:
@@ -394,7 +418,7 @@ def astar(starts, goal, net, W, D, solid, rings, wires, junctions, margin=None, 
     wg2 = wires.get
     def ok(cell):
         x, y, z = cell
-        if not (x0 <= x <= x1 and z0 <= z <= z1 and 1 <= y <= _H):
+        if not (x0 <= x <= x1 and z0 <= z <= z1 and ymin <= y <= ymax):
             return False
         if cell == goal:
             return True
@@ -412,7 +436,7 @@ def astar(starts, goal, net, W, D, solid, rings, wires, junctions, margin=None, 
 
     def _unused_ok_reference(cell):
         x, y, z = cell
-        if not (x0 <= x <= x1 and z0 <= z <= z1 and 1 <= y <= _H):
+        if not (x0 <= x <= x1 and z0 <= z <= z1 and ymin <= y <= ymax):
             return False
         if cell == goal:
             return True
@@ -497,8 +521,8 @@ def astar(starts, goal, net, W, D, solid, rings, wires, junctions, margin=None, 
             return path[::-1]
         x, y, z = cell
         for dx, dz in DIRS:
-            ups = () if (flat_only or y >= _H) else (((x + dx, y + 1, z + dz), _STEPCOST),)
-            dns = () if (flat_only or y <= 1) else (((x + dx, y - 1, z + dz), _STEPCOST),)
+            ups = () if (flat_only or y >= ymax) else (((x + dx, y + 1, z + dz), _STEPCOST),)
+            dns = () if (flat_only or y <= ymin) else (((x + dx, y - 1, z + dz), _STEPCOST),)
             for m, step in (((x + dx, y, z + dz), 1),) + ups + dns:
                 if not ok(m):
                     if _XCHECK and ok(m) is not _unused_ok_reference(m):
@@ -687,7 +711,12 @@ def finish_assembly(blocks, solid, wires, rings, junctions, repeaters, pos):
         out.append((x, y, z, f"minecraft:repeater[facing={facing},delay=1]"))
     # ponytail: stone only where a ground component sits (flat worlds have
     # ground already); a full pad was 98% of the file. y>=2 rides pillars.
-    for x, z in sorted({(x, z) for x, y, z, bid in out if y == 1}):
+    # NOT under a trench: a route may now run at y<=0, and stone at y=0
+    # would occupy the same cell as that wire (two blocks, one cell).
+    _trench = {(x, z) for (x, y, z) in wires if y <= 0}
+    _trench |= {(x, z) for (x, y, z) in repeaters if y <= 0}
+    for x, z in sorted({(x, z) for x, y, z, bid in out if y == 1}
+                       - _trench):
         out.append((x, 0, z, "minecraft:stone"))
     io = {"levers": {c: n for c, (k, n) in solid.items() if k == "lever"},
           "lamps": {c: n for c, (k, n) in solid.items() if k == "lamp"},
