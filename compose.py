@@ -274,7 +274,8 @@ def lwire(ctx, sup, guard, a, b, net, avoid=frozenset()):
                 ctx.solid.update(so)
                 del ctx.blocks[sb:]
             else:
-                if not _flight_live(ctx, net, a, b, fly):
+                if not _flight_live(ctx, net, a, b, fly) or not _leg_live(
+                        ctx, net, a, fly[1:-1], b):
                     sw, ss, sc, so, sb = snap
                     ctx.wires.clear()
                     ctx.wires.update(sw)
@@ -396,6 +397,52 @@ def _astar_wrap(ctx, sup, guard, a, b, net, avoid, flat=True):
     return [(x - ox, y, z - oz) for (x, y, z) in found]
 
 
+def _leg_live(ctx, net, a, done, b):
+    """Is every cell this leg stamped reachable from a under sim's rules?
+
+    Same coupling rules as check_opens (same-y dust, repeaters, slope links
+    with support-below/no-lid), run per leg instead of once at the end. A
+    leg that stamps cleanly but leaves dead dust is only otherwise reported
+    hundreds of cells from its driver, by which point the whole build is
+    thrown away. Rejecting it here makes lwire try the next candidate.
+
+    Measured: cand_onehot2 (14 gates) produced 570 dead cells at y=2/y=3 —
+    elevated runs that no support/lid arrangement actually couples — and
+    only the final check_opens saw it, after 32s and five spread retries.
+    """
+    from core import DIRS as _D
+    wires, reps = ctx.wires, ctx.repeaters
+    start, goal = (a[0], 1, a[1]), (b[0], 1, b[1])
+    want = {(c[0], c[1], c[2]) for c in done}
+    if not want:
+        return True
+    cob = {(x, y, z) for x, y, z, bid in ctx.blocks
+           if bid.split("[")[0] == "minecraft:cobblestone"}
+    seen, stack = set(), [start]
+    while stack:
+        c = stack.pop()
+        if c in seen:
+            continue
+        seen.add(c)
+        for dx, dz in _D:
+            m = (c[0] + dx, c[1], c[2] + dz)
+            if wires.get(m) == net:
+                stack.append(m)
+            elif m in reps and reps[m][0] == net:
+                stack.append(m)
+            up = (c[0] + dx, c[1] + 1, c[2] + dz)
+            if wires.get(up) == net and (c[0] + dx, c[1], c[2] + dz) in cob \
+                    and (c[0], c[1] + 1, c[2]) not in cob:
+                stack.append(up)
+            dn = (c[0] + dx, c[1] - 1, c[2] + dz)
+            if wires.get(dn) == net and (c[0], c[1] - 1, c[2]) in cob \
+                    and (c[0] + dx, c[1], c[2] + dz) not in cob:
+                stack.append(dn)
+    if want <= seen or goal in seen and want <= seen:
+        return True
+    return want <= seen
+
+
 def _walk(ctx, sup, guard, a, b, net, cells):
     # seq anchors both ends so a hop's feet may land on driver/load cells.
     seq = [(a[0], 1, a[1])] + cells + [(b[0], 1, b[1])]
@@ -501,6 +548,9 @@ def _walk(ctx, sup, guard, a, b, net, cells):
         stamp_wire(ctx, [front], net)
         done.append((front[0], 1, front[1]))
         j = fi + 1
+    if not _leg_live(ctx, net, a, done, b):
+        raise RuntimeError(f"compose: dead leg for {net}: {a} -> {b} "
+                           f"({len(done)} cells)")
     # no planting here: boosters run per full net-path after all wiring
     # (a leg starts wherever the previous leg decayed to, so per-leg
     # spacing plants on dead wire). See compose() below.
@@ -647,7 +697,12 @@ def _compose_once(recipe):
         drvs = [a for a in g["args"] if a in placed]
         if not drvs:
             ox, gz = topx, 12
-            topx += 30 * _SPREAD
+            # NOT scaled by spread: seed spacing sets how far east the field
+            # reaches, and spreading it too just multiplies every input's
+            # travel distance (cand_pairs4 measured a 2300-cell lane at
+            # spread 5). Only the row pitch and the bump widen, which is
+            # what actually creates room around a tile.
+            topx += 30
         else:
             bottom = max(z for a in drvs for (_, z) in placed[a][3])
             n = sum(len(placed[a][3]) for a in drvs)
@@ -1067,7 +1122,7 @@ def _compose_once(recipe):
                         # (B@x6 vs n1@x8 — a gate port, not the input lane),
                         # 38 refusals unchanged, and small builds grew
                         # 182/396/250/282 -> 238/492/306/354 for nothing.
-                        lx = minx - 2 - 4 * _SPREAD * inps.index(net)
+                        lx = minx - 2 - 4 * inps.index(net)
                         d1 = lwire(ctx, sup, guard, drv, (lx, drv[1]), net, avoid)
                         # ponytail: ONE lane leg, not two. Splitting the
                         # N-S march (drv row -> load row) from the E-W
@@ -1216,29 +1271,32 @@ _SPREAD = 1
 # sim failures — those are deterministic and spread cannot fix them).
 _RETRYABLE = ("no ground", "no route", "OPEN ", "blocked", "lamp spot taken",
               "order cycle", "SHORT", "repeater loop", "compose blocked")
+# Spreads to try in order (list so offline probes can pin a single one).
+_SPREADS = (1, 2, 3, 4, 5)
 
 
 def compose(recipe):
     """Deterministic place+route, retrying wider on geometry failure.
 
-    Spread 1 first: every green build succeeds here, bit-identical, so the
-    gates never move. Only a routing/geometry death retries at spread 2
-    then 3 — the build may sprawl across chunks (wires run long, repeaters
-    carry them), which is exactly what unseals a dense field.
+    Spread 1 first: every green build succeeds here bit-identical, so the
+    gates never move. Only a routing/geometry death retries wider — the
+    build may sprawl across chunks (wires run long, repeaters carry them),
+    which is exactly what unseals a dense field.
     """
     global _SPREAD
     last = None
-    for spread in (1, 2, 3, 4, 5):
+    for spread in _SPREADS:
         _SPREAD = spread
         try:
             return _compose_once(recipe)
         except RuntimeError as e:
             last = e
-            if spread >= 5 or not any(k in str(e) for k in _RETRYABLE):
+            if spread == _SPREADS[-1] or not any(k in str(e) for k in _RETRYABLE):
                 raise
             print(f"compose spread {spread} failed ({str(e)[:60]}); "
                   f"retrying wider", flush=True)
     raise last
+
 
 
 if __name__ == "__main__":
