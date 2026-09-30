@@ -1,0 +1,21 @@
+IN d0, d1, s0, s1, s2
+OUT Y
+ns0 = NOT s0
+ns1 = NOT s1
+ns2 = NOT s2
+t0 = d0 AND s0
+u0 = d1 AND ns0
+m0 = t0 OR u0
+t1 = d0 AND s1
+u1 = d1 AND ns1
+m1 = t1 OR u1
+p0 = m0 AND s2
+q0 = m1 AND ns2
+r0 = p0 OR q0
+t2 = d0 AND ns0
+u2 = d1 AND s0
+m2 = t2 OR u2
+p1 = m2 AND s2
+q1 = m2 AND ns2
+r1 = m2 AND s2
+Y = r0 OR r1

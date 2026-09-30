@@ -1019,11 +1019,20 @@ def _compose_once(recipe):
         snap = (dict(ctx.wires), dict(sup), dict(ctx.solid), len(ctx.blocks))
         stub = wsnap[0]
         try:
-            for n in (owner,):
-                for (rn, cells) in [p for p in paths if p[0] == n]:
-                    for c in cells:
-                        if c not in stub and ctx.wires.get(c) == n:
-                            del ctx.wires[c]
+            # ponytail: rip up BOTH nets' wires, not just the owner's. The
+            # failed net's leg raised mid-walk, so its stamped cells were
+            # never added to `paths` — and the caller marks the failed net
+            # routed anyway, so those wires were orphaned for good. They
+            # read as a live-but-disconnected run and check_opens then
+            # reported them as unconnected dust hundreds of cells away.
+            # Measured: cand_aluslice2 (14 gates) emitted ghost input-net
+            # cells at (84,1,27),(85,1,27) and died `OPEN`; alu1's CIN and
+            # every OPEN I chased this session are this shape.
+            for n in (owner, failed):
+                keep = {c for (rn, cells) in paths if rn == n for c in cells}
+                for c, cn in list(ctx.wires.items()):
+                    if cn == n and c not in stub and c not in keep:
+                        del ctx.wires[c]
             for c, n in list(sup.items()):
                 if n == owner:
                     del sup[c]

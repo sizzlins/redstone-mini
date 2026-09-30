@@ -1,0 +1,13 @@
+IN d0, d1, d2, d3, s0, s1
+OUT Y
+ns0 = NOT s0
+ns1 = NOT s1
+a0 = d0 AND s0
+b0 = d1 AND ns0
+u0 = a0 OR b0
+a1 = d2 AND s0
+b1 = d3 AND ns0
+u1 = a1 OR b1
+c0 = u0 AND s1
+d_ = u1 AND ns1
+Y = c0 OR d_

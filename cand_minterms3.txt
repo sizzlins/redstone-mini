@@ -1,0 +1,21 @@
+IN a, b, c
+OUT m0, m1, m2, m3, m4, m5, m6, m7
+na = NOT a
+nb = NOT b
+nc = NOT c
+m0s1 = na AND nb
+m0 = m0s1 AND nc
+m1s1 = na AND nb
+m1 = m1s1 AND c
+m2s1 = na AND b
+m2 = m2s1 AND nc
+m3s1 = na AND b
+m3 = m3s1 AND c
+m4s1 = a AND nb
+m4 = m4s1 AND nc
+m5s1 = a AND nb
+m5 = m5s1 AND c
+m6s1 = a AND b
+m6 = m6s1 AND nc
+m7s1 = a AND b
+m7 = m7s1 AND c

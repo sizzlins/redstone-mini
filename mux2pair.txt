@@ -1,0 +1,22 @@
+IN D0, D1, S, E
+OUT Y0, Y1
+nS = NOT S
+nE = NOT E
+a0 = D0 AND S
+b0 = D0 AND nS
+c0 = a0 OR b0
+d0 = D1 AND S
+e0 = D1 AND nS
+f0 = d0 OR e0
+g0 = c0 AND E
+h0 = f0 AND nE
+Y0 = g0 OR h0
+a1 = D1 AND S
+b1 = D1 AND nS
+c1 = a1 OR b1
+d1 = D0 AND S
+e1 = D0 AND nS
+f1 = d1 OR e1
+g1 = c1 AND E
+h1 = f1 AND nE
+Y1 = g1 OR h1

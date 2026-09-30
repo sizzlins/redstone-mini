@@ -1,0 +1,16 @@
+IN a, b, c
+OUT d0, d1, d2, d3, m
+na = NOT a
+nb = NOT b
+x0 = na AND nb
+d0 = x0 AND c
+x1 = a AND nb
+d1 = x1 AND c
+x2 = na AND b
+d2 = x2 AND c
+x3 = a AND b
+d3 = x3 AND c
+p = a AND b
+q = a OR b
+r = a XOR b
+m = p OR q

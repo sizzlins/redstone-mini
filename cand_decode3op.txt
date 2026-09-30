@@ -1,0 +1,17 @@
+IN A, B, C
+OUT Y0, Y1, Y2, Y3, Y4, Y5, Y6, Y7
+nA = NOT A
+nB = NOT B
+nC = NOT C
+x0 = A XOR B
+x1 = A AND B
+x2 = A OR B
+t0 = x0 AND nC
+Y0 = t0 OR t1
+t1 = x0 AND C
+t2 = x1 AND nC
+Y2 = t2 OR t3
+t3 = x1 AND C
+t4 = x2 AND nC
+Y4 = t4 OR t5
+t5 = x2 AND C
