@@ -378,3 +378,10 @@ Every trajectory fails systemically (different nets, same congestion).
 a new place-and-route subsystem (days, design session), not a ladder rung.
 Attempting one overnight risks the 16 working builds for near-zero payoff.
 Standing by to build it properly when directed.
+
+### Maze-only sweep with high try count (10th approach, in flight)
+All prior maze tests used high GROW (4/6, intractable) or default tries (6).
+Untried: MANY tries (20 seeds) at tractable grows (0-2). scratch/maze_sweep.py
+loops seeds x grows calling layout()+sim_verify directly (no compose waste),
+checks wall-clock before each attempt, hard-killed at 3300s. 60 attempts each
+for alu4/cpu4. If the maze backend can do it with enough seeds, this finds it.
