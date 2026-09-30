@@ -475,3 +475,15 @@ band 3 routes (2400s budget), stitches A0B0+C2 green, C3 RED (no ground
 Lane-order and TERR/dup findings logged inline in code.
 NEXT: pickle-dump harness for second-scale stitch iteration (bands cost
 30 min per run); then promote working recipe to recipes/alu4.txt.
+
+### Try 3 cont: carry micro-band, oscillator, staged pipeline
+- C3 OR-port pocketed (diodes E/W, foreign N/S, hops refused); A0B0/C2/X2/A2B2
+  AND/XOR ports escape in 0.0-0.2s (dump-harness probes, seconds each).
+- Extracted 2-gate carry micro-band (U2+C3, inputs X2/A2B2/C2); X2
+  self-replicates (no new lanes). Boundary {A0B0,A2B2,C2,C3}, bands 16/21/17/3/24.
+- Full hier reached SIM (all bands + all stitches green!) but SIM churn=7557
+  (oscillator): broad seal allow-list coupled stitch to neighbor torch. Fix:
+  owner-torch-only allow-list (strictly louder-or-equal).
+- Killed 45-min probe (user). Lesson: stage the pipeline (pin winning sub-rungs
+  once via short standalone probes, then merge+stitch in seconds). No more
+  30-min tool calls.

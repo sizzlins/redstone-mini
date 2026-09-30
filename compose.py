@@ -1497,9 +1497,32 @@ def compose_hier(recipe):
             except RuntimeError as e:
                 _err = e
                 continue
+            # ponytail: boundary-port openness. A produced cross net whose
+            # port has no open orthogonal (diode slots + foreign runs on all
+            # sides — measured: C3 OR-port walled N/S, diodes E/W) can never
+            # be stitched, no matter how green the partition sims. Require
+            # >=2 open orthogonals (empty-or-own, non-solid), else next rung.
+            _closed = None
+            for _n in cross:
+                if prod.get(_n) != b:
+                    continue
+                _c = _hier_drv(_last_ctx.recs, _n)
+                if _c is None:
+                    continue
+                _d = (_c[0] + _last_shift[0], _c[1] + _last_shift[1])
+                _open = 0
+                for _ax, _az in DIRS:
+                    _w = _last_ctx.wires.get((_d[0] + _ax, 1, _d[1] + _az))
+                    _s = _last_ctx.solid.get((_d[0] + _ax, _d[1] + _az))
+                    if _s is None and _w in (None, _n):
+                        _open += 1
+                if _open < 2:
+                    _closed = _n
+                    break
+            if _closed is not None:
+                _err = RuntimeError(f"hier band {b}: port {_closed} walled")
+                continue
             _err = None
-            print(f"hier band {b} rung {_jog} spread {_s} {_o}",
-                  flush=True)
             break
         if _force_saved is None:
             os.environ.pop("REDSTONE_FORCE", None)
@@ -1581,11 +1604,20 @@ def compose_hier(recipe):
     # wrong: the same-level adjacency guard fires with no ends context —
     # measured: C1 touches A0 at stale coords (42,1,13).)
     seal_tiles(mctx)
+    # ponytail: allow-list ONLY owner torches. A stitch wire beside a
+    # NEIGHBOR tile's torch is driven by lever AND inverter at once — a ring
+    # oscillator that sim reports as "not settling" (measured: merged alu4
+    # churn=7557 on one vector after all stitches landed). Broad allow (any
+    # adjacent torch) turned that shipping failure silent; owner-only keeps
+    # it loud (no-ground) instead. The driver's own output torch is owned by
+    # the net itself, so legitimate ports stay routable.
     for n, d in drv_of.items():
         for ax, az in DIRS:
-            s = mctx.tile_adj.get((d[0] + ax, d[1] + az))
-            if s is not None:
-                s.add(n)
+            t = (d[0] + ax, d[1] + az)
+            if solid.get(t) == ("torch", n):
+                s = mctx.tile_adj.get(t)
+                if s is not None:
+                    s.add(n)
     guard = set()
     for x, y, zz, bid in blocks:
         if "wall_torch" in bid:
@@ -1628,19 +1660,33 @@ def compose_hier(recipe):
         if lz:
             levermin[b] = min(lz)
     def _stitch(drv, stub, n, b):
-        # direct first (proven for short spans); else two-hop via a hop row
-        # just north of the consumer lever bank: street north, east-west
-        # along the empty margin, step south into the stub. Never crosses a
-        # lever row or input-lane fan.
-        try:
-            return lwire(mctx, sup, guard, drv, stub, n)
-        except RuntimeError:
-            pass
+        # direct first (proven for short spans); else spiral-start: the
+        # producer port itself can sit pocketed by its own tile's input runs
+        # (measured: C3 port walled on all 4 sides, every axis RED). A start
+        # cell dust-adjacent to the live port is electrically the same node
+        # (same-y dust touch conducts; checkers allow same-net touch), so
+        # try the port then each open orthogonal neighbor.
+        # Last resort: two-hop via a hop row just north of the consumer
+        # lever bank (street north, east-west along the empty margin, step
+        # south into the stub).
+        starts = [drv] + [(drv[0] + dx, drv[1] + dz) for dx, dz in DIRS
+                          if solid.get((drv[0] + dx, drv[1] + dz)) is None
+                          and wires.get((drv[0] + dx, 1, drv[1] + dz)) is None]
+        _err = None
+        for s in starts:
+            try:
+                return lwire(mctx, sup, guard, s, stub, n)
+            except RuntimeError as e:
+                _err = e
         hz = max(1, levermin.get(b, 2) - 1)
         px = offs[b] - _HIER_GAP // 2
-        p1 = lwire(mctx, sup, guard, drv, (px, hz), n)
-        p2 = lwire(mctx, sup, guard, (px, hz), stub, n)
-        return p1 + p2
+        try:
+            p1 = lwire(mctx, sup, guard, drv, (px, hz), n)
+            p2 = lwire(mctx, sup, guard, (px, hz), stub, n)
+            return p1 + p2
+        except RuntimeError as e:
+            _err = e
+        raise _err
     flow = {}
     for n in sorted(cross, key=_span):
         pb = prod[n]
