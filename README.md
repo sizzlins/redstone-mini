@@ -1,6 +1,6 @@
 # redstone-mini
 
-Tiny recipe -> Minecraft redstone 3D model. Write small logic, get blocks.
+logic recipe, big or small -> Minecraft redstone 3D model -> build.schem export to minecraft
 <img width="1705" height="800" alt="image" src="https://github.com/user-attachments/assets/509e07ee-2981-4f95-8d9d-2a1e05836f38" />
 
 ## Use
