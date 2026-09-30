@@ -494,3 +494,21 @@ hb3 (3 gates) rung1 0.1s; hb2 (19) 9.4s; hb1 (21) rung2 20.7s;
 hb0 (16) long-spread-1 129s; hb4 (24) deep ladder 553s. ALL route + sim green.
 Rung-subset pinning (REDSTONE_HIER_RUNGS) added, unset by default.
 Full hier next (bands ~12 min + merge/sim, inside proven-safe durations).
+
+### Pipeline: parallel band cache + seconds-scale stitch
+- scratch/hier_bands.py: all bands x rungs as direct children (12-wide fan-out,
+  no mp.Pool: pool workers are daemonic and cannot spawn), hard-killed at Ns.
+  96 band-rungs in ~56s; all 6 alu4hier bands green + cached to .pkl.
+  Three bugs fixed en route: compose_hier_part bypassed the ladder (identical
+  wall at every spread); from-import captured _last_ctx=None at import; mp.Pool
+  daemonic-child assert.
+- compose_hier split: compose_hier_parts(built, gates, recipe) = stage 2
+  (merge+stitch), callable on cached partitions. Stitch iteration is SECONDS.
+- Stitch hardening: collect per-band failures instead of aborting on the first;
+  west approach; multiple hop rows; spiral start from open port neighbours;
+  longest-net-first; owner-only torch allow-list (broad allow caused the
+  churn=7557 oscillator).
+- C2 chained fan-out: stitch through the band-2 stub to band 3 instead of
+  re-running from the driver (465 cells shorter).
+STATUS: alu4hier merge reaches C2->band3, which now hangs the stitch stage.
+Rule 7 needed: astar cap in the stitch child. TODO: bound stitch, then sim.

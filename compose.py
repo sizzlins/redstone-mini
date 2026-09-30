@@ -1513,6 +1513,22 @@ def _hier_drv(recs, net):
     return None
 
 
+def compose_hier_part(sub):
+    """Compose ONE partition (hier's per-band entry point).
+
+    Goes through the standard ladder (REDSTONE_FORCE pins one rung) rather
+    than _compose_once: a single-shot with no ladder ignored spread/order
+    entirely, so every rung reported the same wall (measured: band 0
+    "no ground for OP1" identical at spreads 1-4). Split out so a caller can
+    compose partitions itself, in parallel, each hard-bounded
+    (scratch/hier_bands.py).
+    """
+    global _SPREAD, _ORDER, _JOGS, _TERR
+    _SPREAD, _ORDER, _TERR = 1, "gates_first", 0
+    _JOGS = _JOGS_SHORT
+    return compose(sub)
+
+
 def compose_hier(recipe):
     """Split-and-stitch macros for big banded fields (the bus router, v1).
 
@@ -1667,6 +1683,23 @@ def compose_hier(recipe):
         built.append((b, sub, out, _hier_ctx(_pctx), _sh))
     if _hier_saved is not None:
         os.environ["REDSTONE_HIER"] = _hier_saved
+    return compose_hier_parts(built, gates, recipe)
+
+
+def compose_hier_parts(built, gates, recipe):
+    """Merge pre-composed partitions, stitch, check. compose_hier's stage 2.
+
+    Split out so cached partitions can be stitched without re-composing
+    bands (measured: a full hier run is ~30 min of band ladders; the merge is
+    seconds, so stitch-strategy iteration must never pay the bands again).
+    `built` is compose_hier's list: [(band, sub, out, ctx, shift)].
+    """
+    prod, cons = {}, {}
+    for g in gates:
+        prod[g["out"]] = g.get("band", 0)
+        for a in g["args"]:
+            cons.setdefault(a, set()).add(g.get("band", 0))
+    cross = sorted(n for n in cons if n in prod and (cons[n] - {prod[n]}))
     blocks, solid, rings, wires, junctions, repeaters, pos, sup = (
         [], {}, {}, {}, {}, {}, {}, {})
     offs, cur, drv_of = {}, 0, {}
@@ -1805,37 +1838,75 @@ def compose_hier(recipe):
                 return lwire(mctx, sup, guard, s, stub, n)
             except RuntimeError as e:
                 _err = e
-        hz = max(1, levermin.get(b, 2) - 1)
+        # ponytail: west approach — an edge-lever stub sits at the head of a
+        # lane that runs INTO the field, so the cell west of it on its own
+        # row is the empty lever row, not tile. Drive to that cell, then one
+        # step east into the stub. Cheapest last resort: no vertical search.
+        for _k in (2, 4, 6):
+            _ax, _az = stub[0] - _k, stub[1]
+            if solid.get((_ax, _az)) is not None:
+                continue
+            try:
+                p1 = lwire(mctx, sup, guard, drv, (_ax, _az), n)
+                p2 = lwire(mctx, sup, guard, (_ax, _az), stub, n)
+                return p1 + p2
+            except RuntimeError as e:
+                _err = e
+        hz0 = max(1, levermin.get(b, 2) - 1)
         px = offs[b] - _HIER_GAP // 2
-        try:
-            p1 = lwire(mctx, sup, guard, drv, (px, hz), n)
-            p2 = lwire(mctx, sup, guard, (px, hz), stub, n)
-            return p1 + p2
-        except RuntimeError as e:
-            _err = e
+        # ponytail: several hop rows, not one. A hop row that a small
+        # consumer field walls off is still open two rows north (measured:
+        # C2's band-3 micro-band walled the row above its lever bank but not
+        # the one above that). Rows are empty margin by construction, so
+        # trying more costs a stamp each and saves a whole merge.
+        for _d in (0, 4, 8, 14, 22):
+            hz = max(1, hz0 - _d)
+            try:
+                p1 = lwire(mctx, sup, guard, drv, (px, hz), n)
+                p2 = lwire(mctx, sup, guard, (px, hz), stub, n)
+                return p1 + p2
+            except RuntimeError as e:
+                _err = e
         raise _err
     flow = {}
     stitched = {}
     for n in sorted(cross, key=_span):
         pb = prod[n]
+        if os.environ.get("REDSTONE_HIER_TRACE"):
+            print(f"hier stitch {n} drv={drv_of.get(n)} offs={offs}", flush=True)
         if n not in drv_of:
             raise RuntimeError(f"hier: cross net {n} has no driver")
+        _fail = []
+        # ponytail: chain fan-out stitches through the consumer stubs in
+        # west-to-east band order, continuing from the PREVIOUS stub instead
+        # of re-running from the driver every time. A long fan-out (C2
+        # consumed by bands 2 AND 3) otherwise asks one run to cross two
+        # whole fields: measured, driver->band3 (465 cells past band 1) died
+        # on every strategy, while driver->band2 succeeds and band2->band3
+        # is a short hop. Same net, so chaining is the same wire.
+        _cons = []
         for (b, sub, out, pctx, sh) in built:
             if n not in sub["inputs"] or n in recipe["inputs"]:
                 continue
-            # partition-local stub + band offset (merged pos may hold
-            # another band's cell for the same net name).
-            stub = (pctx.pos[n][0] + offs[b], pctx.pos[n][1])
+            _cons.append((b, pctx.pos[n][0] + offs[b], pctx.pos[n][1]))
+        _cons.sort(key=lambda t: t[1])
+        _cur = drv_of[n]
+        for (b, sx, sz) in _cons:
+            stub = (sx, sz)
             try:
-                full = _stitch(drv_of[n], stub, n, b)
+                full = _stitch(_cur, stub, n, b)
             except RuntimeError as e:
-                raise RuntimeError(f"hier stitch {n}: {e}") from None
+                _fail.append(f"band {b} stub {stub}: {str(e)[:60]}")
+                continue
+            _cur = stub
             for u, v in zip(full, full[1:]):
                 d = (v[0] - u[0], v[2] - u[2])
                 flow.setdefault((u[0], u[1], u[2]), set()).add(d)
                 flow.setdefault((v[0], v[1], v[2]), set()).add(d)
             _plant_repeaters(mctx, full, n, flow)
             stitched[n] = stitched.get(n, []) + [full]
+        if _fail:
+            raise RuntimeError(f"hier stitch {n}: " + " | ".join(_fail))
     check_shorts(wires, junctions, blocks)
     check_opens(wires, junctions, repeaters, solid, pos, blocks)
     _out = finish_assembly(blocks, solid, wires, rings, junctions, repeaters, pos)
