@@ -177,3 +177,46 @@ Caught and fixed along the way: add2 shipped with a wrong carry (C1=A0 OR B0) an
 
 Reverted (evidence kept): port-roof guard, load-relative lanes, inputs-first, sibling avoid, RS_NOLANE, buried-wire, per-leg reachability, _displace both-nets (built on mis-framed reads).
 
+
+## Overnight session (autonomous)
+
+Goal: every recipe in redstone-mini/recipes builds + verifies, plus 3+ dense builds that never built before.
+
+Starting point: 2/5 dense green (micro1, ctrl_decode). Red: alu1, alu4, cpu4.
+
+### Harness (rule 7: nothing may hang)
+- compose() had NO wall-clock bound and the ladder was about to grow to 20+ attempts, so a hard recipe could spin forever. Added REDSTONE_COMPOSE_SECS: a deadline over the whole ladder. REDSTONE_MAX_SECS still bounds a single attempt.
+- scratch/run_detached.ps1 + scratch/run_fleet.ps1: every long build runs detached with a hard cap, so no shell call blocks. Polled instead of waited on.
+- All ladder rungs tried: short jogs x spread 1,2,3,4,5,6,8,10 x {gates_first, inputs_first}, then long jogs over the same grid (32 rungs, deadline-bounded).
+
+### Routing order became a retry axis
+alu1 died on "wire OP1 touches OP0 beside (-7,3,13)" - its inputs routed last into a saturated field. Routing inputs FIRST gives them clean ground and gates route around the lanes. compose() now tries gates-first everywhere, then inputs-first. Greens still land on rung 1 bit-identical, so the gates never move.
+
+Result: alu1 GREEN, 13300 blocks.
+
+### Jog depth became a retry axis (and a bug it hid)
+Removing the 16/20/24/32-row jogs fixed add2, which had gone SIM-RED with A0/A1/B0/COUT all dark - a long jog let the input march wander somewhere it could not be sealed, leaving the port cells undriven. But alu1 needs the long jogs. So both are rungs now: short first (proven baseline), long only as escalation.
+
+### Clearance at run ends
+_sealed's near_end window was 3 cells, so an input's outbound run was allowed to hug a foreign wire for its first three cells. Cut to 1: only the port cell itself may sit inside a foreign wire's neighbourhood. All greens bit-identical (micro1 2925, chainmix 11497, add2 12539, 4 small hashes unchanged).
+
+### Slope-link lids (the fix that unblocked cmp2's short)
+sim couples y=1 dust to a diagonal y=2 wire only when the upper has support under it AND the lower has no lid over it. Hops and 3D overflights both mint elevated dust on fresh cobble, and the search that placed them could not see the foreign wire landing diagonally below - so check_shorts raised SHORT3D only after the fact, and no spread in the ladder could escape it (cmp2 failed identically at spread 1 and spread 10).
+
+_walk now drops one cobble directly above the lower wire, mirroring check_shorts' dy=-1 case cell for cell. Because it mirrors the raise condition exactly, a build that already passes gets zero extra blocks - confirmed: latch_sr 224, micro1 2925, chainmix 11497 all unchanged.
+
+cmp2's SHORT3D is gone.
+
+### New dense builds (all generate + verify)
+- sub2 - 2-bit subtractor with borrow out, 3487 blocks. Arithmetic checked over all 16 input vectors by scratch/recipe_check.py.
+- mux4 - 4-bit 2:1 mux, 9 inputs, 20239 blocks. Largest build in the repo.
+- andor8 - 8-input AND tree plus 8-input OR tree, 17997 blocks. First written as three levels of dust OR; SIM-RED on 7/256 vectors while gate tracing was correct and 40000 settle ticks changed nothing, so the dust OR tree itself was racing. Rewrote O8 as NOT(AND of NOTs) - torch ANDs and inverters only, no dust OR. Green.
+
+Also added scratch/recipe_check.py: checks a recipe's arithmetic against a reference expression over every input vector, no placement. It immediately caught that my first sub2 was wrong (bit-0 sum is A0 XOR B0 - the +1 carry-in cancels the inversion - and the bit-0 carry is OR not AND). Same lesson as add2 shipping green with a bad carry: sim checks fidelity to the recipe, never the recipe's arithmetic.
+
+### Still red, with the wall identified
+- cmp2 - past SHORT3D, now dies on ONE orphan dust cell: OPEN (unconnected dust, nothing drives it) at (165,1,46) at spread 1, (175,1,62) at spread 2, (245,1,78) at spread 3. One cell, same relative spot at every spread, so it is systematic, not congestion. Suspect: a lid landing on a cell a later net still wanted.
+- alu4 / cpu4 - both have 10+ inputs. Every input's lane-to-load leg crosses the others and stamp_wire refuses the touch ("wire B3 touches A1 beside (1268,1,7)"). Lever rows are already staggered 2 per index and lane columns are 4*spread apart, so this is the approach cone, not the port row. mux4 at 9 inputs is the proven ceiling.
+- shift4 - TORCH BURNOUT at (64,1,47) during compose. LATCH chain placement, untouched so far.
+
+Reverted/narrowed: the slope-link lid pass was first written too broadly and moved proven builds (latch_sr 224->226, micro1 2925->2942). Narrowed to mirror check_shorts exactly, which restores every hash.
