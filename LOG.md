@@ -436,3 +436,42 @@ ENGINE FIX no-op proof (no slow re-routes needed): expand_gates probe over all
 (_rc1 band1, _rc2 band2, distinct) -- key-sort == tuple-sort wherever mins are
 distinct, so all 19 greens are bit-identical by construction. 4 small verified
 bit-identical post-fix; mux2/decode2 re-verified green post-fix.
+
+## Night session 5 (autonomous, continued)
+ASSUMPTION: same as before (D:\redstone-mini work target). User asked to keep
+going without status chatter. Plan: hierarchical router for alu4/cpu4, cheapest
+first. ALL probes hang-safe (compose+sim only, COMPOSE_SECS<=240, tool timeout
+= budget+60s). No maze-ladder runs (they hang for hours).
+
+### Try 2 (alu4): territorial placement+band-order RED (fast: 97s)
+REDSTONE_TERR=1, 4 rungs: "no ground for _rc8 (728,12)->(196,243)" then B1.
+Verdict: territories lengthen cross-band spans past what greedy lwire can do;
+empty streets do not help when endpoints are 500+ apart through tile fields.
+12th approach exhausted. Switching to Try 3: split-and-stitch macros.
+
+### User suggestion (adopted): failure-driven netlist restructuring
+User: on build failure, engine should analyze WHAT failed and change the
+BUILD (same IN/OUT, different internals) and retry. Verdict: yes, this is a
+real family of methods. Names: feedback-directed / closed-loop optimization
+(general); CEGIS - counterexample-guided inductive synthesis (the fail-analyze
+-fix loop); superoptimization + e-graphs / equality saturation (search many
+equivalent forms, keep the best); autotuning / design-space exploration
+(ATLAS, OpenTuner); in EDA specifically: rewiring, congestion-driven logic
+restructuring, gate replication, remapping, rip-up-and-reroute (physical).
+We already do weak forms (retry ladder = same netlist new geometry;
+auto-replication; dead-gate removal). Now implementing the strong form:
+surgical load-shedding driven by the FAILING net (double-NOT buffers move
+half a congested input's loads onto a fresh 1-load net; function identical,
+recipe_equiv-provable). First target: band-1 OP0/OP1 (3 loads each).
+
+### Try 3 status: hier machinery PROVEN (hiertest green), alu4 at C3 stitch
+compose_hier (split-and-stitch by BAND) + sub-ladder with sim gate + recs
+shift capture + seal allow-list + longest-first + two-hop stitch. hiertest
+(add2 split in 2): COMPOSE-OK 1918 blocks sim=42t 0.7s, bit-identical on
+regression. alu4hier candidate (equiv-proven, dedup m30, per-slice controls,
+A0B0 split, OP load-shedding via double-NOT): bands 0-2 route+sim green,
+band 3 routes (2400s budget), stitches A0B0+C2 green, C3 RED (no ground
+(825,68)->(97x,2), twice, LONG jogs + two-hop). Fast gates green throughout.
+Lane-order and TERR/dup findings logged inline in code.
+NEXT: pickle-dump harness for second-scale stitch iteration (bands cost
+30 min per run); then promote working recipe to recipes/alu4.txt.

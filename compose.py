@@ -16,6 +16,10 @@ from layout import build_netspec, check_shorts, check_opens, finish_assembly, _s
 # for offline probes. Not part of the build contract.
 _last_shift = (0, 0)
 
+# last _compose_once's live ctx (partition merge reads tile ports). Write-only
+# hook, same precedent as _last_shift; never read on the standard path.
+_last_ctx = None
+
 # Composer's vertical envelope for the astar fallback (env-tunable).
 # Narrow y=1..3 is tried first (the proven band); the full envelope only
 # runs if narrow finds nothing, because a marginal wide success poisons
@@ -750,20 +754,37 @@ def _compose_once(recipe):
 
     c_place = SimpleNamespace(spot_free=c_spot_free, gridrows=c_gridrows,
                               snap=lambda: None, restore=lambda s: None)
+    # ponytail: territorial bands. Each BAND owns an x territory TERR_W wide;
+    # streets between territories stay empty for cross-band trunks. Clamp +
+    # modulo keep every tile inside its own territory; the south-march below
+    # resolves whatever the clamp collides with. Off unless _TERR (fallback
+    # rung only), so standard placement is byte-identical.
+    _bands = sorted({gg.get("band", 0) for gg in gates}) if _TERR else []
+    _base = {b: 6 + i * _TERR_W for i, b in enumerate(_bands)}
+    _band_topx = dict(_base)
     topx = 6
     for i, g in enumerate(ordered):
+        _gb = g.get("band", 0) if _TERR else None
         drvs = [a for a in g["args"] if a in placed]
         if not drvs:
-            ox, gz = topx, 12
-            topx += 30 * _SPREAD
+            if _TERR:
+                ox, gz = _band_topx[_gb], 12
+                _band_topx[_gb] += 30 * _SPREAD
+            else:
+                ox, gz = topx, 12
+                topx += 30 * _SPREAD
         else:
             bottom = max(z for a in drvs for (_, z) in placed[a][3])
             n = sum(len(placed[a][3]) for a in drvs)
             cx = sum(x for a in drvs for (x, _) in placed[a][3]) // n
             gz = bottom + 8 * _SPREAD
             ox = max(4, cx)
+            if _TERR:
+                ox = max(_base[_gb], ox)
             while any(not _expanded(g["op"], ox, gz).isdisjoint(u) for u in used_fp):
                 ox += 2 * _SPREAD
+            if _TERR and ox - _base[_gb] >= _TERR_W:
+                ox = _base[_gb] + (ox - _base[_gb]) % _TERR_W
         for ox2, gz2 in c_gridrows(ox, gz):
             if not c_spot_free(g["op"], ox2, gz2, i):
                 continue
@@ -998,6 +1019,18 @@ def _compose_once(recipe):
             ready.sort(key=lambda n: (-_confined(n), _tie(n)))
             out.append(ready[0])
             pending.remove(ready[0])
+        if _TERR:
+            # ponytail: intra-band nets first (short local runs stamp before
+            # cross-band trunks need the streets). Stable partition: relative
+            # confinement order preserved inside each class.
+            _prod = {gg["out"]: gg.get("band", 0) for gg in gates}
+            _cons = {}
+            for gg in gates:
+                for a in gg["args"]:
+                    _cons.setdefault(a, set()).add(gg.get("band", 0))
+            def _cross(n):
+                return bool(_cons.get(n, set()) - {_prod.get(n)})
+            out = [n for n in out if not _cross(n)] + [n for n in out if _cross(n)]
         # _ORDER selects gates-first (proven) vs inputs-first (inputs get
         # clean ground; gates route around lanes). Set by compose()'s retry.
         if _ORDER == "inputs_first":
@@ -1357,7 +1390,293 @@ def _compose_once(recipe):
                     f"compose: load {_c} of {_n} holds a {_rep[0]} repeater")
     check_shorts(wires, junctions, blocks)
     check_opens(wires, junctions, repeaters, solid, pos, blocks)
+    global _last_ctx
+    _last_ctx = ctx
     return finish_assembly(blocks, solid, wires, rings, junctions, repeaters, pos)
+
+
+_HIER_GAP = 60
+
+
+def _hier_drv(recs, net):
+    # driver port cell of net from tile records (build_netspec's drv half;
+    # the load half is unneeded: loads routed inside their own partition).
+    for op, o, a, cell in recs:
+        if o != net:
+            continue
+        if op in ("AND", "LATCH", "XOR"):
+            return cell[2]
+        if op == "NOT":
+            return (cell[0] + 2, cell[1])
+        if op == "OR":
+            return cell[0]
+    return None
+
+
+def compose_hier(recipe):
+    """Split-and-stitch macros for big banded fields (the bus router, v1).
+
+    Each BAND composes alone (15-gate scale: rung 1, seconds), partitions
+    merge side by side with a street gap, boundary nets stitch point to
+    point through empty streets. Recipe inputs keep per-partition levers
+    (short local legs); only cross-band gate nets stitch. Raises loud on
+    any partition or stitch failure. Deterministic: band order, sorted nets.
+    """
+    global _SPREAD, _ORDER, _JOGS, _TERR, _last_shift, _DEADLINE
+    # ponytail: sub ladders call compose(), which re-arms the global deadline
+    # from _COMPOSE_SECS (a fresh full budget each — the outer budget would
+    # never fire). Snapshot the outer deadline for rung checks and restore
+    # the global on every exit so the outer ladder keeps its own clock.
+    _dl_saved = _DEADLINE
+    gates = _strip_buffers(expand_gates(recipe["gates"], recipe["inputs"]),
+                           recipe["outputs"])
+    bands = sorted({g.get("band", 0) for g in gates})
+    if len(bands) < 2:
+        raise RuntimeError("hier: need >= 2 bands")
+    prod, cons = {}, {}
+    for g in gates:
+        prod[g["out"]] = g.get("band", 0)
+        for a in g["args"]:
+            cons.setdefault(a, set()).add(g.get("band", 0))
+    cross = sorted(n for n in cons if n in prod and (cons[n] - {prod[n]}))
+    _SPREAD, _ORDER, _TERR = 1, "gates_first", 0
+    _JOGS = _JOGS_SHORT
+    # ponytail: partitions ride the full standard ladder (44 rungs, shared
+    # deadline), not a single _compose_once shot: a 16-gate slice hits the
+    # same sealed-port walls a medium build does (measured: sub0 OP1
+    # (-11,-5)->(4,12), the documented tile-apron seal). Unset HIER around
+    # the call so subs take the standard path (they are small anyway).
+    _hier_saved = os.environ.pop("REDSTONE_HIER", None)
+    built = []
+    for b in bands:
+        bg = [g for g in gates if g.get("band", 0) == b]
+        need = set()
+        for g in bg:
+            for a in g["args"]:
+                if a in ("0", "1"):
+                    continue
+                if a in recipe["inputs"] or prod.get(a, b) != b:
+                    need.add(a)
+        # ponytail: strip band tags inside the partition. Tags exist so the
+        # GLOBAL pass replicates shared controls per band (each band then
+        # computes its own copy, no stitch); re-expanding WITH tags inside a
+        # single-band sub can orphan clone-adjacent runs (measured: _rc3
+        # corridor orphaned OP1's port legs, OPEN at (111,1,21)). Untagged,
+        # the sub is an ordinary 15-gate compose in the proven regime.
+        sub = {"inputs": ([x for x in recipe["inputs"] if x in need]
+                          + sorted(x for x in need if x not in recipe["inputs"])),
+               "outputs": sorted(g["out"] for g in bg
+                                 if g["out"] in recipe["outputs"]),
+               "gates": [{k: v for k, v in g.items() if k != "band"}
+                         for g in bg]}
+        # ponytail: sub ladder WITH sim gate. A partition that routes but
+        # miscomputes (measured: band-1 COUT dark standalone, same class as
+        # the mux2/andor8 lessons) silently poisons the merge — sim never
+        # checks anything but the final build. So each band climbs forced
+        # rungs until compose AND sim_verify both pass on its listed outputs
+        # (boundary nets have no lamps yet; the merged sim covers them).
+        # Shared deadline bounds the climb; force is saved/restored.
+        from sim import sim_verify as _simv
+        _force_saved = os.environ.get("REDSTONE_FORCE")
+        _rungs = [(j, s, o) for j in ("short", "long")
+                  for s in (1, 2, 3, 4, 5, 6, 8, 10)
+                  for o in ("gates_first", "inputs_first")]
+        _err = None
+        for (_jog, _s, _o) in _rungs:
+            if _dl_saved is not None and time.monotonic() > _dl_saved:
+                break
+            os.environ["REDSTONE_FORCE"] = f"{_s},{_o},{_jog}"
+            try:
+                out = compose(sub)
+            except RuntimeError as e:
+                _err = e
+                continue
+            try:
+                if sub["outputs"]:
+                    _simv(sub, out[0], out[2], quiet=True)
+            except RuntimeError as e:
+                _err = e
+                continue
+            _err = None
+            print(f"hier band {b} rung {_jog} spread {_s} {_o}",
+                  flush=True)
+            break
+        if _force_saved is None:
+            os.environ.pop("REDSTONE_FORCE", None)
+        else:
+            os.environ["REDSTONE_FORCE"] = _force_saved
+        if _err is not None:
+            if _hier_saved is not None:
+                os.environ["REDSTONE_HIER"] = _hier_saved
+            raise RuntimeError(f"hier band {b}: {_err}") from None
+        # ponytail: recs coords are pre-shift ("recs is dead past wiring");
+        # every other live structure is post-shift. Snapshot this partition's
+        # shift now (_last_shift is global; the next sub overwrites it).
+        # Measured: without this the stitch aimed at stale rock (C1 drv read
+        # bare, aimed 1 shift off into A0's runs).
+        built.append((b, sub, out, _last_ctx, _last_shift))
+    if _hier_saved is not None:
+        os.environ["REDSTONE_HIER"] = _hier_saved
+    blocks, solid, rings, wires, junctions, repeaters, pos, sup = (
+        [], {}, {}, {}, {}, {}, {}, {})
+    offs, cur, drv_of = {}, 0, {}
+    for (b, sub, out, pctx, sh) in built:
+        dx = cur
+        offs[b] = dx
+        for x, y, z, bid in pctx.blocks:
+            blocks.append((x + dx, y, z, bid))
+        for (x, z), v in pctx.solid.items():
+            solid[(x + dx, z)] = v
+        for (x, z), v in pctx.rings.items():
+            rings.setdefault((x + dx, z), set()).update(v)
+        for (x, y, z), v in pctx.wires.items():
+            wires[(x + dx, y, z)] = v
+        for (x, z), v in pctx.junctions.items():
+            junctions.setdefault((x + dx, z), set()).update(v)
+        for (x, y, z), v in pctx.repeaters.items():
+            repeaters[(x + dx, y, z)] = v
+        for n, (px, pz) in pctx.pos.items():
+            pos[n] = (px + dx, pz)
+        for (x, y, z), v in pctx.sup.items():
+            sup[(x + dx, y, z)] = v
+        # boundary-input levers out (the stitch drives these stubs now);
+        # recipe inputs keep their levers. Stub dust stays as the target.
+        for n in sub["inputs"]:
+            if n in recipe["inputs"]:
+                continue
+            lever = next((c for c, v in pctx.solid.items() if v == ("lever", n)),
+                         None)
+            if lever is None:
+                raise RuntimeError(f"hier band {b}: no lever for {n}")
+            lx, lz = lever[0] + dx, lever[1]
+            blocks[:] = [bb for bb in blocks
+                         if not (bb[0] == lx and bb[1] == 1 and bb[2] == lz
+                                 and "lever" in bb[3])]
+            del solid[(lx, lz)]
+            for ax, az in DIRS:
+                s = rings.get((lx + ax, lz + az))
+                if s is not None:
+                    s.discard(n)
+        for n in cross:
+            if prod[n] == b:
+                c = _hier_drv(pctx.recs, n)
+                if c is None:
+                    raise RuntimeError(f"hier band {b}: no driver for {n}")
+                # recs is pre-shift; everything else post-shift.
+                drv_of[n] = (c[0] + sh[0] + dx, c[1] + sh[1])
+        maxx = max([x for (x, z) in solid] + [x for (x, _, z) in wires]
+                   + [x for (x, _, z) in repeaters])
+        cur = maxx + 1 + _HIER_GAP
+    # merged pos holds the last band's cell per net name; stitch addressing
+    # uses partition-local pos + offsets (exact), so collisions are harmless.
+    # check_opens/finish_assembly only need each listed cell to be live.
+    mctx = new_ctx(blocks, solid, rings, wires, junctions, repeaters, pos,
+                   [], sup)
+    # ponytail: producer ports with no in-band loads carry no dust (nothing
+    # ever stamped a leg there), so a seal snapshot records the driver's own
+    # tile torch as forbidding that net — outlawing the stitch at its first
+    # cell (measured: C1 no-ground on an empty row). Allow-list the driver
+    # net on every adjacent torch instead; lwire stamps the port under the
+    # same endpoint path normal legs use. (Pre-stamping the stub directly is
+    # wrong: the same-level adjacency guard fires with no ends context —
+    # measured: C1 touches A0 at stale coords (42,1,13).)
+    seal_tiles(mctx)
+    for n, d in drv_of.items():
+        for ax, az in DIRS:
+            s = mctx.tile_adj.get((d[0] + ax, d[1] + az))
+            if s is not None:
+                s.add(n)
+    guard = set()
+    for x, y, zz, bid in blocks:
+        if "wall_torch" in bid:
+            guard.add((x, zz))
+            face = bid.split("facing=")[1].rstrip("]")
+            dx, dz = TORCH_BACK[face]
+            guard.add((x + dx, zz + dz))
+    # ponytail: longest stitch first. Every stitch adds dust the later ones
+    # must route around; the longest span is the most constrained, so it
+    # goes while the field is emptiest (measured: C3 died last behind A0B0
+    # + C2 dust). Span from producer driver to first consumer stub.
+    def _span(n):
+        d = drv_of[n]
+        stubs = [(pctx.pos[n][0] + offs[b], pctx.pos[n][1])
+                 for (b, sub, out, pctx, sh) in built
+                 if n in sub["inputs"] and n not in recipe["inputs"]]
+        return -min(abs(d[0] - s[0]) + abs(d[1] - s[1]) for s in stubs)
+    # ponytail: LONG jogs for stitches. Partitions used SHORT (their fields
+    # are small); a stitch crosses a whole neighboring field, and the short
+    # 2..12-row jogs cannot get around a band to enter from the open side
+    # (measured: C3 died at the same endpoints twice). Deep jogs cost
+    # wandering in open streets, which is free here.
+    _JOGS = _JOGS_LONG
+    _dump = os.environ.get("REDSTONE_HIERDUMP")
+    if _dump:
+        metas = [{"b": b, "sub": sub, "shift": sh, "dx": offs[b],
+                  "recs": pctx.recs, "pos": dict(pctx.pos)}
+                 for (b, sub, out, pctx, sh) in built]
+        hier_dump(_dump,
+                  {"blocks": blocks, "solid": solid, "rings": rings,
+                   "wires": wires, "junctions": junctions,
+                   "repeaters": repeaters, "pos": pos, "sup": sup},
+                  metas, cross, prod, recipe["inputs"])
+    # ponytail: consumer lever-bank minima (post-shift z; merge offsets x
+    # only, so partition z applies directly). A stitch target stub sits in
+    # its band's live lever row; the row north of the bank is empty margin.
+    levermin = {}
+    for (b, sub, out, pctx, sh) in built:
+        lz = [z for (x, z), v in pctx.solid.items() if v[0] == "lever"]
+        if lz:
+            levermin[b] = min(lz)
+    def _stitch(drv, stub, n, b):
+        # direct first (proven for short spans); else two-hop via a hop row
+        # just north of the consumer lever bank: street north, east-west
+        # along the empty margin, step south into the stub. Never crosses a
+        # lever row or input-lane fan.
+        try:
+            return lwire(mctx, sup, guard, drv, stub, n)
+        except RuntimeError:
+            pass
+        hz = max(1, levermin.get(b, 2) - 1)
+        px = offs[b] - _HIER_GAP // 2
+        p1 = lwire(mctx, sup, guard, drv, (px, hz), n)
+        p2 = lwire(mctx, sup, guard, (px, hz), stub, n)
+        return p1 + p2
+    flow = {}
+    for n in sorted(cross, key=_span):
+        pb = prod[n]
+        if n not in drv_of:
+            raise RuntimeError(f"hier: cross net {n} has no driver")
+        for (b, sub, out, pctx, sh) in built:
+            if n not in sub["inputs"] or n in recipe["inputs"]:
+                continue
+            # partition-local stub + band offset (merged pos may hold
+            # another band's cell for the same net name).
+            stub = (pctx.pos[n][0] + offs[b], pctx.pos[n][1])
+            try:
+                full = _stitch(drv_of[n], stub, n, b)
+            except RuntimeError as e:
+                raise RuntimeError(f"hier stitch {n}: {e}") from None
+            for u, v in zip(full, full[1:]):
+                d = (v[0] - u[0], v[2] - u[2])
+                flow.setdefault((u[0], u[1], u[2]), set()).add(d)
+                flow.setdefault((v[0], v[1], v[2]), set()).add(d)
+            _plant_repeaters(mctx, full, n, flow)
+    check_shorts(wires, junctions, blocks)
+    check_opens(wires, junctions, repeaters, solid, pos, blocks)
+    return finish_assembly(blocks, solid, wires, rings, junctions, repeaters, pos)
+
+
+def hier_dump(path, merged, metas, cross, prod, inputs):
+    # stitch-iteration harness: pickle the post-lever-removal merged field
+    # so stitch strategies iterate in seconds without re-composing bands
+    # (30 min per full run). Harness rebuilds mctx + guard + levermin and
+    # calls _stitch variants directly.
+    import pickle as _p
+    rec = {"merged": merged, "metas": metas, "cross": cross, "prod": prod,
+           "inputs": inputs}
+    with open(path, "wb") as f:
+        _p.dump(rec, f)
+    print(f"hier dump {path} ({len(metas)} bands)", flush=True)
 
 
 # Placement spread factor (module-global so _compose_once's spacing reads
@@ -1368,6 +1687,16 @@ _SPREAD = 1
 # ground (measured: alu1's OP1/OP0 input collision vanishes, micro1 stays
 # green). compose() tries gates-first at every spread, then inputs-first.
 _ORDER = "gates_first"
+
+# Territorial placement + band-ordered routing (hierarchical-lite for 70+
+# gate fields). 0 = off (every green build). compose() escalates here only
+# after the whole standard ladder fails on a big banded recipe, so greens
+# never see it; REDSTONE_TERR=1 forces it for probes. Bands become x
+# territories (wide streets between them stay open for cross-band trunks);
+# intra-band nets route before cross-band nets.
+_TERR = 0
+_TERR_W = 120
+_TERR_MIN_GATES = 40
 
 # Trunk jog depth candidates. SHORT is the proven baseline (every currently
 # green build verifies on it). LONG reaches past a sealed band but can let a
@@ -1403,25 +1732,57 @@ def compose(recipe):
     escalates. The build may sprawl across chunks (wires run long,
     repeaters carry them).
     """
-    global _SPREAD, _ORDER, _JOGS, _DEADLINE
+    global _SPREAD, _ORDER, _JOGS, _DEADLINE, _TERR
     last = None
     deadline = time.monotonic() + _COMPOSE_SECS if _COMPOSE_SECS else None
     _DEADLINE = deadline
     # REDSTONE_FORCE="spread,order,jog" pins one rung (diagnostics: bisect a
     # single config instead of climbing the whole ladder).
     force = os.environ.get("REDSTONE_FORCE", "").strip()
+    # ponytail: territorial fallback. Standard ladder first (every green lands
+    # rung 1, bit-identical — the fallback never runs for them); only a big
+    # banded recipe that exhausts all 44 rungs escalates to territories.
+    # REDSTONE_TERR=1 skips straight to territories (probes).
+    terr_only = os.environ.get("REDSTONE_TERR") == "1"
+    terr_attempts = [("short", s, o, 1)
+                     for s in (2, 4) for o in ("gates_first", "inputs_first")]
+    # ponytail: split-and-stitch macros first for big banded recipes (their
+    # partitions route at 15-gate scale in seconds; the monolith cannot).
+    # Greens are never big (<40 gates), so this branch never runs for them.
+    # REDSTONE_HIER=1 jumps straight to macros (probes).
+    hier_only = os.environ.get("REDSTONE_HIER") == "1"
+    big_banded = (len(recipe["gates"]) >= _TERR_MIN_GATES
+                  and any(g.get("band") is not None for g in recipe["gates"]))
     if force:
         f_spread, _, rest = force.partition(",")
         f_order, _, f_jog = rest.partition(",")
-        attempts = [(f_jog or "short", int(f_spread), f_order or "gates_first")]
+        attempts = [(f_jog or "short", int(f_spread), f_order or "gates_first", 0)]
+    elif terr_only:
+        attempts = terr_attempts
     else:
-        attempts = [(j, s, o)
+        attempts = [(j, s, o, 0)
                     for j in ("short", "long")
                     for s in (1, 2, 3, 4, 5, 6, 8, 10)
                     for o in ("gates_first", "inputs_first")]
     try:
-        for i, (jog, spread, order) in enumerate(attempts):
-            _SPREAD, _ORDER = spread, order
+        if hier_only:
+            _SPREAD, _ORDER, _TERR = 1, "gates_first", 0
+            return compose_hier(recipe)
+        if not force and not terr_only and big_banded:
+            try:
+                return compose_hier(recipe)
+            except RuntimeError as e:
+                last = e
+                # sub ladders re-arm the global clock; restore the outer one
+                # so the remaining ladder keeps its own budget.
+                _DEADLINE = deadline
+                if ((deadline and time.monotonic() > deadline)
+                        or not any(k in str(e) for k in _RETRYABLE)):
+                    raise
+                print(f"compose hier failed ({str(e)[:60]}); retrying",
+                      flush=True)
+        for i, (jog, spread, order, terr) in enumerate(attempts):
+            _SPREAD, _ORDER, _TERR = spread, order, terr
             _JOGS = _JOGS_SHORT if jog == "short" else _JOGS_LONG
             try:
                 return _compose_once(recipe)
@@ -1431,11 +1792,31 @@ def compose(recipe):
                         or (deadline and time.monotonic() > deadline)
                         or not any(k in str(e) for k in _RETRYABLE)):
                     raise
-                print(f"compose {jog} spread {spread} {order} failed "
+                print(f"compose {jog} spread {spread} {order}"
+                      f"{' terr' if terr else ''} failed "
                       f"({str(e)[:60]}); retrying", flush=True)
+        # standard ladder exhausted: escalate big banded recipes to territories
+        if (not force and not terr_only
+                and len(recipe["gates"]) >= _TERR_MIN_GATES
+                and any(g.get("band") is not None for g in recipe["gates"])
+                and any(k in str(last) for k in _RETRYABLE)
+                and not (deadline and time.monotonic() > deadline)):
+            for (jog, spread, order, terr) in terr_attempts:
+                _SPREAD, _ORDER, _TERR = spread, order, terr
+                _JOGS = _JOGS_SHORT
+                try:
+                    return _compose_once(recipe)
+                except RuntimeError as e:
+                    last = e
+                    if ((deadline and time.monotonic() > deadline)
+                            or not any(k in str(e) for k in _RETRYABLE)):
+                        raise
+                    print(f"compose {jog} spread {spread} {order} terr failed "
+                          f"({str(e)[:60]}); retrying", flush=True)
         raise last
     finally:
         _DEADLINE = None
+        _TERR = 0
 
 
 if __name__ == "__main__":
