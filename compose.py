@@ -737,7 +737,7 @@ def _compose_once(recipe):
         loads = netspec.get(name, {}).get('loads', [])
         if not loads:
             continue  # unused input: no lever, nothing to drive
-        lx = minx - 2 - 8 * _SPREAD * recipe["inputs"].index(name)
+        lx = minx - 2 - 4 * _SPREAD * recipe["inputs"].index(name)
         lz = minz - 6 - 2 * len(edge_n)
         edge_n[name] = lz
         cx = lx - 1
@@ -1082,7 +1082,7 @@ def _compose_once(recipe):
                         # (B@x6 vs n1@x8 — a gate port, not the input lane),
                         # 38 refusals unchanged, and small builds grew
                         # 182/396/250/282 -> 238/492/306/354 for nothing.
-                        lx = minx - 2 - 8 * _SPREAD * inps.index(net)
+                        lx = minx - 2 - 4 * _SPREAD * inps.index(net)
                         d1 = lwire(ctx, sup, guard, drv, (lx, drv[1]), net, avoid)
                         # ponytail: ONE lane leg, not two. Splitting the
                         # N-S march (drv row -> load row) from the E-W
