@@ -356,3 +356,10 @@ ladder with a different order trajectory. If ANY greens, DONE.
 _REDSTONE_COMPOSE_YMAX=8_ (wide envelope was -4..6). Env-only, no code.
 example_and with YMAX=8 greens bit-identical (144), so safe. 2 probes
 (alu4/cpu4, 900s) + 6 seeds = 8 parallel trajectories.
+
+### Seeds: 6 trajectories, 6 different walls, 0 greens (decisive)
+All hit the 900s deadline (fired correctly) after exhausting ladders:
+alu4 seeds failed on O3 / B2 / X3. cpu4 seeds failed on R0_R2 / AL_n0 /
+R0_nD3. Six different nets. The seed mechanism WORKS (trajectories diverge),
+but every trajectory hits a wall. This proves the wall is NOT order-
+sensitivity: no order works. Systemic congestion confirmed 9 ways.
