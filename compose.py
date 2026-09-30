@@ -847,10 +847,16 @@ def _compose_once(recipe):
     # with the router below (minx-2-4*SPREAD*index); the lever goes one
     # west so its stub IS the lane start. Levers stay banked along the
     # north edge (2-pitch in z) per the build contract.
+    # ponytail: hier edge nets defer (levered on the producer-facing edge
+    # below, not the north row). Only hier subs / EDGE lines carry them.
+    _edgemap = recipe.get("edge", {})
+    _edge = set(_edgemap)
     for k, name in enumerate(recipe["inputs"]):
         loads = netspec.get(name, {}).get('loads', [])
         if not loads:
             continue  # unused input: no lever, nothing to drive
+        if name in _edge:
+            continue  # edge lever below
         # ponytail: lane pitch doubles past 9 inputs. 10 input lanes at
         # 4*spread collide in the approach cone (alu4 B3/A1 touch); at
         # 8*spread each lane owns twice the room. Gated so the 16 green
@@ -869,6 +875,31 @@ def _compose_once(recipe):
         # free until the lane turns north/south).
         stamp_wire(ctx, [(cx + 1, lz)], name)
         pos[name] = (cx + 1, lz)
+    # ponytail: hier edge levers. A boundary input levered on the north row
+    # buries its stub in the live lever bank; the stitch must then cross the
+    # whole consumer field to reach it (measured: t23 no-ground even at 33
+    # cells into a north stub). On the edge FACING its producer the stub is
+    # one street-crossing from the driver. Stub juts away from the field
+    # (into the street side); lane legs work unchanged from pos. z = median
+    # load row keeps legs short. Standard recipes never carry west/east keys.
+    for _side, _sgn in (("W", -1), ("E", 1)):
+        _enets = sorted(n for n, s in _edgemap.items() if s == _side)
+        # ponytail: minx/maxx are the tile bbox; lanes live west of minx, so
+        # a west stub column must clear them (lane pitch 4*spread per input).
+        _x0 = (minx - 2 - 4 * _SPREAD * len(recipe["inputs"]) - 4
+               if _side == "W" else maxx + 6)
+        for _i, name in enumerate(_enets):
+            loads = netspec.get(name, {}).get('loads', [])
+            if not loads:
+                continue
+            _zc = sorted(c[1] for c in loads)[len(loads) // 2]
+            cx = _x0 + _sgn * 2 * _i
+            blocks.append((cx, 1, _zc, "minecraft:lever[face=floor,facing=north,powered=false]"))
+            solid[(cx, _zc)] = ("lever", name)
+            for dx, dz in DIRS:
+                ring(ctx, cx + dx, _zc + dz, own(name))
+            stamp_wire(ctx, [(cx + _sgn, _zc)], name)
+            pos[name] = (cx + _sgn, _zc)
     # ponytail: lamp taps stamped BEFORE routing, not after. tap_lamps picks
     # the first of four spots (E/S/N/W) that is clear of wire AND of foreign
     # wire BESIDE it. On the post-routing field a dense tile band has no such
@@ -1397,6 +1428,75 @@ def _compose_once(recipe):
 
 _HIER_GAP = 60
 
+# Hard kill for one pinned band rung (REDSTONE_HIER_RUNG_SECS, default 90s).
+_RUNG_SECS = float(os.environ.get("REDSTONE_HIER_RUNG_SECS", "90") or 90)
+
+
+def _hier_ctx(d):
+    # Child state comes back as plain dicts (SimpleNamespace does not survive
+    # the spawn boundary), so rewrap for the merge, which reads .blocks/.pos/
+    # .recs attributes like the in-process ctx does.
+    return SimpleNamespace(**d)
+
+
+def _rung_worker(conn, sub, force):
+    # Module level, not a closure: Windows spawn re-imports __main__ and
+    # pickles the target by reference (a nested def dies with
+    # "module '__main__' has no attribute ..."). State comes back as plain
+    # dicts for the same reason (SimpleNamespace pickles by reference).
+    os.environ["REDSTONE_FORCE"] = force
+    try:
+        out = compose(sub)
+        c = _last_ctx
+        conn.send(("ok", out, {"blocks": c.blocks, "solid": c.solid,
+                               "rings": c.rings, "wires": c.wires,
+                               "junctions": c.junctions,
+                               "repeaters": c.repeaters, "pos": c.pos,
+                               "sup": c.sup, "recs": c.recs}, _last_shift))
+    except RuntimeError as e:
+        conn.send(("err", str(e)))
+    except Exception as e:  # never let a child wedge the parent
+        conn.send(("err", f"{type(e).__name__}: {e}"))
+    finally:
+        conn.close()
+
+
+def _rung_child(sub, force, secs):
+    """compose(sub) under REDSTONE_FORCE in a killable child.
+
+    Returns (result, msg): result is (out, ctx, shift) on success, a string
+    on RuntimeError, or None when the child was hard-killed at `secs`.
+    Rule 7 needs a KILL, not a polled deadline: a pinned rung is one
+    _compose_once and nothing inside it checks a clock (measured: a rung
+    burning >11 min with no output, twice). The child is spawned, joined
+    with a timeout, then terminate()d — no unbounded wait, ever.
+    """
+    import multiprocessing as _mp
+    parent, child = _mp.Pipe(duplex=False)
+    p = _mp.Process(target=_rung_worker, args=(child, sub, force), daemon=True)
+    p.start()
+    child.close()
+    got = None
+    if parent.poll(secs):
+        try:
+            got = parent.recv()
+        except EOFError:
+            got = ("err", "child died (EOF)")
+    p.join(2)
+    if p.is_alive():
+        p.terminate()
+        p.join(5)
+        if p.is_alive():
+            p.kill()
+            p.join(5)
+        return None, f"killed at {secs:g}s"
+    parent.close()
+    if got is None:
+        return None, "no result (child died)"
+    if got[0] == "ok":
+        return (got[1], got[2], got[3]), None
+    return None, got[1]
+
 
 def _hier_drv(recs, net):
     # driver port cell of net from tile records (build_netspec's drv half;
@@ -1463,12 +1563,18 @@ def compose_hier(recipe):
         # single-band sub can orphan clone-adjacent runs (measured: _rc3
         # corridor orphaned OP1's port legs, OPEN at (111,1,21)). Untagged,
         # the sub is an ordinary 15-gate compose in the proven regime.
-        sub = {"inputs": ([x for x in recipe["inputs"] if x in need]
-                          + sorted(x for x in need if x not in recipe["inputs"])),
+        _bd = sorted(x for x in need if x not in recipe["inputs"])
+        sub = {"inputs": ([x for x in recipe["inputs"] if x in need] + _bd),
                "outputs": sorted(g["out"] for g in bg
                                  if g["out"] in recipe["outputs"]),
                "gates": [{k: v for k, v in g.items() if k != "band"}
-                         for g in bg]}
+                         for g in bg],
+               # ponytail: edge-lever classification for _compose_once (see
+               # edge levers): boundary nets lever on the producer-facing
+               # edge so stitches cross one street, not a field. EDGE lines
+               # let the standalone extractor route identical geometry.
+               "edge": {n: ("W" if prod.get(n, b) < b else "E")
+                        for n in _bd}}
         # ponytail: sub ladder WITH sim gate. A partition that routes but
         # miscomputes (measured: band-1 COUT dark standalone, same class as
         # the mux2/andor8 lessons) silently poisons the merge — sim never
@@ -1497,12 +1603,22 @@ def compose_hier(recipe):
         for (_jog, _s, _o) in _rungs:
             if _dl_saved is not None and time.monotonic() > _dl_saved:
                 break
-            os.environ["REDSTONE_FORCE"] = f"{_s},{_o},{_jog}"
-            try:
-                out = compose(sub)
-            except RuntimeError as e:
-                _err = e
+            # ponytail: rule 7 AT RUNG GRANULARITY, by hard kill. A pinned
+            # rung is a single _compose_once, and nothing inside it checks a
+            # clock (lwire/astar can spin), so the deadline cannot be polled
+            # from in-process. Run it in a child and terminate it on
+            # overrun — measured one rung burning >11 min with no output,
+            # twice. terminate() is a hard kill; the child holds no state
+            # the parent needs (result comes back over a queue).
+            _got, _q = _rung_child(sub, f"{_s},{_o},{_jog}", _RUNG_SECS)
+            if _got is None:
+                _err = RuntimeError(f"hier band {b}: rung {_s}/{_o}/{_jog} "
+                                    f"killed at {_RUNG_SECS:g}s")
                 continue
+            if isinstance(_got, str):
+                _err = RuntimeError(_got)
+                continue
+            out, _pctx, _sh = _got
             try:
                 if sub["outputs"]:
                     _simv(sub, out[0], out[2], quiet=True)
@@ -1518,15 +1634,15 @@ def compose_hier(recipe):
             for _n in cross:
                 if prod.get(_n) != b:
                     continue
-                _c = _hier_drv(_last_ctx.recs, _n)
+                _c = _hier_drv(_pctx["recs"], _n)
                 if _c is None:
                     continue
-                _d = (_c[0] + _last_shift[0], _c[1] + _last_shift[1])
+                _d = (_c[0] + _sh[0], _c[1] + _sh[1])
                 _open = 0
                 for _ax, _az in DIRS:
-                    _w = _last_ctx.wires.get((_d[0] + _ax, 1, _d[1] + _az))
-                    _s = _last_ctx.solid.get((_d[0] + _ax, _d[1] + _az))
-                    if _s is None and _w in (None, _n):
+                    _w = _pctx["wires"].get((_d[0] + _ax, 1, _d[1] + _az))
+                    _sd = _pctx["solid"].get((_d[0] + _ax, _d[1] + _az))
+                    if _sd is None and _w in (None, _n):
                         _open += 1
                 if _open < 2:
                     _closed = _n
@@ -1535,6 +1651,7 @@ def compose_hier(recipe):
                 _err = RuntimeError(f"hier band {b}: port {_closed} walled")
                 continue
             _err = None
+            print(f"hier band {b} rung {_jog} spread {_s} {_o}", flush=True)
             break
         if _force_saved is None:
             os.environ.pop("REDSTONE_FORCE", None)
@@ -1544,12 +1661,10 @@ def compose_hier(recipe):
             if _hier_saved is not None:
                 os.environ["REDSTONE_HIER"] = _hier_saved
             raise RuntimeError(f"hier band {b}: {_err}") from None
-        # ponytail: recs coords are pre-shift ("recs is dead past wiring");
-        # every other live structure is post-shift. Snapshot this partition's
-        # shift now (_last_shift is global; the next sub overwrites it).
-        # Measured: without this the stitch aimed at stale rock (C1 drv read
-        # bare, aimed 1 shift off into A0's runs).
-        built.append((b, sub, out, _last_ctx, _last_shift))
+        # recs coords are pre-shift; everything else post-shift (snapshot now:
+        # _last_shift is global and the next sub overwrites it — measured
+        # stitch aiming 1 shift off into A0's runs without this).
+        built.append((b, sub, out, _hier_ctx(_pctx), _sh))
     if _hier_saved is not None:
         os.environ["REDSTONE_HIER"] = _hier_saved
     blocks, solid, rings, wires, junctions, repeaters, pos, sup = (
@@ -1842,6 +1957,7 @@ def compose(recipe):
             _SPREAD, _ORDER, _TERR = 1, "gates_first", 0
             return compose_hier(recipe)
         if not force and not terr_only and big_banded:
+            _hier_dl = deadline
             try:
                 return compose_hier(recipe)
             except RuntimeError as e:

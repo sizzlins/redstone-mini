@@ -8,6 +8,7 @@ OPS = ("AND", "OR", "XOR", "NOT")
 def parse_recipe(text):
     inputs, outputs, gates = [], [], []
     band = None
+    edge = {}
     for raw in text.strip().splitlines():
         line = raw.split("#")[0].strip()
         if not line:
@@ -17,6 +18,17 @@ def parse_recipe(text):
             inputs = [s.strip() for s in line[3:].split(",") if s.strip()]
         elif up.startswith("OUT "):
             outputs = [s.strip() for s in line[4:].split(",") if s.strip()]
+        elif up.startswith("EDGE "):
+            # ponytail: hier edge levers (boundary inputs lever on the
+            # producer-facing edge, not the north row). File syntax so
+            # extracted band files route the exact hier geometry standalone.
+            # "EDGE <net> <W|E>". No EDGE lines = exact old behavior.
+            try:
+                _n, _s = up[5:].split()
+                assert _s in ("W", "E")
+            except (ValueError, AssertionError):
+                raise ValueError(f"bad EDGE (use: EDGE foo W): {raw!r}")
+            edge[line[5:].split()[0].strip()] = _s
         elif up.startswith("BAND "):
             # ponytail: optional datapath columns (adder8 pattern). Untagged
             # recipes auto-band exactly as before; nothing else changes.
@@ -40,7 +52,10 @@ def parse_recipe(text):
                 gates[-1]["band"] = band
     if not inputs or not gates:
         raise ValueError("need at least IN ... and one gate line")
-    return {"inputs": inputs, "outputs": outputs, "gates": gates}
+    _r = {"inputs": inputs, "outputs": outputs, "gates": gates}
+    if edge:
+        _r["edge"] = edge
+    return _r
 
 
 
