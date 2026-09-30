@@ -171,7 +171,11 @@ def expand_gates(gates, inputs=()):
             gc["rep"] = True
             clones.append((min(kept), gc))
         out = []
-        pending = sorted(clones)
+        # ponytail: sort by index only. Two replicated nets (e.g. alu4's n1 +
+        # n0, one clone per band each) can share a min-load index; tuple sort
+        # then compares dicts and dies with TypeError. Stable index sort keeps
+        # distinct-index order identical and inserts ties in spec order.
+        pending = sorted(clones, key=lambda t: t[0])
         for idx, g in enumerate(gates):
             if idx in drop:
                 continue

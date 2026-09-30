@@ -409,3 +409,16 @@ Start: 16/18 green (alu4/cpu4 red, 10 approaches exhausted), 8 new builds banked
 - All recipe_check OK before routing (mux2 32v, decode2 4v, add4 256v).
 
 Running total: 19/21 green. New builds total 11 (8 prior + 3 this session).
+
+### Try 1 (alu4): BAND-by-slice + auto-replication (NEW angle)
+alu4/cpu4 carry no BAND tags; maze auto-bands one-gate-per-column (72/123
+bands, worst partition). mux4 proves BANDs + replication work. Banded alu4 by
+bit-slice (BAND 0..3, control in 0): recipe_equiv 1024v EQUIVALENT. Side effect:
+n1/n0 (8 loads, 4 bands, input-driven) auto-replicate per band -- the mux2
+lesson applied automatically.
+ENGINE BUG FOUND + FIXED (recipe.py:174): sorted(clones) compares dicts on
+index ties (n1+n0 clones share min-load idx) -> TypeError. Fixed to
+key=lambda t: t[0] (stable). Self-checks pass; 4 small bit-identical
+(144/322/224/214); mux2/decode2 still green. Banded candidate compose routes
+(_rc clones live) but ladder still climbing (inputs B0/OP0/B1 + clone seals).
+Full bounded run queued.
