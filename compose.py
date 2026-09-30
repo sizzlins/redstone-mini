@@ -15,17 +15,6 @@ from layout import build_netspec, check_shorts, check_opens, finish_assembly, _s
 # for offline probes. Not part of the build contract.
 _last_shift = (0, 0)
 
-# Composer's vertical envelope for the astar fallback: BOTH directions.
-# A route may leave a lever at y=1, climb, fly over the tile band, come
-# back down to a torch host, or trench below the surface when the ground
-# above is saturated. The maze keeps its verified y=1..3 band (a wider one
-# lets it return paths its own stamper then rejects as self-lid); composer
-# validates flights with _flight_live/_leg_live instead, so it can afford
-# a wide band. A search needs some bound to terminate, so these are wide
-# defaults, not a wall.
-_ASTAR_YMIN = int(os.environ.get("REDSTONE_COMPOSE_YMIN", "-4"))
-_ASTAR_YMAX = int(os.environ.get("REDSTONE_COMPOSE_YMAX", "6"))
-
 _VEC = {(1, 0): "east", (-1, 0): "west", (0, 1): "south", (0, -1): "north"}
 
 
@@ -229,80 +218,76 @@ def lwire(ctx, sup, guard, a, b, net, avoid=frozenset()):
     # with layout._support (torch-hug guard) and stamped here, never during
     # search, so a flyover cannot lid its own later slope. Self-lid and
     # support refusals fall through to the original loud error.
-    # ponytail: narrow 3D band first, wide band only if it finds nothing.
-    # A marginal wide success poisons downstream routing worse than a loud
-    # failure, so the proven y=1..3 band runs before the full envelope.
-    for _ymin, _ymax in ((1, 3), (_ASTAR_YMIN, _ASTAR_YMAX)):
-        _got = _try_flight(ctx, sup, guard, snap, a, b, net, avoid,
-                           _ymin, _ymax)
-        if _got:
-            return _got
+    fly = _astar_wrap(ctx, sup, guard, a, b, net, avoid, flat=False)
+    if fly and any(c[1] >= 2 for c in fly):
+        needs = []
+        try:
+            for cell in fly:
+                if cell[1] < 2:
+                    continue
+                r = _support(cell, net, ctx.solid, ctx.wires, sup,
+                             ctx.repeaters, guard)
+                if r is False:
+                    raise RuntimeError("support sealed")
+                if r is not None and r not in sup and r not in needs:
+                    needs.append(r)
+            # ponytail: cobf = every cell that can act as a support, not
+            # just the ones this flight owns. _support returns None ("reuse")
+            # when the cell below is ALREADY cobble — a tile's own body — and
+            # that cobble lives in ctx.solid, not in sup, so the old cobf
+            # missed it and the self-lid test below rejected every descent
+            # that passed a tile. Measured: alu4's carry C1 (107,41)->(195,55)
+            # found a 103-cell flight at y=1..3 and was killed by
+            # "self-lid at (195,2,54)->(195,1,55)" — the last step onto the
+            # load, whose support is the destination tile's own body.
+            cobf = set(sup) | set(needs)
+            cobf.update((x, 1, z) for (x, z), (k, _n) in ctx.solid.items()
+                        if k == "cobble")
+            for u, v in zip(fly, fly[1:]):
+                if u[1] == v[1]:
+                    continue
+                lo, hi = (u, v) if u[1] < v[1] else (v, u)
+                if (hi[0], hi[1] - 1, hi[2]) not in cobf or \
+                        (lo[0], lo[1] + 1, lo[2]) in cobf:
+                    raise RuntimeError("self-lid")
+        except RuntimeError:
+            pass
+        else:
+            for s_ in needs:
+                sup[s_] = net
+                ctx.sup[s_] = net
+                ctx.blocks.append((s_[0], s_[1], s_[2], "minecraft:cobblestone"))
+                if s_[1] == 1:
+                    ctx.solid.setdefault((s_[0], s_[2]), ("cobble", net))
+            try:
+                from tiles import stamp_wire as _sw
+                _sw(ctx, fly, net, (a, b))
+            except RuntimeError:
+                sw, ss, sc, so, sb = snap
+                ctx.wires.clear()
+                ctx.wires.update(sw)
+                sup.clear()
+                sup.update(ss)
+                ctx.sup.clear()
+                ctx.sup.update(sc)
+                ctx.solid.clear()
+                ctx.solid.update(so)
+                del ctx.blocks[sb:]
+            else:
+                if not _flight_live(ctx, net, a, b, fly):
+                    sw, ss, sc, so, sb = snap
+                    ctx.wires.clear()
+                    ctx.wires.update(sw)
+                    sup.clear()
+                    sup.update(ss)
+                    ctx.sup.clear()
+                    ctx.sup.update(sc)
+                    ctx.solid.clear()
+                    ctx.solid.update(so)
+                    del ctx.blocks[sb:]
+                else:
+                    return fly[1:-1]
     raise first_err
-
-
-def _try_flight(ctx, sup, guard, snap, a, b, net, avoid, ymin, ymax):
-    """One 3D-flight attempt in a given vertical band; accepted cells or None.
-
-    All-or-nothing: any failure (no path, sealed support, self-lid, bad
-    stamp, dead flight) rolls back to snap and returns None. Lets lwire try
-    the proven narrow band first and the wide band only if that finds
-    nothing — a marginal wide success poisons downstream routing worse than
-    a loud failure (measured: ctrl_decode went GREEN to no-ground when the
-    wide band ran co-equal).
-    """
-    sw, ss, sc, so, sb = snap
-    fly = _astar_wrap(ctx, sup, guard, a, b, net, avoid, flat=False,
-                      ymin=ymin, ymax=ymax)
-    if not (fly and any(c[1] >= 2 for c in fly)):
-        return None
-    needs = []
-    try:
-        for cell in fly:
-            if cell[1] < 2:
-                continue
-            r = _support(cell, net, ctx.solid, ctx.wires, sup,
-                         ctx.repeaters, guard)
-            if r is False:
-                raise RuntimeError("support sealed")
-            if r is not None and r not in sup and r not in needs:
-                needs.append(r)
-        cobf = set(sup) | set(needs)
-        cobf.update((x, 1, z) for (x, z), (k, _n) in ctx.solid.items()
-                    if k == "cobble")
-        for u, v in zip(fly, fly[1:]):
-            if u[1] == v[1]:
-                continue
-            lo, hi = (u, v) if u[1] < v[1] else (v, u)
-            if (hi[0], hi[1] - 1, hi[2]) not in cobf or \
-                    (lo[0], lo[1] + 1, lo[2]) in cobf:
-                raise RuntimeError("self-lid")
-    except RuntimeError:
-        return None
-    for s_ in needs:
-        sup[s_] = net
-        ctx.sup[s_] = net
-        ctx.blocks.append((s_[0], s_[1], s_[2], "minecraft:cobblestone"))
-        if s_[1] == 1:
-            ctx.solid.setdefault((s_[0], s_[2]), ("cobble", net))
-    try:
-        from tiles import stamp_wire as _sw
-        _sw(ctx, fly, net, (a, b))
-    except RuntimeError:
-        pass
-    else:
-        if _flight_live(ctx, net, a, b, fly) and _leg_live(
-                ctx, net, a, fly[1:-1], b):
-            return fly[1:-1]
-    ctx.wires.clear()
-    ctx.wires.update(sw)
-    sup.clear()
-    sup.update(ss)
-    ctx.sup.clear()
-    ctx.sup.update(sc)
-    ctx.solid.clear()
-    ctx.solid.update(so)
-    del ctx.blocks[sb:]
-    return None
 
 
 def _flight_live(ctx, net, a, b, flight):
@@ -362,8 +347,7 @@ def _flight_live(ctx, net, a, b, flight):
     return False
 
 
-def _astar_wrap(ctx, sup, guard, a, b, net, avoid, flat=True,
-                ymin=None, ymax=None):
+def _astar_wrap(ctx, sup, guard, a, b, net, avoid, flat=True):
     """layout.astar for compose corridors (any coords, flat or 3D).
 
     ponytail: astar windows clip at 0 while compose lanes run negative, so
@@ -400,64 +384,16 @@ def _astar_wrap(ctx, sup, guard, a, b, net, avoid, flat=True,
     # what a hand route does anyway. Cost, not a wall, so a build with no
     # other way still routes.
     for _ex, _ez in ((a[0], a[1]), (b[0], b[1])):
-        for _dy in range(2, _ASTAR_YMAX + 1):
+        for _dy in range(2, 5):
             congest[(_ex + ox, _dy, _ez + oz)] = 10 ** 6
     W = max(a[0], b[0]) + ox + m + 1
     D = max(a[1], b[1]) + oz + m + 1
     found = astar([(a[0] + ox, 1, a[1] + oz)], (b[0] + ox, 1, b[1] + oz), net,
                   W, D, solid2, rings2, wires2, junctions2, m,
-                  None, congest, guard2, sup2, reps2, None, flat, air2,
-                  ymin if ymin is not None else _ASTAR_YMIN,
-                  ymax if ymax is not None else _ASTAR_YMAX)
+                  None, congest, guard2, sup2, reps2, None, flat, air2)
     if not found or len(found) < 2:
         return None
     return [(x - ox, y, z - oz) for (x, y, z) in found]
-
-
-def _leg_live(ctx, net, a, done, b):
-    """Is every cell this leg stamped reachable from a under sim's rules?
-
-    Same coupling rules as check_opens (same-y dust, repeaters, slope links
-    with support-below/no-lid), run per leg instead of once at the end. A
-    leg that stamps cleanly but leaves dead dust is only otherwise reported
-    hundreds of cells from its driver, by which point the whole build is
-    thrown away. Rejecting it here makes lwire try the next candidate.
-
-    Measured: cand_onehot2 (14 gates) produced 570 dead cells at y=2/y=3 —
-    elevated runs that no support/lid arrangement actually couples — and
-    only the final check_opens saw it, after 32s and five spread retries.
-    """
-    from core import DIRS as _D
-    wires, reps = ctx.wires, ctx.repeaters
-    start, goal = (a[0], 1, a[1]), (b[0], 1, b[1])
-    want = {(c[0], c[1], c[2]) for c in done}
-    if not want:
-        return True
-    cob = {(x, y, z) for x, y, z, bid in ctx.blocks
-           if bid.split("[")[0] == "minecraft:cobblestone"}
-    seen, stack = set(), [start]
-    while stack:
-        c = stack.pop()
-        if c in seen:
-            continue
-        seen.add(c)
-        for dx, dz in _D:
-            m = (c[0] + dx, c[1], c[2] + dz)
-            if wires.get(m) == net:
-                stack.append(m)
-            elif m in reps and reps[m][0] == net:
-                stack.append(m)
-            up = (c[0] + dx, c[1] + 1, c[2] + dz)
-            if wires.get(up) == net and (c[0] + dx, c[1], c[2] + dz) in cob \
-                    and (c[0], c[1] + 1, c[2]) not in cob:
-                stack.append(up)
-            dn = (c[0] + dx, c[1] - 1, c[2] + dz)
-            if wires.get(dn) == net and (c[0], c[1] - 1, c[2]) in cob \
-                    and (c[0] + dx, c[1], c[2] + dz) not in cob:
-                stack.append(dn)
-    if want <= seen or goal in seen and want <= seen:
-        return True
-    return want <= seen
 
 
 def _walk(ctx, sup, guard, a, b, net, cells):
@@ -565,9 +501,6 @@ def _walk(ctx, sup, guard, a, b, net, cells):
         stamp_wire(ctx, [front], net)
         done.append((front[0], 1, front[1]))
         j = fi + 1
-    if not _leg_live(ctx, net, a, done, b):
-        raise RuntimeError(f"compose: dead leg for {net}: {a} -> {b} "
-                           f"({len(done)} cells)")
     # no planting here: boosters run per full net-path after all wiring
     # (a leg starts wherever the previous leg decayed to, so per-leg
     # spacing plants on dead wire). See compose() below.
@@ -714,12 +647,7 @@ def _compose_once(recipe):
         drvs = [a for a in g["args"] if a in placed]
         if not drvs:
             ox, gz = topx, 12
-            # NOT scaled by spread: seed spacing sets how far east the field
-            # reaches, and spreading it too just multiplies every input's
-            # travel distance (cand_pairs4 measured a 2300-cell lane at
-            # spread 5). Only the row pitch and the bump widen, which is
-            # what actually creates room around a tile.
-            topx += 30
+            topx += 30 * _SPREAD
         else:
             bottom = max(z for a in drvs for (_, z) in placed[a][3])
             n = sum(len(placed[a][3]) for a in drvs)
@@ -836,9 +764,11 @@ def _compose_once(recipe):
         for cell in spec['loads']:
             allloads.setdefault(n2, set()).add(cell)
     halos = {}
-    for net in list(netspec) + ["0"]:
+    for net in netspec:
         if net in ("0", "1"):
-            halos[net] = frozenset()   # "1" routes now; it has no halo of its own
+            # "1" routes now (constant stubs need a driver); it carries no
+            # halo of its own. "0" is dark by absence and never routes.
+            halos[net] = frozenset()
             continue
         h = set()
         for n2, s in allloads.items():
@@ -875,13 +805,8 @@ def _compose_once(recipe):
     # input private ground; E-W jogs cross them perpendicularly
     # (hop-able). Gate nets route first (short direct runs stamp before
     # lanes fill).
-    # ponytail: "1" is a ROUTABLE net, "0" is not. Any tile that consumes a
-    # constant stamps a real wire stub for it, so excluding "1" from routing
-    # left every such stub stranded unless it happened to touch the tie —
-    # check_opens then reported the constant's own dust as unconnected.
-    # Measured: cmp2 (uses `s0 = d0 XOR 1`) died with `OPEN ... '1'` on five
-    # cells. "0" stays unrouted: build_netspec never records a load for it
-    # (dark by absence) so there is nothing to route.
+    # "1" is a routable net (constant stubs are real dust needing a
+    # driver); "0" stays dark by absence and is never routed.
     gate_nets = sorted(n for n in netspec if n not in inps and n != "0")
     # ponytail: confinement ordering. A driver pocketed by already-stamped
     # wires dies loud at y=1 although ground existed earlier (alu1 m0 sealed
@@ -1036,20 +961,11 @@ def _compose_once(recipe):
         snap = (dict(ctx.wires), dict(sup), dict(ctx.solid), len(ctx.blocks))
         stub = wsnap[0]
         try:
-            # ponytail: rip up BOTH nets' wires, not just the owner's. The
-            # failed net's leg raised mid-walk, so its stamped cells were
-            # never added to `paths` — and the caller marks the failed net
-            # routed anyway, so those wires were orphaned for good. They
-            # read as a live-but-disconnected run and check_opens then
-            # reported them as unconnected dust hundreds of cells away.
-            # Measured: cand_aluslice2 (14 gates) emitted ghost input-net
-            # cells at (84,1,27),(85,1,27) and died `OPEN`; alu1's CIN and
-            # every OPEN I chased this session are this shape.
-            for n in (owner, failed):
-                keep = {c for (rn, cells) in paths if rn == n for c in cells}
-                for c, cn in list(ctx.wires.items()):
-                    if cn == n and c not in stub and c not in keep:
-                        del ctx.wires[c]
+            for n in (owner,):
+                for (rn, cells) in [p for p in paths if p[0] == n]:
+                    for c in cells:
+                        if c not in stub and ctx.wires.get(c) == n:
+                            del ctx.wires[c]
             for c, n in list(sup.items()):
                 if n == owner:
                     del sup[c]
@@ -1148,7 +1064,7 @@ def _compose_once(recipe):
                         # (B@x6 vs n1@x8 — a gate port, not the input lane),
                         # 38 refusals unchanged, and small builds grew
                         # 182/396/250/282 -> 238/492/306/354 for nothing.
-                        lx = minx - 2 - 4 * inps.index(net)
+                        lx = minx - 2 - 4 * _SPREAD * inps.index(net)
                         d1 = lwire(ctx, sup, guard, drv, (lx, drv[1]), net, avoid)
                         # ponytail: ONE lane leg, not two. Splitting the
                         # N-S march (drv row -> load row) from the E-W
@@ -1297,32 +1213,29 @@ _SPREAD = 1
 # sim failures — those are deterministic and spread cannot fix them).
 _RETRYABLE = ("no ground", "no route", "OPEN ", "blocked", "lamp spot taken",
               "order cycle", "SHORT", "repeater loop", "compose blocked")
-# Spreads to try in order (list so offline probes can pin a single one).
-_SPREADS = (1, 2, 3, 4, 5)
 
 
 def compose(recipe):
     """Deterministic place+route, retrying wider on geometry failure.
 
-    Spread 1 first: every green build succeeds here bit-identical, so the
-    gates never move. Only a routing/geometry death retries wider — the
-    build may sprawl across chunks (wires run long, repeaters carry them),
-    which is exactly what unseals a dense field.
+    Spread 1 first: every green build succeeds here, bit-identical, so the
+    gates never move. Only a routing/geometry death retries at spread 2
+    then 3 — the build may sprawl across chunks (wires run long, repeaters
+    carry them), which is exactly what unseals a dense field.
     """
     global _SPREAD
     last = None
-    for spread in _SPREADS:
+    for spread in (1, 2, 3, 4, 5):
         _SPREAD = spread
         try:
             return _compose_once(recipe)
         except RuntimeError as e:
             last = e
-            if spread == _SPREADS[-1] or not any(k in str(e) for k in _RETRYABLE):
+            if spread >= 5 or not any(k in str(e) for k in _RETRYABLE):
                 raise
             print(f"compose spread {spread} failed ({str(e)[:60]}); "
                   f"retrying wider", flush=True)
     raise last
-
 
 
 if __name__ == "__main__":
