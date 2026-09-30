@@ -363,3 +363,18 @@ alu4 seeds failed on O3 / B2 / X3. cpu4 seeds failed on R0_R2 / AL_n0 /
 R0_nD3. Six different nets. The seed mechanism WORKS (trajectories diverge),
 but every trajectory hits a wall. This proves the wall is NOT order-
 sensitivity: no order works. Systemic congestion confirmed 9 ways.
+
+### YMAX=8 vertical envelope: same systemic failure (9th approach)
+_REDSTONE_COMPOSE_YMAX=8_ (was 6). Env-only. Both hit 900s deadline:
+alu4: no ground for X3. cpu4: no ground for AL_X3. More vertical room does
+not help; the congestion is planar (too many routes crossing at every level).
+
+### FINAL: 9 approaches exhausted, wall is definitive
+spreads 1-20 | orders x2 | jogs x2 | clearance 3->1 | pitch 4->8 | nearest-first
+loads | 3D-only (NOFLAT) | maze grow 4/6 | 6 order-seeds (6 different nets fail)
+| YMAX 8 | dead-gate elimination | 100 restarts (reverted: precede converges).
+Every trajectory fails systemically (different nets, same congestion).
+16/18 green, protected and pushed. alu4/cpu4 need a bus/hierarchical router:
+a new place-and-route subsystem (days, design session), not a ladder rung.
+Attempting one overnight risks the 16 working builds for near-zero payoff.
+Standing by to build it properly when directed.
