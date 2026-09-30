@@ -1,0 +1,37 @@
+IN A0, A1, A2, A3, B0, B1, B2, B3
+OUT GT, EQ, LT
+nB0 = NOT B0
+nB1 = NOT B1
+nB2 = NOT B2
+nB3 = NOT B3
+BAND 0
+x0 = A0 XOR B0
+e0 = NOT x0
+g0 = A0 AND nB0
+x1 = A1 XOR B1
+e1 = NOT x1
+g1 = A1 AND nB1
+BAND 1
+x2 = A2 XOR B2
+e2 = NOT x2
+g2 = A2 AND nB2
+x3 = A3 XOR B3
+e3 = NOT x3
+g3 = A3 AND nB3
+BAND 2
+t1 = e3 AND g2
+t2 = e3 AND e2
+t3 = t2 AND g1
+t4 = t2 AND e1
+t5 = t4 AND g0
+BAND 3
+h1 = g3 OR t1
+h2 = h1 OR t3
+GT = h2 OR t5
+q1 = e3 AND e2
+q2 = q1 AND e1
+EQ = q2 AND e0
+nE = NOT EQ
+nG = NOT GT
+l1 = nE AND nG
+LT = l1 AND l1

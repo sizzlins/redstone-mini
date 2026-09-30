@@ -1,0 +1,30 @@
+IN A0, A1, A2, A3, B0, B1, B2, B3
+OUT D0, D1, D2, D3, BOUT
+nB0 = NOT B0
+nB1 = NOT B1
+nB2 = NOT B2
+nB3 = NOT B3
+BAND 0
+x0 = A0 XOR B0
+D0 = x0 AND x0
+u0 = A0 OR nB0
+BAND 1
+x1 = A1 XOR nB1
+D1 = x1 XOR u0
+a1 = A1 AND nB1
+k1 = x1 AND u0
+u1 = a1 OR k1
+BAND 2
+x2 = A2 XOR nB2
+D2 = x2 XOR u1
+a2 = A2 AND nB2
+k2 = x2 AND u1
+u2 = a2 OR k2
+BAND 3
+x3 = A3 XOR nB3
+D3 = x3 XOR u2
+a3 = A3 AND nB3
+k3 = x3 AND u2
+u3 = a3 OR k3
+nC = NOT u3
+BOUT = nC AND nC
