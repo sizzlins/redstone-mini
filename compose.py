@@ -1700,6 +1700,7 @@ def compose_hier(recipe):
             _err = e
         raise _err
     flow = {}
+    stitched = {}
     for n in sorted(cross, key=_span):
         pb = prod[n]
         if n not in drv_of:
@@ -1719,9 +1720,23 @@ def compose_hier(recipe):
                 flow.setdefault((u[0], u[1], u[2]), set()).add(d)
                 flow.setdefault((v[0], v[1], v[2]), set()).add(d)
             _plant_repeaters(mctx, full, n, flow)
+            stitched[n] = stitched.get(n, []) + [full]
     check_shorts(wires, junctions, blocks)
     check_opens(wires, junctions, repeaters, solid, pos, blocks)
-    return finish_assembly(blocks, solid, wires, rings, junctions, repeaters, pos)
+    _out = finish_assembly(blocks, solid, wires, rings, junctions, repeaters, pos)
+    # ponytail: post-merge dump (REDSTONE_HIERDUMP2) for oscillator forensics:
+    # the exact merged field + io + stitch paths, so coupling scans and
+    # bisection sims iterate offline in seconds.
+    _dump2 = os.environ.get("REDSTONE_HIERDUMP2")
+    if _dump2:
+        import pickle as _p2
+        with open(_dump2, "wb") as _f:
+            _p2.dump({"blocks": _out[0], "size": _out[1], "io": _out[2],
+                      "solid": solid, "rings": rings, "wires": wires,
+                      "junctions": junctions, "repeaters": repeaters,
+                      "pos": pos, "sup": sup, "stitched": stitched}, _f)
+        print(f"hier dump2 {_dump2}", flush=True)
+    return _out
 
 
 def hier_dump(path, merged, metas, cross, prod, inputs):
