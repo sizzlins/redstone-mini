@@ -385,3 +385,6 @@ Untried: MANY tries (20 seeds) at tractable grows (0-2). scratch/maze_sweep.py
 loops seeds x grows calling layout()+sim_verify directly (no compose waste),
 checks wall-clock before each attempt, hard-killed at 3300s. 60 attempts each
 for alu4/cpu4. If the maze backend can do it with enough seeds, this finds it.
+@'
+### Maze sweep: too slow to be useful (killed)
+First layout() attempts took 4+ min each (grow 0, smallest). 60 attempts would need 4h+. Slow attempts signal blowup, not success. 10 approaches exhausted.
