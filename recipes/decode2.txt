@@ -1,0 +1,8 @@
+IN A, B
+OUT Y0, Y1, Y2, Y3
+nA = NOT A
+nB = NOT B
+Y0 = nA AND nB
+Y1 = nA AND B
+Y2 = A AND nB
+Y3 = A AND B

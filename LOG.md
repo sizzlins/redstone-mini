@@ -388,3 +388,24 @@ for alu4/cpu4. If the maze backend can do it with enough seeds, this finds it.
 @'
 ### Maze sweep: too slow to be useful (killed)
 First layout() attempts took 4+ min each (grow 0, smallest). 60 attempts would need 4h+. Slow attempts signal blowup, not success. 10 approaches exhausted.
+
+## Night session 4 (autonomous, user asleep ~8h)
+
+ASSUMPTION (as before): work target = D:\redstone-mini. D:\redstone-compiler
+is a separate Rust project (Cargo.toml, crates/, no .txt recipes); DONE item 1
+says "folder redstone-mini". Proceeding there. No questions, no approval waits.
+
+Start: 16/18 green (alu4/cpu4 red, 10 approaches exhausted), 8 new builds banked.
+
+### 3 NEW builds, all generate+verify (authoritative dense_status)
+- mux2 (2-bit 2:1 mux, per-bit NOT + BAND, 4226 blocks, 2.1s). Lesson: shared
+  nS across bands SIM-MISMATCHED (Y stuck when S=1); per-bit nS0/nS1 (mirroring
+  mux4 auto-replication) greens. Unbanded nS + BANDs also crashes layout.py:1101
+  (None*24) when fanout<3 skips replication -- new-recipe rule: BAND every gate
+  or no gate.
+- decode2 (2-to-4 decoder, 1526 blocks, 0.5s, rung 1).
+- add4 (4-bit ripple adder, BAND per bit, 12750 blocks, 163.7s, ladder climbed
+  to long spread 1). Arithmetic proven first via recipe_check (256 vectors).
+- All recipe_check OK before routing (mux2 32v, decode2 4v, add4 256v).
+
+Running total: 19/21 green. New builds total 11 (8 prior + 3 this session).

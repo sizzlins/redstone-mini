@@ -1,0 +1,24 @@
+IN A0, A1, A2, A3, B0, B1, B2, B3
+OUT S0, S1, S2, S3, COUT
+BAND 0
+x0 = A0 XOR B0
+S0 = x0 AND x0
+C1 = A0 AND B0
+BAND 1
+x1 = A1 XOR B1
+S1 = x1 XOR C1
+c1a = A1 AND B1
+u1 = x1 AND C1
+C2 = c1a OR u1
+BAND 2
+x2 = A2 XOR B2
+S2 = x2 XOR C2
+c2a = A2 AND B2
+u2 = x2 AND C2
+C3 = c2a OR u2
+BAND 3
+x3 = A3 XOR B3
+S3 = x3 XOR C3
+c3a = A3 AND B3
+u3 = x3 AND C3
+COUT = c3a OR u3

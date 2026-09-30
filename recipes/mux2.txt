@@ -1,0 +1,12 @@
+IN A0, A1, B0, B1, S
+OUT Y0, Y1
+BAND 0
+nS0 = NOT S
+p0 = nS0 AND A0
+q0 = S AND B0
+Y0 = p0 OR q0
+BAND 1
+nS1 = NOT S
+p1 = nS1 AND A1
+q1 = S AND B1
+Y1 = p1 OR q1
