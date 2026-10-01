@@ -1555,12 +1555,26 @@ def _rung_worker(conn, sub, force):
     os.environ["REDSTONE_FORCE"] = force
     try:
         out = compose(sub)
+        # ponytail: the partition sim gate runs HERE, not in the parent. The
+        # merge reads pctx (the UNSHIFTED tables) and never reads `out` at all
+        # (compose_hier_parts unpacks it and ignores it) -- `out` existed only
+        # to be handed to sim_verify here. So doing the sim in the child drops
+        # a whole shifted block list from the pipe: pickling was 7.9s of a 42s
+        # profiled compose, 573 dumps for 106 children. It also parallelises
+        # the gate, which was running serially in the parent between bands.
+        # A partition that routes but miscomputes (measured: band-1 COUT dark
+        # standalone) still poisons the merge if unchecked, so the gate must
+        # not be dropped -- only moved.
+        if sub["outputs"]:
+            from sim import sim_verify as _sv
+            _sv(sub, out[0], out[2], quiet=True)
         c = _last_ctx
-        conn.send(("ok", out, {"blocks": c.blocks, "solid": c.solid,
-                               "rings": c.rings, "wires": c.wires,
-                               "junctions": c.junctions,
-                               "repeaters": c.repeaters, "pos": c.pos,
-                               "sup": c.sup, "recs": c.recs}, _last_shift))
+        conn.send(("ok", (None, out[1], out[2]),
+                   {"blocks": c.blocks, "solid": c.solid,
+                    "rings": c.rings, "wires": c.wires,
+                    "junctions": c.junctions,
+                    "repeaters": c.repeaters, "pos": c.pos,
+                    "sup": c.sup, "recs": c.recs}, _last_shift))
     except RuntimeError as e:
         conn.send(("err", str(e)))
     except Exception as e:  # never let a child wedge the parent
@@ -1749,7 +1763,6 @@ def compose_hier(recipe):
                "edge": {n: ("W" if prod.get(n, b) < b else "E")
                         for n in _bd}}
         subs[b] = sub
-    from sim import sim_verify as _simv
     _force_saved = os.environ.get("REDSTONE_FORCE")
 # ponytail: staged pipeline. Pin a short rung subset once per recipe
     # (REDSTONE_HIER_RUNGS="jog,spread,order;jog,spread,order;...") so
@@ -1835,17 +1848,8 @@ def compose_hier(recipe):
                 err_band[b] = RuntimeError(_res)
                 continue
             out, _pctx, _sh = _res
-            # ponytail: sub ladder WITH sim gate. A partition that routes but
-            # miscomputes (measured: band-1 COUT dark standalone) silently
-            # poisons the merge -- sim never checks anything but the final
-            # build. So each band climbs until compose AND sim_verify both pass
-            # on its listed outputs (boundary nets have no lamps yet).
-            try:
-                if sub["outputs"]:
-                    _simv(sub, out[0], out[2], quiet=True)
-            except RuntimeError as e:
-                err_band[b] = e
-                continue
+            # the partition sim gate already ran inside the child (see
+            # _rung_worker): it needs out[0], which no longer crosses the pipe
             _closed = _port_ok(b, _pctx, _sh)
             if _closed is not None:
                 err_band[b] = RuntimeError(f"hier band {b}: port {_closed} walled")
