@@ -1177,23 +1177,34 @@ def _serial_shard(combos):
     scratch/diff_engine.py) and falls back to sim._run_vec whenever run_scalar
     declines -- i.e. when a latch hold-seed is involved, which run_scalar does
     not implement and refuses rather than guessing.
+
+    Returns (bad, ticks, retry, fatal). `fatal` is a not-settling / burnout /
+    stall message: that is a TOPOLOGY fault of the build, identical in kind
+    for every vector that touches the loop, so continuing is wasted budget.
+    The stop event lets the rest of the pool stop too.
     """
     from sim import _parse_build, _run_vec
     from recipe import eval_net
     P = _parse_build(_W["blocks"], _W["io"])
     ins, gates, outs = _W["ins"], _W["gates"], _W["outputs"]
     rec = {"inputs": ins, "gates": gates, "outputs": outs}
+    stop = _W.get("stop")
     bad, ticks = [], 0
     scalar = True
     for vec in combos:
+        if stop is not None and stop.is_set():
+            return bad, ticks, [], "aborted (another worker hit a structural fault)"
         try:
             got, live, tlv, tk, rlv, cn = run_scalar(vec, P)
         except NotImplementedError:
             scalar = False
             break
         except RuntimeError as e:
-            bad.append((vec, "RED", str(e)[:80], None))
-            continue
+            if stop is not None:
+                stop.set()
+            return (bad, ticks, [],
+                    "sim not settling / burnout on vector %s: %s"
+                    % (vec, str(e)[:400]))
         ticks = max(ticks, tk)
         exp = eval_net(rec, vec)
         for net in outs:
@@ -1201,18 +1212,23 @@ def _serial_shard(combos):
                 bad.append((vec, net, bool(got.get(net, False)), bool(exp[net])))
     if not scalar:                      # latch path: authority only
         for vec in combos:
+            if stop is not None and stop.is_set():
+                return bad, ticks, [], "aborted (another worker hit a fault)"
             try:
                 got, live, tlv, tk, rlv, cn = _run_vec(vec, None, P, until=None)
             except RuntimeError as e:
-                bad.append((vec, "RED", str(e)[:80], None))
-                continue
+                if stop is not None:
+                    stop.set()
+                return (bad, ticks, [],
+                        "sim not settling / burnout on vector %s: %s"
+                        % (vec, str(e)[:400]))
             ticks = max(ticks, tk)
             exp = eval_net(rec, vec)
             for net in outs:
                 if bool(got.get(net, False)) != bool(exp[net]):
                     bad.append((vec, net, bool(got.get(net, False)),
                                 bool(exp[net])))
-    return bad, ticks, []
+    return bad, ticks, [], None
 
 
 def _swar_shard(combos, step_cap):
@@ -1241,16 +1257,15 @@ def _swar_shard(combos, step_cap):
             for l in lanes_of(d, nl):
                 bad.append((combos[l], net, l in lanes_of(lm, nl),
                             bool(sig[net] >> (l * LANE + SHIFT) & 1)))
-    return bad, tk
+    return bad, tk, [], None
 
 
 def _shard_job(combos):
     if _W.get("swar") and len(combos) > 1:
         got = _swar_shard(combos, _W["swar_cap"])
         if got is not None:
-            bad, tk = got
-            return bad, tk, []
-        return [], 0, list(combos)        # could not decide: re-dispatch singly
+            return got
+        return [], 0, list(combos), None   # could not decide: re-dispatch singly
     return _serial_shard(combos)
 
 
@@ -1285,50 +1300,57 @@ def verify_par(ins, gates, outputs, blocks, io, combos, workers=None,
     shard = shard or max(1, len(combos) // (n * 4) or 1)
     init = (blocks, io, gates, outputs, ins, tick_cap, stall)
     ctx = _mp.get_context("spawn")
-    bad, ticks, retry = [], 0, []
-    total = max(1, len(combos) // shard)
-
-    def drain(it):
-        nonlocal bad, ticks
-        for b, t, r in it:
-            bad += b
-            ticks = max(ticks, t)
-            retry.extend(r)
-
-    _init_worker(*init)
-    _W["swar"], _W["swar_cap"] = swar, step_cap
+    bad, ticks, retry, fatal = [], 0, [], None
     shards = [combos[i:i + shard] for i in range(0, len(combos), shard)]
     seen = [0]
 
-    def drain(it, total, label=""):
+    def drain(it, total):
         # ponytail: the parent blocks in imap_unordered at 0% CPU by design
         # while the workers grind, so a silent parent is indistinguishable
         # from a hung one. Count here, in the consumer, because a closure
         # defined in verify_par cannot be pickled to a spawn worker.
-        nonlocal bad, ticks
+        nonlocal bad, ticks, retry, fatal
         for res in it:
-            b, t = res[0], res[1]
-            bad += b
-            ticks = max(ticks, t)
+            bad += res[0]
+            ticks = max(ticks, res[1])
             if len(res) > 2:
                 retry.extend(res[2])
+            if len(res) > 3 and res[3] and fatal is None:
+                fatal = res[3]
             seen[0] += 1
             if progress and (seen[0] % 8 == 0 or seen[0] == total):
                 progress(seen[0], total, 0.0)
+            if fatal is not None:
+                break
 
+    _init_worker(*init)
+    _W["swar"], _W["swar_cap"] = swar, step_cap
+    _W["stop"] = _mp.Event()
     if n == 1:
         drain(map(_shard_job, shards), len(shards))
-        drain(map(_serial_shard, ([v] for v in retry)), len(retry))
-        return bad, ticks
-    with ctx.Pool(n, initializer=_init_worker, initargs=init) as pool:
-        drain(pool.imap_unordered(_shard_job, shards), len(shards))
-        if retry:
-            if progress:
-                print("   SWAR settled most shards; re-dispatching %d vectors "
-                      "one per task for load balance" % len(retry), flush=True)
-            seen[0] = 0
-            drain(pool.imap_unordered(_serial_shard, ([v] for v in retry)),
-                  len(retry))
+        if not fatal:
+            drain(map(_serial_shard, ([v] for v in retry)), len(retry))
+    else:
+        with ctx.Pool(n, initializer=_init_worker, initargs=init) as pool:
+            drain(pool.imap_unordered(_shard_job, shards), len(shards))
+            if retry and not fatal:
+                if progress:
+                    print("   SWAR settled most shards; re-dispatching %d vectors "
+                          "one per task for load balance" % len(retry), flush=True)
+                seen[0] = 0
+                drain(pool.imap_unordered(_serial_shard, ([v] for v in retry)),
+                      len(retry))
+    # ponytail: FAIL FAST on a structural fault. A not-settling / burnout /
+    # stall verdict is a property of the BUILD, not of one vector -- every
+    # vector that touches the same loop gets it -- so simulating the remaining
+    # 2^n-1 vectors buys nothing. Measured on alu4: 12 of 16 sampled vectors
+    # above index 256 are RED with churn ~11k cells, and the old code spent 22
+    # minutes simulating all 1024 before saying so. Now the first structural
+    # fault ends the sweep and its churn set (which names the loop) is raised
+    # verbatim. Logic MISMATCHES are still all collected: those are per-vector
+    # and cheap once the build settles.
+    if fatal and not fatal.startswith("aborted"):
+        raise RuntimeError(fatal)
     return bad, ticks
 
 
