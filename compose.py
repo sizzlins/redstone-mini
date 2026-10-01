@@ -2962,11 +2962,24 @@ def compose_hier_parts(built, gates, recipe):
     _dump2 = os.environ.get("REDSTONE_HIERDUMP2")
     if _dump2:
         import pickle as _p2
+        # ponytail: ship the shrink-wrap shift WITH the dump. solid / wires /
+        # repeaters / rings / stitched are MERGE space; blocks and io are
+        # BLOCK space, and finish_assembly moves them by (3 - min(OCC)) per
+        # axis. Re-deriving that by hand has cost two sessions of forensics
+        # (a phantom "3388 cobble deleted", then a phantom "230 missing
+        # torches"). One key, no more arithmetic.
+        # finish_assembly's OCC is solid AND wires, not solid alone (wires
+        # run to z=-83 where tiles stop at -15, so using solid alone gave
+        # (2,18) instead of (2,86) and matched 0/230 torches).
+        _occ = [(x, 1, z) for (x, z) in solid] + list(wires)
         with open(_dump2, "wb") as _f:
             _p2.dump({"blocks": _out[0], "size": _out[1], "io": _out[2],
                       "solid": solid, "rings": rings, "wires": wires,
-                      "junctions": junctions, "repeaters": repeaters,
-                      "pos": pos, "sup": sup, "stitched": stitched}, _f)
+                      "junctions": junctions,
+                      "repeaters": repeaters,
+                      "pos": pos, "sup": sup, "stitched": stitched,
+                      "shift": (3 - min(c[0] for c in _occ),
+                                3 - min(c[2] for c in _occ))}, _f)
         print(f"hier dump2 {_dump2}", flush=True)
     return _out
 
