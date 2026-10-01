@@ -123,6 +123,12 @@ def _orth(c):
 
 
 def _pre(blocks, io, inp):
+    """Parse a build, then build its static physics tables."""
+    from sim import _parse_build
+    return _tables_from(_parse_build(blocks, io), inp)
+
+
+def _tables_from(P, inp):
     """Precompute every static query the physics asks, once per build.
 
     This is the boring half of the win and arguably the bigger one:
@@ -133,9 +139,8 @@ def _pre(blocks, io, inp):
     neighbours and ask what each one is" into "walk a short list of cells
     already known to matter".
     """
-    from sim import _parse_build
     dust, torch, lampat, rep, rblk, cob, repdelay, lever, lampnet, \
-        attach_rev, comp, leveratt = _parse_build(blocks, io)
+        attach_rev, comp, leveratt = P
 
     def back(c, t):
         """Does the repeater/comparator at `c` feed `t`?"""
@@ -727,6 +732,366 @@ def lanes_of(mask, nl):
     return [l for l in range(nl) if mask >> (l * LANE + SHIFT) & 1]
 
 
+# ------------------------------------------------------------ scalar engine
+# ponytail: sim._run_vec is the authority AND the diagnostics, so it stays
+# untouched. But it is also the hot loop, and its cost is almost entirely
+# re-derivation of constant facts: per profile on alu4 it spends 207k
+# dust_lvl calls, 98k wake calls and 146k cob_state calls PER VECTOR, each
+# rebuilding tuples and re-asking membership questions whose answers are fixed
+# by the (static) build, plus 219k os.environ.get calls for one boolean.
+# run_scalar is the same physics over the same precomputed tables with Dial
+# buckets, for the bulk 2^n sweep. scratch/diff_engine.py proves it returns
+# bit-identical lamps/live/torch/tick/rep/comp against a frozen copy of the
+# committed engine; anything else is not an optimisation.
+
+_TBL = {}
+
+
+def _tables(ctx):
+    """Memoised _tables_from for an already-parsed build context.
+
+    Keyed by id(ctx) with the context held in the value, so a recycled id can
+    never return the wrong tables. Bounded: a sweep parses one context per
+    worker, so this holds a handful of entries, but clear rather than grow.
+    """
+    k = id(ctx)
+    e = _TBL.get(k)
+    if e is not None and e[0] is ctx:
+        return e[1]
+    if len(_TBL) > 8:
+        _TBL.clear()
+    t = _tables_from(ctx, {})
+    _TBL[k] = (ctx, t)
+    return t
+
+
+def _dust_lvl_s(c, st, pw, pbs, tl, ron, con, vec):
+    if st["d_below"][c][0] and tl.get((c[0], c[1] - 1, c[2]), False):
+        return 15
+    if st["d_below"][c][1] and pbs.get((c[0], c[1] - 1, c[2]), False):
+        return 15
+    lv = 0
+    for m, code, payload, cup, cdn in st["d_dirs"][c]:
+        if code == 1:
+            if tl.get(m, False):
+                return 15
+        elif code == 2:
+            if vec.get(payload, False):
+                return 15
+        elif code == 3:
+            return 15
+        elif code == 4:
+            if pbs.get(m, False):
+                return 15
+        elif code == 5:
+            v = pw.get(m, 0) - 1
+            if v > lv:
+                lv = v
+        elif code == 6:
+            if ron.get(m, False):
+                return 15
+        elif code == 7:
+            return con.get(m, 0)      # early return: discards lv, as upstream
+        if cup is not None:
+            v = pw.get(cup, 0) - 1
+            if v > lv:
+                lv = v
+        if cdn is not None:
+            v = pw.get(cdn, 0) - 1
+            if v > lv:
+                lv = v
+    return lv
+
+
+def _cob_state_s(c, st, pw, tl, ron, vec):
+    pwrd = False
+    for m in st["c_dust"][c]:
+        if pw.get(m, 0) >= 1:
+            pwrd = True
+    strong = False
+    if st["c_rblk"][c]:
+        pwrd = True
+        strong = True
+    for m in st["c_lev"][c]:
+        if vec.get(m, False):
+            pwrd = True
+            strong = True
+    for m in st["c_torch"][c]:
+        if tl.get(m, False):
+            pwrd = True
+            strong = True
+    for m in st["c_rep"][c]:
+        if ron.get(m, False):
+            pwrd = True
+            strong = True
+    up = st["c_up"][c]
+    if up is not None and pw.get(up, 0) >= 1:
+        pwrd = True
+    return pwrd, strong
+
+
+def _rep_on_s(c, st, pw, pb, tl, ron, con, vec):
+    s = st["r_src"][c]
+    if s is None:
+        return False
+    k = s[0]
+    if k == "d":
+        return pw.get(s[1], 0) >= 1
+    if k == "c":
+        return bool(pb.get(s[1], False))
+    if k == "l":
+        return bool(vec.get(s[1], False))
+    if k == "t":
+        return bool(tl.get(s[1], False))
+    if k == "r":
+        return True if len(s) == 1 else bool(ron.get(s[1], False))
+    if k == "k":
+        return con.get(s[1], 0) >= 1
+    return False
+
+
+def _lev_s(spec, pw, pbs, tl, ron, con, vec):
+    if spec is None:
+        return 0
+    k = spec[0]
+    if k == "d":
+        return pw.get(spec[1], 0)
+    if k == "l":
+        return 15 if vec.get(spec[1], False) else 0
+    if k == "t":
+        return 15 if tl.get(spec[1], False) else 0
+    if k == "r":
+        return 15 if (len(spec) == 1 or ron.get(spec[1], False)) else 0
+    if k == "c":
+        return 15 if pbs.get(spec[1], False) else 0
+    if k == "k":
+        return con.get(spec[1], 0)
+    return 0
+
+
+def _comp_out_s(c, st, pw, pbs, tl, ron, con, vec):
+    rl = _lev_s(st["k_rear"][c], pw, pbs, tl, ron, con, vec)
+    s0, s1 = st["k_side"][c]
+    sl = 0
+    if s0 is not None:
+        v = _lev_s(s0, pw, pbs, tl, ron, con, vec)
+        if v > sl:
+            sl = v
+    if s1 is not None:
+        v = _lev_s(s1, pw, pbs, tl, ron, con, vec)
+        if v > sl:
+            sl = v
+    if st["k_mode"][c] == "subtract":
+        d = rl - sl
+        return d if d > 0 else 0
+    return rl if sl <= rl else 0
+
+
+def run_scalar(vec, ctx, init=None, until=None, tick_cap=None, step_cap=None,
+               stall=None):
+    """One vector, scalar, over the precomputed tables.
+
+    Returns sim._run_vec's 6-tuple exactly (lamps, live, torch, ticks, rep,
+    comp) so callers cannot tell the two apart, and raises the same RuntimeError
+    messages for stall / tick-cap / burnout.
+
+    Deliberately NOT implemented: the latch hold-seed pre-solve (init with
+    _solve). Callers with an init must use sim._run_vec; this raises instead of
+    guessing, because a half-applied hold seed is exactly the kind of quiet
+    wrong answer that ships a broken build.
+    """
+    from sim import _TICK_CAP, _STEP_CAP, _STALL, _BOUT_N, _BOUT_GRACE, _BOUT
+    tick_cap = _TICK_CAP if tick_cap is None else tick_cap
+    step_cap = _STEP_CAP if step_cap is None else step_cap
+    stall = _STALL if stall is None else stall
+    if init:
+        raise NotImplementedError(
+            "run_scalar: no latch pre-solve; use sim._run_vec when init is given")
+    dust, torch, lampat, rep, rblk, cob, repdelay, lever, lampnet, \
+        attach_rev, comp, leveratt = ctx
+    st = _tables(ctx)
+    pw, pb, pbs = {}, {}, {}
+    tl = {c: False for c in torch}
+    ron = {c: False for c in rep}
+    con = {c: 0 for c in comp}
+    wake = st["wake"]
+    flips = {}
+    bout = {}
+
+    RING = 5
+    buckets = [[] for _ in range(RING)]
+    b0 = buckets[0]
+    for c in dust:
+        b0.append(("d", c))
+    for c in cob:
+        b0.append(("c", c))
+    for c in torch:
+        b0.append(("t", c))
+    for c in rep:
+        b0.append(("r", c))
+    for c in comp:
+        b0.append(("k", c))
+    alive = len(b0)
+    now = steps = last_change = 0
+    max_gap = 0
+    stall_cap = max(stall, 3 * st["ncells"])
+    tsched, rsched, ksched = set(), set(), set()
+
+    def mark():
+        nonlocal last_change, max_gap
+        g = steps - last_change
+        if g > max_gap:
+            max_gap = g
+        last_change = steps
+
+    while alive:
+        if now > tick_cap or steps > step_cap:
+            live = {x: v for x, v in pw.items() if v}
+            churn = sorted((c for c, k in flips.items() if k >= 3),
+                           key=lambda c: (-flips[c], str(c)))
+            tloop = sorted(c for c in churn if c in torch)
+            cset = set(churn)
+            same = slope = 0
+            for c in churn:
+                for dx, dz in DIRS:
+                    if (c[0] + dx, c[1], c[2] + dz) in cset:
+                        same += 1
+                    if (c[0] + dx, c[1] + 1, c[2] + dz) in cset:
+                        slope += 1
+            raise RuntimeError(
+                f"sim not settling on {vec}. churn={len(churn)} "
+                f"edges: same-level={same} slope={slope} "
+                f"loop_torches: {tloop[:6]} max_gap={max_gap} "
+                f"top: {[(c, pw.get(c, 0), flips[c]) for c in churn[:6]]}")
+        i = now % RING
+        items = buckets[i]
+        if not items:
+            now += 1
+            steps += 0
+            if steps - last_change > stall_cap:
+                raise RuntimeError(
+                    f"sim STALLED on {vec}: no value change for "
+                    f"{steps - last_change} steps at tick {now} "
+                    f"({steps} steps run) - wedged, not oscillating")
+            continue
+        buckets[i] = []
+        alive -= len(items)
+        here = buckets[i]
+        for kind, c in items:
+            steps += 1
+            if steps - last_change > stall_cap:
+                raise RuntimeError(
+                    f"sim STALLED on {vec}: no value change for "
+                    f"{steps - last_change} steps at tick {now} "
+                    f"({steps} steps run) - wedged, not oscillating")
+            if kind == "d":
+                v = _dust_lvl_s(c, st, pw, pbs, tl, ron, con, vec)
+                if pw.get(c, 0) != v:
+                    pw[c] = v
+                    flips[c] = flips.get(c, 0) + 1
+                    mark()
+                    for k2, c2 in wake[c]:
+                        here.append((k2, c2))
+                        alive += 1
+            elif kind == "c":
+                pwrd, strong = _cob_state_s(c, st, pw, tl, ron, vec)
+                if pb.get(c, False) != pwrd or pbs.get(c, False) != strong:
+                    pb[c], pbs[c] = pwrd, strong
+                    flips[c] = flips.get(c, 0) + 1
+                    mark()
+                    for k2, c2 in wake[c]:
+                        here.append((k2, c2))
+                        alive += 1
+            elif kind == "t":
+                if c in tsched or st["t_dead"][c]:
+                    continue
+                if (not pb.get(st["t_att"][c], False)) != tl.get(c, False):
+                    tsched.add(c)
+                    buckets[(now + 1) % RING].append(("T", c))
+                    alive += 1
+            elif kind == "T":
+                tsched.discard(c)
+                v = not pb.get(st["t_att"][c], False)
+                if tl.get(c, False) != v:
+                    if tl.get(c, False) and not v:
+                        bt = tuple(t for t in bout.get(c, ()) if now - t < 30) + (now,)
+                        bout[c] = bt
+                        if len(bt) > max(_BOUT.get(c, 0), 0):
+                            _BOUT[c] = len(bt)
+                        if len(bt) > _BOUT_N and now >= _BOUT_GRACE:
+                            tl[c] = False
+                            raise RuntimeError(f"TORCH BURNOUT at {c} (shipping red)")
+                    tl[c] = v
+                    flips[c] = flips.get(c, 0) + 1
+                    mark()
+                    for k2, c2 in wake[c]:
+                        here.append((k2, c2))
+                        alive += 1
+            elif kind == "r":
+                if c in rsched:
+                    continue
+                if _rep_on_s(c, st, pw, pb, tl, ron, con, vec) != ron.get(c, False):
+                    rsched.add(c)
+                    buckets[(now + repdelay.get(c, 1)) % RING].append(("R", c))
+                    alive += 1
+            elif kind == "R":
+                rsched.discard(c)
+                v = _rep_on_s(c, st, pw, pb, tl, ron, con, vec)
+                if ron.get(c, False) != v:
+                    ron[c] = v
+                    mark()
+                    for k2, c2 in wake[c]:
+                        here.append((k2, c2))
+                        alive += 1
+            elif kind == "k":
+                if c in ksched:
+                    continue
+                if _comp_out_s(c, st, pw, pbs, tl, ron, con, vec) != con.get(c, 0):
+                    ksched.add(c)
+                    buckets[(now + 1) % RING].append(("K", c))
+                    alive += 1
+            elif kind == "K":
+                ksched.discard(c)
+                v = _comp_out_s(c, st, pw, pbs, tl, ron, con, vec)
+                if con.get(c, 0) != v:
+                    con[c] = v
+                    mark()
+                    for k2, c2 in wake[c]:
+                        here.append((k2, c2))
+                        alive += 1
+
+    lamps = {}
+    for cell, net in lampnet.items():
+        lit = False
+        for a in st["l_arm"][cell]:
+            if pw.get(a, 0) >= 1:
+                lit = True
+        if not lit and st["l_up"][cell] is not None \
+                and pw.get(st["l_up"][cell], 0) >= 1:
+            lit = True
+        if not lit:
+            for b in st["l_cob"][cell]:
+                if pb.get(b, False):
+                    lit = True
+        if not lit:
+            for t in st["l_torch"][cell]:
+                if tl.get(t, False):
+                    lit = True
+        if not lit and st["l_rblk"][cell]:
+            lit = True
+        if not lit:
+            for nm in st["l_lev"][cell]:
+                if vec.get(nm, False):
+                    lit = True
+        lamps[net] = lit
+    return (lamps,
+            {c: v for c, v in pw.items() if v},
+            {c: 1 if tl.get(c, False) else 0 for c in torch},
+            now,
+            {c: 1 if ron.get(c, False) else 0 for c in rep},
+            {c: con.get(c, 0) for c in comp})
+
+
 # ---------------------------------------------------------------- driver
 # ponytail: measured reality of the SWAR path on alu4 (34672 blocks, 1024
 # vectors, 20 cores), because it decides the whole design:
@@ -756,24 +1121,48 @@ def _init_worker(blocks, io, gates, outputs, ins, tick_cap, stall):
 
 
 def _serial_shard(combos):
-    """The authority, one vector at a time. Bounded by sim's own caps."""
-    from sim import _parse_build, _run_vec, _TICK_CAP, _STEP_CAP
+    """The authority, one vector at a time. Bounded by sim's own caps.
+
+    Uses run_scalar (the table-driven twin, proven bit-identical by
+    scratch/diff_engine.py) and falls back to sim._run_vec whenever run_scalar
+    declines -- i.e. when a latch hold-seed is involved, which run_scalar does
+    not implement and refuses rather than guessing.
+    """
+    from sim import _parse_build, _run_vec
     from recipe import eval_net
     P = _parse_build(_W["blocks"], _W["io"])
     ins, gates, outs = _W["ins"], _W["gates"], _W["outputs"]
+    rec = {"inputs": ins, "gates": gates, "outputs": outs}
     bad, ticks = [], 0
+    scalar = True
     for vec in combos:
         try:
-            got, live, tlv, tk, rlv, cn = _run_vec(vec, None, P, until=None)
+            got, live, tlv, tk, rlv, cn = run_scalar(vec, P)
+        except NotImplementedError:
+            scalar = False
+            break
         except RuntimeError as e:
             bad.append((vec, "RED", str(e)[:80], None))
             continue
         ticks = max(ticks, tk)
-        exp = eval_net({"inputs": ins, "gates": gates, "outputs": outs}, vec)
+        exp = eval_net(rec, vec)
         for net in outs:
             if bool(got.get(net, False)) != bool(exp[net]):
                 bad.append((vec, net, bool(got.get(net, False)), bool(exp[net])))
-    return bad, ticks
+    if not scalar:                      # latch path: authority only
+        for vec in combos:
+            try:
+                got, live, tlv, tk, rlv, cn = _run_vec(vec, None, P, until=None)
+            except RuntimeError as e:
+                bad.append((vec, "RED", str(e)[:80], None))
+                continue
+            ticks = max(ticks, tk)
+            exp = eval_net(rec, vec)
+            for net in outs:
+                if bool(got.get(net, False)) != bool(exp[net]):
+                    bad.append((vec, net, bool(got.get(net, False)),
+                                bool(exp[net])))
+    return bad, ticks, []
 
 
 def _swar_shard(combos, step_cap):
@@ -812,7 +1201,7 @@ def _shard_job(combos):
             bad, tk = got
             return bad, tk, []
         return [], 0, list(combos)        # could not decide: re-dispatch singly
-    return _serial_shard(combos) + ([],)
+    return _serial_shard(combos)
 
 
 def verify_par(ins, gates, outputs, blocks, io, combos, workers=None,
