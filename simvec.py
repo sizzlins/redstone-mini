@@ -573,7 +573,8 @@ def run(ins, blocks, io, combos, tick_cap, step_cap, stall, state_out=None):
         idle = 0
         buckets[i] = []
         alive -= len(items)
-        here = buckets[i]            # same-tick wakes land in this fresh list
+        here = buckets[i]      # same-tick wakes land in this slot
+        hset = set()      # ...and this dedups them (see run_scalar) fresh list
         for kind, c in items:
             steps += 1
             if kind == "d":
@@ -586,8 +587,10 @@ def run(ins, blocks, io, combos, tick_cap, step_cap, stall, state_out=None):
                     recent.append(nz(v) ^ nz(old))
                     del recent[:-8]
                     for k2, c2 in wake[c]:
-                        here.append((k2, c2))
-                        alive += 1
+                        if c2 not in hset:
+                            hset.add(c2)
+                            here.append((k2, c2))
+                            alive += 1
             elif kind == "c":
                 pwrd, strong = _cob_state(c, st, pw, pb, pbs, tl, ron, inp, O)
                 opb, ops = pb.get(c, 0), pbs.get(c, 0)
@@ -598,8 +601,10 @@ def run(ins, blocks, io, combos, tick_cap, step_cap, stall, state_out=None):
                     recent.append((opb ^ pwrd) | (ops ^ strong))
                     del recent[:-8]
                     for k2, c2 in wake[c]:
-                        here.append((k2, c2))
-                        alive += 1
+                        if c2 not in hset:
+                            hset.add(c2)
+                            here.append((k2, c2))
+                            alive += 1
             elif kind == "t":
                 if c in tsched or st["t_dead"][c]:
                     continue
@@ -618,8 +623,10 @@ def run(ins, blocks, io, combos, tick_cap, step_cap, stall, state_out=None):
                     recent.append(old ^ v)
                     del recent[:-8]
                     for k2, c2 in wake[c]:
-                        here.append((k2, c2))
-                        alive += 1
+                        if c2 not in hset:
+                            hset.add(c2)
+                            here.append((k2, c2))
+                            alive += 1
             elif kind == "r":
                 if c in rsched:
                     continue
@@ -635,8 +642,10 @@ def run(ins, blocks, io, combos, tick_cap, step_cap, stall, state_out=None):
                     ron[c] = v
                     idle = 0
                     for k2, c2 in wake[c]:
-                        here.append((k2, c2))
-                        alive += 1
+                        if c2 not in hset:
+                            hset.add(c2)
+                            here.append((k2, c2))
+                            alive += 1
             elif kind == "k":
                 if c in ksched:
                     continue
@@ -651,8 +660,10 @@ def run(ins, blocks, io, combos, tick_cap, step_cap, stall, state_out=None):
                     con[c] = v
                     idle = 0
                     for k2, c2 in wake[c]:
-                        here.append((k2, c2))
-                        alive += 1
+                        if c2 not in hset:
+                            hset.add(c2)
+                            here.append((k2, c2))
+                            alive += 1
 
     if state_out is not None:
         state_out.update(pw=pw, pb=pb, pbs=pbs, tl=tl, ron=ron, con=con)
@@ -976,7 +987,16 @@ def run_scalar(vec, ctx, init=None, until=None, tick_cap=None, step_cap=None,
             continue
         buckets[i] = []
         alive -= len(items)
+        # ponytail: coalesce same-tick re-queues. A cell woken five times in
+        # one tick is evaluated five times and changes at most once, because it
+        # reads the LATEST state when it finally runs. `hset` holds exactly the
+        # items already queued for THIS tick and not yet evaluated, so dropping
+        # a duplicate is free; a cell that has already been evaluated this tick
+        # is not in `hset` and gets re-queued normally. Insertion order is
+        # preserved (first occurrence wins), so the event sequence the physics
+        # sees is unchanged -- this removes work, not information.
         here = buckets[i]
+        hset = set()
         for kind, c in items:
             steps += 1
             if steps - last_change > stall_cap:
@@ -991,8 +1011,10 @@ def run_scalar(vec, ctx, init=None, until=None, tick_cap=None, step_cap=None,
                     flips[c] = flips.get(c, 0) + 1
                     mark()
                     for k2, c2 in wake[c]:
-                        here.append((k2, c2))
-                        alive += 1
+                        if c2 not in hset:
+                            hset.add(c2)
+                            here.append((k2, c2))
+                            alive += 1
             elif kind == "c":
                 pwrd, strong = _cob_state_s(c, st, pw, tl, ron, vec)
                 if pb.get(c, False) != pwrd or pbs.get(c, False) != strong:
@@ -1000,8 +1022,10 @@ def run_scalar(vec, ctx, init=None, until=None, tick_cap=None, step_cap=None,
                     flips[c] = flips.get(c, 0) + 1
                     mark()
                     for k2, c2 in wake[c]:
-                        here.append((k2, c2))
-                        alive += 1
+                        if c2 not in hset:
+                            hset.add(c2)
+                            here.append((k2, c2))
+                            alive += 1
             elif kind == "t":
                 if c in tsched or st["t_dead"][c]:
                     continue
@@ -1025,8 +1049,10 @@ def run_scalar(vec, ctx, init=None, until=None, tick_cap=None, step_cap=None,
                     flips[c] = flips.get(c, 0) + 1
                     mark()
                     for k2, c2 in wake[c]:
-                        here.append((k2, c2))
-                        alive += 1
+                        if c2 not in hset:
+                            hset.add(c2)
+                            here.append((k2, c2))
+                            alive += 1
             elif kind == "r":
                 if c in rsched:
                     continue
@@ -1041,8 +1067,10 @@ def run_scalar(vec, ctx, init=None, until=None, tick_cap=None, step_cap=None,
                     ron[c] = v
                     mark()
                     for k2, c2 in wake[c]:
-                        here.append((k2, c2))
-                        alive += 1
+                        if c2 not in hset:
+                            hset.add(c2)
+                            here.append((k2, c2))
+                            alive += 1
             elif kind == "k":
                 if c in ksched:
                     continue
@@ -1057,8 +1085,10 @@ def run_scalar(vec, ctx, init=None, until=None, tick_cap=None, step_cap=None,
                     con[c] = v
                     mark()
                     for k2, c2 in wake[c]:
-                        here.append((k2, c2))
-                        alive += 1
+                        if c2 not in hset:
+                            hset.add(c2)
+                            here.append((k2, c2))
+                            alive += 1
 
     lamps = {}
     for cell, net in lampnet.items():
