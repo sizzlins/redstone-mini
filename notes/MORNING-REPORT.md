@@ -1,112 +1,110 @@
-# Morning report — cpu4 session (autonomous, 2026-10-01)
+# Morning report — cpu4 session 2 (autonomous, continued)
 
-**DONE = cpu4 green. NOT DONE.** cpu4 is at *merge reaches the simulator,
-3 of 5 outputs correct* (was: torch burnout, then all-dark). Two real root
-causes were found and fixed; a third is now the wall.
+**DONE = cpu4 green. NOT DONE — but the merge now completes and two of four
+smoke vectors are correct.** Previous report's wall (a pre-existing diode ring
+killing the merge in `finish_assembly`) is fixed.
 
-Repo `D:\redstone-mini`, branch `phase2-design`. Commits this session:
-`7fdbd72`, `c8fb1d2`, `0b773eb`, `a893b82`, `e8cd0c8`. Working tree clean
-except `notes/MORNING-REPORT.md`.
+Repo `D:\redstone-mini`, branch `phase2-design`. New commits this session:
+`e8cd0c8` (previous session), `6540a3a`. Working tree clean.
 
-## What is green now (authoritative, re-run this session)
-
-| gate | result |
-|---|---|
-| `python recipe.py` | pass |
-| `python sim.py` | pass (2 new oracles added) |
-| `scratch/compose_check.py` | bit-identical 144 / 322 / 224 / 214 |
-| `scratch/dense_status.py` | OK: example_and, latch_sr, mux2, sub2, micro1, decode3, cmp2 |
-| `scratch/verify_par.py scratch/alu4merge.pkl recipes/alu4.txt` | **VERIFY OK 1024/1024** (re-composed *and* re-verified with the new physics) |
-
-alu4 was re-stitched from scratch (35516 blocks, was 34734) and re-verified
-all 1024 vectors — the physics and router both changed this session, so the
-old cache proved nothing.
-
-## What still fails
+## Progress
 
 ```
 $ python scratch/hier_stitch.py scratch/cpu4bands2.pkl scratch/cand_cpu4hier.txt 300
-STITCH RED: repeater loop on R1Q3 at (2850, 1, 43): front joins back
+MERGE 72055 blocks (3376, 287)
+SMOKE 0000000 OK
+SMOKE 1111111 OK
+SMOKE 0101010 MISMATCH ['Y1']
 ```
 
-**cpu4 is blocked by a pre-existing repeater ring in a band tile**, not by
-the stitch. `finish_assembly` rejects the whole merge on any
-front-joins-back diode pair. The gate added this session
-(`_try` → `layout._loop_rep`, new-loop-only) correctly does *not* blame the
-stitch for it, so the merge still dies at the end.
+That is a real step: the merge used to die in `finish_assembly` or in the sim.
 
-`place_xor` builds its XOR from two subtract comparators whose tails merge
-through **two facing diodes** at `(ox-2, gz+3)` and `(ox-2, gz+5)`. When
-those two end up facing each other across one cell, `_loop_rep` sees a
-front joining a back. The band sims green (the sim does not model the
-bistable pair the same way), so the band cache accepts it.
+## The wall this session (previous report's item) — FIXED
 
-### Next step (not attempted — out of context budget)
+`finish_assembly` rejected the merge on `repeater loop on R1Q3 at (2850,1,43)`.
+The cause was **ordering**, not geometry: the ring gate inside `_try` ran
+*before* `_plant_repeaters`, so a booster landing where a leg doubles back on
+an **earlier leg of the same net** (R1Q3 is consumed by two bands and the legs
+chain stub-to-stub) closed a ring nobody was watching.
 
-Reject a *band rung* whose own output contains a diode ring, at the point the
-band cache is built (`scratch/hier_bands.py` already runs `sim_verify` and
-`check_hier_ports` per rung; add `layout._loop_rep` there). That is ~5 lines
-and turns this from a merge-time wall into a rung-selection problem, which
-the existing ladder already knows how to answer. It is the same shape as the
-`AL_X2` fix that unblocked Y2: **a tile's own dust is a fixed shape, and
-`_loop_rep` is the authority on whether that shape is buildable.**
+Fix: boosters are planted **inside `_try`**, after the pre-boost ring check and
+followed by a post-boost one. Inside `_try` a failure rolls back and the *next
+strategy* runs; outside it the whole net failed. Also added: a run must be a
+*simple* path (an adjacent repeat at a leg joint is the only legal one), and
+the stub-connect pass got the same post-boost ring gate it never had.
 
-## Root causes found and fixed (all measured)
+## What still fails, precisely
 
-1. **Undriven SR latch hunted forever** (`sim.py`, `7fdbd72`). A NOR latch
-   released from a dark start is symmetric in this model: both torches fire,
-   hunt, burn out. Vanilla breaks it with update-order skew; `eval_net`
-   already assumed hold-0. `_latch_hold_seed` presets `~qb` dust **and** its
-   driver torch (each alone was measured to fail), and a power-on pre-roll
-   (`_solve`) removes the tick-1 output pulse that reached idle latches at
-   T~9 and broke the seeded hold. Latch-free builds take a byte-identical path.
-2. **A lever powered every block beside it** (`sim.py`, `7fdbd72`). D3's floor
-   lever drove cpu4's R0Q0 stitch run to 15, forcing R0Q2 high whenever D3=1
-   — bit-0 AND/XOR wrong. Wiki: a lever powers its *attachment* only.
-3. **A booster planted on a tile's own output run** (`compose.py`, `a893b82`).
-   `place_xor` merges two comparator tails through two facing diodes, so a
-   booster between them faces the wrong way and cuts the merge. This is why
-   **Y2 was wrong**: AL_X2 went dark in the merged build while band 6 simmed
-   green standalone — a band sim runs on `out`, and boosting happens *after*.
-   Guard: `own=` is the placement-end wire snapshot, so only routed cells can
-   be boosted. This is the fix that took cpu4 from 3/5 to a single wrong net.
+On `D=0101 OPC=010` (a no-write vector: `REGW=0`, so both registers must hold
+their seeded 0):
 
-Three more guards landed with it, each from a measured failure: relay
-stations only on straight runs; every stitch must **deliver** onto its stub
-by sim-conducting links; every consecutive pair of *fresh* path cells must be
-a sim link (check_opens floods the whole field, so one break orphans
-everything past it while the stub flood — seeded at the path — reported 0).
+| net | lit | should be |
+|---|---|---|
+| `R0Q0` | **1068/1068** | 0 |
+| `R1Q0` | 0/811 | 0 |
+| `AL_X0` | 63/64 | 0 |
+| `AL_S2` | 31/32 | 0 |
+| `AL_X2` | 61/315 | 0 |
 
-## Assumptions
+So `R0Q0` — an entire register-bank output, latch *and* stitch — is lit when it
+must be dark, and the XOR tails inherit it.
 
-- Work target is `D:\redstone-mini` (DONE says so; `D:\redstone-compiler` is
-  a separate Rust project with no recipes).
-- `recipes/cpu4.txt` stays the original unbanded recipe until cpu4 verifies
-  128/128. `scratch/cand_cpu4hier.txt` (10-band, 128-vector equivalent) is
-  the candidate.
-- Band caches are built with `REDSTONE_ASTAR_CAP` **unset**. Setting it to
-  6000 makes bands 5 and 6 lose their only green rung (`no ground for
-  AL_n0_5`) — measured, and reproducible in a single process.
+### The finding to chase next (frame mapping is now certain)
 
-## Notes / traps found
+**The merged `blocks` list is missing tile torches that `solid` still
+declares.** In `scratch/cpu4merge2.pkl`:
 
-- Comparing a band's `out` (finish_assembly'd on its own) against the merged
-  block list is a **frame error** — every count comes out as "3388 cobble
-  deleted". The correct map is `ctx.blocks + OFFS[band] + (2, 26)`. Two hours
-  of the session went into that false lead; the real deletion set is 17
-  boundary-input levers, which is by design.
-- `scratch/hier_bands.py` picks the **smallest** green rung, so
-  `HIER_SKIP` rarely moves a band. Force a rung with
-  `REDSTONE_HIER_RUNGS` instead.
+- `solid` says the R0Q0 latch torches are at merge `(653,48)` and `(656,47)`
+- `finish_assembly` shifted blocks by `(-2,-26)`, so those are **block
+  `(655,74)` and `(658,73)`**
+- `blocks` contains **no** torch anywhere in x 640-680, z 60-95; in fact
+  **all 230 torches in the build sit at z 98..170**
 
-## What I need from you
+`check_shorts`/`check_opens` read `wires` + `solid` and pass; the **sim** reads
+`blocks` and therefore cannot see those torches at all. That is why a run with
+no visible driver still reads high, and it is a merge-integrity bug, not a
+routing one.
 
-Nothing blocking. Two decisions worth a word, both cheap either way:
+**Frame rule, stated once so it stops costing time:** `solid`, `wires`,
+`repeaters`, `rings` and `stitched` in a merge dump are **merge space**;
+`blocks` (and therefore `io`) are **block space**; `block = merge - (-2,-26) =
+merge + (2,26)`. Comparing a band's `out` (finish_assembly'd on its own)
+against the merged `blocks` is a *different* frame error and manufactures a
+bogus "3388 cobble deleted" (it is 17 boundary-input levers, by design).
 
-1. The glass feature (non-conductive support; `_parse_build` still rejects
-   it) is still queued after cpu4, per your earlier call. It would delete most
-   of the lid/slope-coupling machinery this repo fights — worth doing right
-   after cpu4.
-2. `scratch/` has 539 files of probes. Most are single-purpose forensics with
-   the finding already in a `ponytail:` comment. Pruning them would make the
-   next session's forensics much faster to navigate.
+## Next step
+
+Find where the merge drops those torch blocks. Prime suspects, in order:
+
+1. `compose_hier_parts`'s band copy loop — it appends `pctx.blocks` verbatim
+   and separately copies `pctx.solid`, so the two can diverge if a band ctx's
+   `blocks` is short. Compare `len(solid torch entries)` against
+   `len(wall_torch blocks)` **per band, in one frame**, right after the merge
+   loop and again after `finish_assembly`.
+2. `finish_assembly`'s shrink-wrap: it shifts `blocks`, `solid`, `wires`,
+   `rings`, `junctions`, `pos`, `repeaters` — but **not** the copies embedded
+   in `io`, and it rebuilds dust/repeater blocks from `wires`/`repeaters`
+   only. A tile torch lives in `blocks` and nowhere else, so if the band
+   `blocks` list lost it, nothing restores it.
+
+Add a fail-loud assertion at the merge boundary: every `("torch", net)` in
+`solid` must have a `wall_torch` block at the corresponding cell. That turns
+this whole class loud at compose time.
+
+## Re-gated
+
+`recipe.py`, `sim.py` pass. `compose_check.py` bit-identical
+(144/322/224/214). `dense_status.py` OK for example_and, latch_sr, mux2, sub2,
+micro1, decode3, cmp2. alu4 re-stitched 35516 blocks and re-verified **1024/1024**
+with the new physics.
+
+## Traps (carried forward, both cost real time)
+
+- Frame rule above. Two separate sessions lost hours to it.
+- `REDSTONE_ASTAR_CAP` must be **unset** when building band caches; at 6000,
+  bands 5 and 6 lose their only green rung.
+- `scratch/hier_bands.py` picks the **smallest** green rung, so `HIER_SKIP`
+  rarely moves a band — use `REDSTONE_HIER_RUNGS` to force one.
+- `scratch/` now holds ~560 probe files. Pruning them (the finding is already
+  in a `ponytail:` comment next to the code) would make the next session's
+  forensics much faster.

@@ -653,3 +653,36 @@ TRAPS FOUND (cost real time, record them):
   in a single process.
 - scratch/hier_bands.py picks the SMALLEST green rung, so HIER_SKIP rarely
   moves a band. Use REDSTONE_HIER_RUNGS to force a rung.
+
+## Session 2 (autonomous, continued): cpu4 merge lands
+
+Ring wall FIXED. finish_assembly was rejecting the merge on "repeater loop on
+R1Q3 at (2850,1,43)". Cause was ORDERING, not geometry: the ring gate inside
+_try ran BEFORE _plant_repeaters, so a booster landing where a leg doubles
+back on an EARLIER LEG of the same net (R1Q3 is consumed by two bands, legs
+chain stub to stub) closed a ring nobody was watching. Boosters now planted
+INSIDE _try with a ring check either side; a failure there rolls back and the
+NEXT strategy runs. Also: a run must be a SIMPLE path (adjacent repeat at a
+leg joint is the only legal one), and the stub-connect pass got the same
+post-boost ring gate it never had.
+
+Result: MERGE 72055 blocks. SMOKE 0000000 OK, 1111111 OK, 0101010 MISMATCH Y1.
+
+NEW WALL (sharp, with the frame rule settled): the merged blocks list is
+MISSING tile torches that solid still declares. In cpu4merge2.pkl, solid puts
+the R0Q0 latch torches at merge (653,48)/(656,47) = block (655,74)/(658,73),
+and blocks has NO torch in x640-680 z60-95 -- all 230 torches in the build sit
+at z 98..170. check_shorts/check_opens read wires+solid and pass; the SIM
+reads blocks and cannot see those torches at all, which is why R0Q0 reads
+1068/1068 lit on a no-write vector (R1Q0 reads 0/811, correct).
+
+FRAME RULE (state once, it keeps costing): in a merge dump, solid/wires/
+repeaters/rings/stitched are MERGE space; blocks and io are BLOCK space, and
+block = merge + (2,26) for cpu4. Comparing a band's `out` (finish_assembly'd
+on its own) against merged blocks is a DIFFERENT frame error that manufactures
+a bogus "3388 cobble deleted" (really 17 boundary-input levers, by design).
+
+NEXT: find where the merge drops those torch blocks, and add a fail-loud
+assertion at the merge boundary (every ("torch",net) in solid must have a
+wall_torch block at the matching cell) so the whole class goes loud at compose
+time.
