@@ -143,17 +143,22 @@ Nothing is blocked. Three decisions are yours:
    cells), and it is agent 1's lane, not mine. Flagging it because it is the
    reason the CLI looked hung in the first place, and it will bite anyone
    verifying a banded recipe of this size.
-3. **Any cached greens are void.** Agent 3 caught this and was right:
-   `cpu4merge3.pkl.verify.json` (32/32) and `alu4merge.pkl.verify.json` (58/64)
-   were produced by a *pre-fix* engine, and the cache key covered recipe + build
-   path but not the physics — so re-running the identical command would have
-   reused them and reported a clean pass that meant nothing. This is worse than
-   a red build: one of the bugs I fixed made builds "settle dark and early",
-   which is a way to go **green for the wrong reason**. I have since made the
-   key include a hash of `sim/simvec/recipe/layout/compose/tiles/core`, so any
-   engine edit now voids every cache automatically — but **the existing three
-   cache files still hold pre-fix greens and should be deleted by hand**,
-   because the fix only prevents reuse going forward.
+3. **Any cached greens are void — but they will now void themselves.**
+   Agent 3 caught this and was right: `cpu4merge3.pkl.verify.json` (32/32) and
+   `alu4merge.pkl.verify.json` (58/64) were produced by a *pre-fix* engine, and
+   the cache key covered recipe + build path but not the physics — so re-running
+   the identical command would have reused them and reported a clean pass that
+   meant nothing. This is worse than a red build: one of the bugs I fixed made
+   builds "settle dark and early", which is a way to go **green for the wrong
+   reason**.
+
+   The key now includes a hash of `sim/simvec/recipe/layout/compose/tiles/core`,
+   so any engine edit voids every cache. The three existing files still *hold*
+   pre-fix greens (stored `__fp__` values are bare hashes like `96519cea6057`;
+   the new key is `hash:hash`, so they will not match and will be discarded on
+   the next run). Deleting them by hand is therefore belt-and-braces, not
+   required — but **do not bank those 32/32 greens**. `cpu4merge.pkl.verify.json`
+   is a RED cache (TORCH BURNOUT), also pre-fix.
 
 ## Files
 
