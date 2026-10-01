@@ -287,7 +287,16 @@ def _pre(blocks, io, inp):
             elif m in cob:
                 out.append(("c", m))
             elif m in rep:
-                if back(m, c):
+                # ponytail: the REAR test, not back(). A repeater must be
+                # re-evaluated when the cell BEHIND it changes (that is its
+                # input); back() asks the opposite question (does it feed the
+                # changed cell) and silently left every repeater evaluated
+                # exactly once, at tick 0, when its input is still dark -- so
+                # no booster ever fired, the boosted wires decayed to nothing,
+                # and the build "settled" dark and early. Symptom was
+                # rep_on=0 and lit dust falling from 15 back to 5.
+                dm = rep[m]
+                if (m[0] - dm[0], m[1], m[2] - dm[1]) == c:
                     out.append(("r", m))
             elif m in comp:
                 out.append(("k", m))
