@@ -35,6 +35,7 @@ serial engine, which keeps ownership of the loud diagnosis. So this module
 never reports "settled" on anything order-dependent.
 """
 import os as _os
+import time as _time
 
 from core import DIRS
 from layout import dust_points
@@ -724,6 +725,157 @@ def eval_net_par(ins, gates, outputs, combos):
 def lanes_of(mask, nl):
     """HIGH mask -> the lane indices it selects."""
     return [l for l in range(nl) if mask >> (l * LANE + SHIFT) & 1]
+
+
+# ---------------------------------------------------------------- driver
+# ponytail: measured reality of the SWAR path on alu4 (34672 blocks, 1024
+# vectors, 20 cores), because it decides the whole design:
+#     8 lanes   1.13s     32 lanes  1.27s    128 lanes 1.54s
+#   -> where lanes converge together they SHARE events and this is ~110x.
+#     256-1023 -> 6 of 8 x 128-lane shards burn a 4M-step budget; at 20M steps
+#     they are still going (tick 4090). Merged event count is ~sum(lane), not
+#     max(lane), so one hard vector costs the whole shard its serial cost
+#     x shard_size. On this build SWAR is a big win on the easy vectors and a
+#     LOSS on the hard ones, and the hard ones dominate.
+# Also: a single run over all 1024 lanes can NEVER terminate if any one vector
+# hunts, because sim's torch-burnout rule -- a termination device -- is not
+# reimplemented here. Hence shards, hard bounds, and a fallback.
+#
+# So the default driver is the boring one: vectors across cores, serial engine,
+# which is a fixed ~ncores speedup and cannot stall. SWAR is per shard and
+# opt-in (REDSTONE_VEC_SWAR=1); a shard that does not settle inside its budget
+# falls back to the serial engine for those vectors, so the verdict always
+# comes from an engine that finished.
+
+_W = {}
+
+
+def _init_worker(blocks, io, gates, outputs, ins, tick_cap, stall):
+    _W.update(blocks=blocks, io=io, gates=gates, outputs=outputs, ins=ins,
+              tick_cap=tick_cap, stall=stall)
+
+
+def _serial_shard(combos):
+    """The authority, one vector at a time. Bounded by sim's own caps."""
+    from sim import _parse_build, _run_vec, _TICK_CAP, _STEP_CAP
+    from recipe import eval_net
+    P = _parse_build(_W["blocks"], _W["io"])
+    ins, gates, outs = _W["ins"], _W["gates"], _W["outputs"]
+    bad, ticks = [], 0
+    for vec in combos:
+        try:
+            got, live, tlv, tk, rlv, cn = _run_vec(vec, None, P, until=None)
+        except RuntimeError as e:
+            bad.append((vec, "RED", str(e)[:80], None))
+            continue
+        ticks = max(ticks, tk)
+        exp = eval_net({"inputs": ins, "gates": gates, "outputs": outs}, vec)
+        for net in outs:
+            if bool(got.get(net, False)) != bool(exp[net]):
+                bad.append((vec, net, bool(got.get(net, False)), bool(exp[net])))
+    return bad, ticks
+
+
+def _swar_shard(combos, step_cap):
+    """Try the bit-parallel engine on this shard.
+
+    Returns (bad, ticks) on success, or None if it cannot decide -- in which
+    case the caller re-dispatches those vectors ONE PER TASK. Bundling the
+    fallback into the same shard is what made a 1024-vector run take 20
+    minutes: a shard containing one hunting vector held a worker for the whole
+    serial sweep of all 8 of its vectors while 19 workers sat idle.
+    """
+    ins, gates, outs = _W["ins"], _W["gates"], _W["outputs"]
+    try:
+        lamps, tk = run(ins, _W["blocks"], _W["io"], combos, _W["tick_cap"],
+                        step_cap, _W["stall"])
+        sig, _O = eval_net_par(ins, gates, outs, combos)
+    except (Indecisive, Exception):               # noqa: BLE001
+        return None
+    nl = len(combos)
+    full = (1 << (nl * LANE)) - 1
+    bad = []
+    for net in outs:
+        lm = lamps.get(net, 0)
+        d = (lm ^ sig[net]) & full
+        if d:
+            for l in lanes_of(d, nl):
+                bad.append((combos[l], net, l in lanes_of(lm, nl),
+                            bool(sig[net] >> (l * LANE + SHIFT) & 1)))
+    return bad, tk
+
+
+def _shard_job(combos):
+    if _W.get("swar") and len(combos) > 1:
+        got = _swar_shard(combos, _W["swar_cap"])
+        if got is not None:
+            bad, tk = got
+            return bad, tk, []
+        return [], 0, list(combos)        # could not decide: re-dispatch singly
+    return _serial_shard(combos) + ([],)
+
+
+def verify_par(ins, gates, outputs, blocks, io, combos, workers=None,
+               shard=None, tick_cap=20000, step_cap=4000000, stall=5000,
+               swar=None, progress=None):
+    """Verify every vector in `combos`. Returns (bad, max_ticks).
+
+    bad is a list of (vec, net, got, want), the same shape sim.sim_verify
+    raises on, so the caller reports it identically. Two passes: the SWAR
+    shards first, then whatever they could not decide re-dispatched one vector
+    per task so the pool can balance the stragglers.
+    """
+    import multiprocessing as _mp
+    swar = int(_os.environ.get("REDSTONE_VEC_SWAR", "1")) if swar is None else swar
+    n = max(1, min(workers or (_os.cpu_count() or 1), len(combos)))
+    shard = shard or max(1, len(combos) // (n * 4) or 1)
+    init = (blocks, io, gates, outputs, ins, tick_cap, stall)
+    ctx = _mp.get_context("spawn")
+    bad, ticks, retry = [], 0, []
+    total = max(1, len(combos) // shard)
+
+    def drain(it):
+        nonlocal bad, ticks
+        for b, t, r in it:
+            bad += b
+            ticks = max(ticks, t)
+            retry.extend(r)
+
+    _init_worker(*init)
+    _W["swar"], _W["swar_cap"] = swar, step_cap
+    shards = [combos[i:i + shard] for i in range(0, len(combos), shard)]
+    seen = [0]
+
+    def drain(it, total, label=""):
+        # ponytail: the parent blocks in imap_unordered at 0% CPU by design
+        # while the workers grind, so a silent parent is indistinguishable
+        # from a hung one. Count here, in the consumer, because a closure
+        # defined in verify_par cannot be pickled to a spawn worker.
+        nonlocal bad, ticks
+        for res in it:
+            b, t = res[0], res[1]
+            bad += b
+            ticks = max(ticks, t)
+            if len(res) > 2:
+                retry.extend(res[2])
+            seen[0] += 1
+            if progress and (seen[0] % 8 == 0 or seen[0] == total):
+                progress(seen[0], total, 0.0)
+
+    if n == 1:
+        drain(map(_shard_job, shards), len(shards))
+        drain(map(_serial_shard, ([v] for v in retry)), len(retry))
+        return bad, ticks
+    with ctx.Pool(n, initializer=_init_worker, initargs=init) as pool:
+        drain(pool.imap_unordered(_shard_job, shards), len(shards))
+        if retry:
+            if progress:
+                print("   SWAR settled most shards; re-dispatching %d vectors "
+                      "one per task for load balance" % len(retry), flush=True)
+            seen[0] = 0
+            drain(pool.imap_unordered(_serial_shard, ([v] for v in retry)),
+                  len(retry))
+    return bad, ticks
 
 
 if __name__ == "__main__":

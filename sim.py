@@ -379,36 +379,71 @@ def _run_vec(vec, init, ctx, until=None):
         # settles), but a boosted S/R run delivers that pulse to an idle
         # latch at T~9 (measured: R1_S1 spikes to 10, the seeded hold-0
         # breaks into a permanent symmetric hunt, whole-ALU churn=15016).
-        # The pre-roll iterates dust/blocks/torches to their tick-0 fixpoint
-        # (repeaters/comparators frozen: their delays are REAL transients the
-        # loop must still play out; hold-0 ~qb torches pinned ON), so tick 0
-        # starts per truth with zero pulses and only genuine arrivals move.
-        # Undriven dust still decays, driven S|R still force, so opens/shorts
-        # stay loud. Latch-free builds never set _solve (untouched path).
+        # The pre-roll iterates the WHOLE field to its tick-0 fixpoint
+        # (dust/blocks/repeaters/comparators/torches; hold-0 ~qb torches pinned
+        # ON), so tick 0 starts per truth with zero pulses and only genuine
+        # arrivals move. Undriven dust still decays, driven S|R still force, so
+        # opens/shorts stay loud. Latch-free builds never set _solve (untouched
+        # path).
+        # ponytail: repeaters belong IN the fixpoint. They used to be frozen
+        # OFF on the theory that their delay is a real transient the loop must
+        # play out — but a frozen booster makes every cell BEYOND it read dark
+        # at tick 0, so the fixpoint was not the quiescent state, it was a
+        # half-powered one. Every downstream gate then emitted a phantom pulse
+        # as the boosters came up (measured on cpu4: OPC1 read 96/903 at tick 0
+        # instead of 903/903, NOT OPC1 fired, and C_n2 AND C_n1 drove a 40-tick
+        # REGW glitch at T~28 that reached R0_S1 at T~120 and latched R0Q1/R0Q3
+        # to 1 on a no-write vector). The delay is real, but a booster's
+        # SETTLED value is a function of its input, so iterating it converges to
+        # exactly what the circuit settles to — which is the whole point.
         _pins = set(init.get("t", {}))
-        for _ in range(20000):
-            _ch = False
-            for c in dust:
-                v = dust_lvl(c)
-                if pw.get(c, 0) != v:
-                    pw[c] = v
-                    _ch = True
-            for c in cob:
-                v, s = cob_state(c)
-                if pb.get(c, False) != v or pbs.get(c, False) != s:
-                    pb[c], pbs[c] = v, s
-                    _ch = True
-            for c in torch:
-                if c in _pins:
-                    continue
-                v = not (pb.get(torch[c], False) or torch[c] in rblk)
-                if tl.get(c, False) != v:
-                    tl[c] = v
-                    _ch = True
-            if not _ch:
-                break
-        else:
-            raise RuntimeError("comb pre-solve did not converge (loop?)")
+
+        def _presolve(with_rep):
+            for c in rep:
+                ron[c] = False
+            for c in comp:
+                con[c] = 0
+            for _ in range(20000):
+                _ch = False
+                for c in dust:
+                    v = dust_lvl(c)
+                    if pw.get(c, 0) != v:
+                        pw[c] = v
+                        _ch = True
+                for c in cob:
+                    v, s = cob_state(c)
+                    if pb.get(c, False) != v or pbs.get(c, False) != s:
+                        pb[c], pbs[c] = v, s
+                        _ch = True
+                if with_rep:
+                    for c in rep:
+                        v = rep_on(c)
+                        if ron.get(c, False) != v:
+                            ron[c] = v
+                            _ch = True
+                    for c in comp:
+                        v = comp_out(c)
+                        if con.get(c, 0) != v:
+                            con[c] = v
+                            _ch = True
+                for c in torch:
+                    if c in _pins:
+                        continue
+                    v = not (pb.get(torch[c], False) or torch[c] in rblk)
+                    if tl.get(c, False) != v:
+                        tl[c] = v
+                        _ch = True
+                if not _ch:
+                    return True
+            return False
+
+        if not _presolve(True):
+            # ponytail: no fixpoint WITH boosters means a real oscillator (or a
+            # net that only settles by ringing). Fall back to the booster-free
+            # pre-solve so the tick loop still runs and reports the CHURN SET,
+            # which names the loop — a bare "did not converge" here would throw
+            # that diagnosis away.
+            _presolve(False)
 
     for c in dust:
         sched(0, "d", c)
@@ -760,6 +795,26 @@ def sim_verify(recipe, blocks, io, seed=7, quiet=False, collect=False):
                   "levers": {f"{x},1,{z}": n for (x, z), n in io["levers"].items()},
                   "lamps": {f"{x},1,{z}": n for (x, z), n in io["lamps"].items()},
                   "vectors": {}}
+    # ponytail: bit-parallel fast path (simvec.SWAR + one core per shard).
+    # The serial loop below costs O(2^n) whole simulations -- measured alu4 at
+    # 1024 x 1.31s = 1337s, doubling per input -- which is what made the CLI
+    # look hung. Eligibility is deliberately narrow, because simvec is only
+    # allowed to answer where its answer is order-independent:
+    #   * no LATCH gate / no hold seed -> every vector is an independent
+    #     combinational run from tick 0, so its fixpoint is unique and the
+    #     merged fixpoint equals the per-vector one (see simvec's header)
+    #   * states is None -> no caller wants per-vector live maps
+    # REDSTONE_SERIES_VERIFY=1 forces the serial loop (differential testing).
+    if (states is None and not latchouts and _hold is None
+            and not _os.environ.get("REDSTONE_SERIES_VERIFY")):
+        import simvec
+        bad, maxticks = simvec.verify_par(ins, recipe["gates"],
+                                          recipe["outputs"], blocks, io, combos)
+        if bad:
+            raise RuntimeError(f"SIM MISMATCH x{len(bad)}: {bad[:4]}")
+        if not quiet:
+            print(f"sim ok: {len(combos)} vectors, lamps match logic")
+        return states, maxticks
     for vec in combos:
         exp = eval_net(recipe, vec)
         if latchouts and not any(exp.get(a, False) for a in latchargs):
