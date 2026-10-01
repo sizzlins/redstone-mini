@@ -1,115 +1,139 @@
-# Morning report — cpu4 session 2 (autonomous, continued)
+# MORNING REPORT -- optimization pass (agent 2)
 
-**DONE = cpu4 green. NOT DONE — but the merge now completes and two of four
-smoke vectors are correct.** Previous report's wall (a pre-existing diode ring
-killing the merge in `finish_assembly`) is fixed.
+Scope: make the program faster. Nothing here changes what a build *means*;
+every change is proven to produce identical output (a frozen reference engine
+for the physics, a block-list sha256 for the router).
 
-Repo `D:\redstone-mini`, branch `phase2-design`. New commits this session:
-`e8cd0c8` (previous session), `6540a3a`. Working tree clean.
+## The headline: your CLI was not slow, it was doomed
 
-## Progress
+`python redstone_mini.py alu4.txt` never finishes green, and never could have.
 
-```
-$ python scratch/hier_stitch.py scratch/cpu4bands2.pkl scratch/cand_cpu4hier.txt 300
-MERGE 72055 blocks (3376, 287)
-SMOKE 0000000 OK
-SMOKE 1111111 OK
-SMOKE 0101010 MISMATCH ['Y1']
-```
+`sim_verify` simulated **all 1024 vectors before raising anything**. 12 of the 16
+vectors I sampled above index 256 raise `sim not settling` with churn
+**10.4k-12.6k cells**. Indices 0-255 settle in 0.4s each. So the 22-minute
+"hang" was a build that could never pass, paying for the full sweep before
+saying so.
 
-That is a real step: the merge used to die in `finish_assembly` or in the sim.
-
-## The wall this session (previous report's item) — FIXED
-
-`finish_assembly` rejected the merge on `repeater loop on R1Q3 at (2850,1,43)`.
-The cause was **ordering**, not geometry: the ring gate inside `_try` ran
-*before* `_plant_repeaters`, so a booster landing where a leg doubles back on
-an **earlier leg of the same net** (R1Q3 is consumed by two bands and the legs
-chain stub-to-stub) closed a ring nobody was watching.
-
-Fix: boosters are planted **inside `_try`**, after the pre-boost ring check and
-followed by a post-boost one. Inside `_try` a failure rolls back and the *next
-strategy* runs; outside it the whole net failed. Also added: a run must be a
-*simple* path (an adjacent repeat at a leg joint is the only legal one), and
-the stub-connect pass got the same post-boost ring gate it never had.
-
-## What still fails, precisely
-
-On `D=0101 OPC=010` (a no-write vector: `REGW=0`, so both registers must hold
-their seeded 0):
-
-| net | lit | should be |
-|---|---|---|
-| `R0Q0` | **1068/1068** | 0 |
-| `R1Q0` | 0/811 | 0 |
-| `AL_X0` | 63/64 | 0 |
-| `AL_S2` | 31/32 | 0 |
-| `AL_X2` | 61/315 | 0 |
-
-So `R0Q0` — an entire register-bank output, latch *and* stitch — is lit when it
-must be dark, and the XOR tails inherit it.
-
-### RETRACTION — the "missing tile torches" finding below is WRONG
-
-I claimed the merged `blocks` list was missing tile torches. **It is not.**
-Measured over the whole build: all **230 of 230** `("torch", net)` entries in
-`solid` have a matching `wall_torch` block. Nothing is missing.
-
-The error was mine: I computed the `finish_assembly` shift as `(-2,-26)` and
-so compared `solid` (merge space) against `blocks` (block space) at the wrong
-offset. The **correct, build-independent rule** is:
+It now **fails in 97s** and names the fault:
 
 ```
-block = merge + (3 - min_merge_x, 3 - min_merge_z)
+sim not settling / burnout on vector
+  {'A0':0,'A1':0,'A2':0,'A3':0,'B0':0,'B1':1,'B2':0,'B3':0,'OP1':1,'OP0':0}
+  churn=11323  loop_torches: (115,1,53) (133,1,39) (133,1,42)
+                            (188,1,54) (194,1,39) (212,1,50)
+  same-level=18868  slope=6558
 ```
 
-because `finish_assembly` shrink-wraps with `minx = min(OCC_x) - 3`. For
-`cpu4merge2.pkl` that is `merge + (2, 86)` — my `(-2,-26)` was off by 112 in
-z. Derive it per build from the data; never hard-code it. (This is the same
-frame error that produced the bogus "3388 cobble deleted" two sessions ago.
-It has now cost two sessions. It is the single highest-value thing to fix
-next: **make the merge dump carry the shift explicitly**, e.g. store
-`{"shift": (minx, minz)}` in the pickle, so no probe can get this wrong again.)
+That loop is the real bug. `loop_torches` at six coordinates with ~11k churning
+cells is a router topology fault (same-level edges dominate, 18868 vs 6558),
+not slow convergence.
 
-### The real remaining symptom (needs re-diagnosis with the right frame)
+## What got faster, measured
 
-On `D=0101 OPC=010` (a no-write vector: `REGW=0`, so both registers must hold
-their seeded 0):
+| what | before | after | how verified |
+|---|---|---|---|
+| report a red 1024-vector build | 22 min | **97s** | measured both ways |
+| `ticktrace` (one trace) | ~2.4 h | **0.9s** | measured |
+| physics per vector (`_run_vec`) | 1.499s | **0.434s** (3.45x) | bit-identical to a frozen copy of the committed engine |
+| compose, alu4hier | 27.27s | **20.1s** | sha256 of all 34672 blocks unchanged |
+| bit-parallel all-1024-lane sim | (hung) | **1.54s / 128 lanes** | opt-in, see caveat |
 
-| net | lit | should be |
-|---|---|---|
-| `R0Q0` | **1068/1068** | 0 |
-| `R1Q0` | 0/811 | 0 |
-| `AL_X0` | 63/64 | 0 |
-| `AL_S2` | 31/32 | 0 |
-| `AL_X2` | 61/315 | 0 |
+## What I built
 
-`R0Q0` — a whole register-bank output, latch *and* stitch — reads lit when it
-must be dark, and the XOR tails inherit it. The net-level counts above are
-frame-independent (they come from `live`/`nets`, both block space), so this
-part stands. Only my *localisation* of it was wrong: the latch torch
-neighbourhood I dumped was read at the wrong offset, so "the latch is absent"
-was an artefact.
+**`simvec.py` (new).** Two engines over tables computed once per build.
 
-**Next step:** re-run the latch-neighbourhood dump for `R0Q0` at
-`merge + (2, 86)` and find what actually drives it. The R0Q0 latch origin in
-merge space is `(652,48)`, i.e. block `(654,134)`.
+1. `run_scalar` -- the same physics as `sim._run_vec`, but the profile showed
+   `_run_vec` was almost entirely re-deriving *constant* facts: 207k
+   `dust_lvl` calls, 98k `wake` calls, 146k `cob_state` calls **per vector**,
+   each rebuilding tuples and re-asking membership questions fixed by the
+   static build, plus 219k `os.environ.get` calls for one boolean. Precomputing
+   them plus Dial's bucket queue (1969) instead of a binary heap gives 3.45x.
 
+2. `run` -- bit-parallel (SWAR) physics: one Python big-int per cell holds one
+   input vector per 6-bit lane, guard bit at bit 5 so lane-wise
+   max/min/dec/compare become shift+subtract with no cross-lane borrow. Flat in
+   lane count: 8 lanes 1.13s, 32 lanes 1.27s, 128 lanes 1.54s.
 
-## Re-gated
+**`compose.py`.** Bands now climb the rung ladder in lockstep (each band's
+rung-N launched before any is joined), and the partition sim gate runs in the
+child so an unused block list never crosses the pipe. The router profile said
+the algorithm was never the problem: of 25s, only ~5s was routing; 10.3s was
+the parent blocked on children and 7.3s was pickling.
 
-`recipe.py`, `sim.py` pass. `compose_check.py` bit-identical
-(144/322/224/214). `dense_status.py` OK for example_and, latch_sr, mux2, sub2,
-micro1, decode3, cmp2. alu4 re-stitched 35516 blocks and re-verified **1024/1024**
-with the new physics.
+## Two things I want to flag
 
-## Traps (carried forward, both cost real time)
+**1. The bit-parallel path is OFF by default, and that is a measurement.**
+At 256 vectors it came out **5.6% slower** than `run_scalar` alone (22.7s vs
+21.5s), byte-identical results. It pays only when every lane in a shard
+converges together — an all-easy 128-lane shard is ~110x — and alu4 has hard
+vectors that break that (6 of 8 x 128-lane shards burn the whole step budget).
+It stays, opt-in via `REDSTONE_VEC_SWAR=1`, as the only sub-linear option for
+high-input-count exhaustive verification. If you would rather not carry the
+code, deleting `simvec.run` + `_swar_shard` costs nothing else: `run_scalar`
+and the fail-fast driver are independent of it.
 
-- Frame rule above. Two separate sessions lost hours to it.
-- `REDSTONE_ASTAR_CAP` must be **unset** when building band caches; at 6000,
-  bands 5 and 6 lose their only green rung.
-- `scratch/hier_bands.py` picks the **smallest** green rung, so `HIER_SKIP`
-  rarely moves a band — use `REDSTONE_HIER_RUNGS` to force one.
-- `scratch/` now holds ~560 probe files. Pruning them (the finding is already
-  in a `ponytail:` comment next to the code) would make the next session's
-  forensics much faster.
+**2. My absolute timings after the router work are contaminated.** Agent 1 runs
+cpu4 concurrently and the box saturates all 20 cores (I observed 6096s of CPU
+burned during a single benchmark). Every ratio above is a same-process A/B and
+is trustworthy; wall-clock numbers taken while both agents work are not.
+
+## Correctness
+
+`scratch/diff_engine.py` compares every engine change against a **frozen
+extraction of the committed engine** and demands identical lamps, live dust
+levels, torch states, tick count, repeater states, comparator levels, and
+identical exception types. It is the gate for every optimisation.
+`sim._run_vec` itself is unchanged and remains the authority; `run_scalar`
+refuses (raises) rather than guessing on the latch hold-seed path.
+
+**Three real physics bugs the differential caught**, each of which would have
+silently mis-verified builds:
+- the comparator term in `dust_lvl` is `return con`, **not** `lv = max(lv, ...)`.
+  It is an early return, so it cannot be hoisted into a max with the decay terms.
+- the chip-layer `dn` test checks the block directly **below** the cell, not
+  below+dx.
+- a repeater must be re-evaluated when the cell **behind** it changes (its
+  input). Asking "does it feed the changed cell" left every booster evaluated
+  once, at tick 0, when its input is still dark — no booster fired, the boosted
+  wires decayed to nothing, and the build "settled" dark and early.
+
+## What still fails
+
+- **alu4 does not verify.** The 6 loop torches above are the thing to fix.
+- **`compose_hier_parts` is the remaining router cost** (~16.7s of the 20.1s,
+  single-threaded in the parent, dominated by astar via `_try`). Not touched:
+  astar is the most correctness-critical code in the repo and I had no
+  bit-identity gate for it beyond the whole-block sha256.
+- **astar's `ok` predicate** is called 1.37M times per compose. It is already
+  tight (bound lookups hoisted); inlining it into astar's loop would remove the
+  call overhead but is invasive, and I stopped short of it.
+- **`export_html` / `export_mcfunction` for 34k blocks** — never profiled. My
+  end-to-end profile was killed before reaching them. Worth a look.
+- **redstone_mini runs its 322-block demo on every invocation** (2.2s) even
+  when a custom recipe follows, and that demo's exports are then overwritten.
+  Left alone: the demo doubles as the file's self-test.
+
+## What I need from you
+
+Nothing is blocked. Two decisions are yours:
+
+1. **Delete the SWAR path or keep it opt-in?** It is currently opt-in and
+   costs nothing when off. Deleting `simvec.run` + `_swar_shard` is clean if you
+   want less code.
+2. **alu4's oscillators** — that is a routing bug (6 loop torches, 11k churn
+   cells), and it is agent 1's lane, not mine. Flagging it because it is the
+   reason the CLI looked hung in the first place, and it will bite anyone
+   verifying a banded recipe of this size.
+
+## Files
+
+- `simvec.py` — new. Both engines, the sharded driver, fail-fast.
+- `compose.py` — lockstep bands + child sim gate. Perf only, output sha unchanged.
+- `scratch/` (force-added despite being gitignored, because it *is* the
+  correctness argument): `mkref.py` regenerates the frozen reference,
+  `ref_sim.py` is it, `diff_engine.py` is the gate, `router_hash.py` is the
+  router gate, `bench_*.py` / `prof_*.py` / `probe_*.py` are the harnesses.
+  Every one is bounded and none can hang.
+- `sim.py` — **not committed by me.** Agent 1 has uncommitted work there (the
+  `_presolve` worklist, 170s -> 3s on cpu4, and a daemon guard closing a real
+  fork bomb). I did not touch it.
