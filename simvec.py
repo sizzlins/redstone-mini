@@ -1260,12 +1260,27 @@ def verify_par(ins, gates, outputs, blocks, io, combos, workers=None,
     """Verify every vector in `combos`. Returns (bad, max_ticks).
 
     bad is a list of (vec, net, got, want), the same shape sim.sim_verify
-    raises on, so the caller reports it identically. Two passes: the SWAR
-    shards first, then whatever they could not decide re-dispatched one vector
-    per task so the pool can balance the stragglers.
+    raises on, so the caller reports it identically. Hard-bounded: no shard
+    can exceed step_cap events, and anything the bit-parallel engine cannot
+    decide is re-dispatched one vector per task so the pool balances the
+    stragglers.
+
+    REDSTONE_VEC_SWAR=1 opts into the bit-parallel shards. It is OFF by
+    default, and that is a measurement, not modesty: at 256 vectors on alu4
+    it came out 22.7s against 21.5s for run_scalar alone -- a 5.6% regression,
+    byte-identical results either way. Bit-parallel pays only when every lane
+    in a shard converges together, because then the lanes SHARE events; a
+    single hunting vector in the shard means merged event count is ~sum(lane)
+    rather than ~max(lane), and the shard loses (measured: 6 of 8 x 128-lane
+    shards burn the step budget on alu4, while an all-easy 128-lane shard runs
+    in 1.54s -- ~110x). Real builds contain hard vectors, so the default pays
+    the wasted step budget for nothing. It stays in because it is the only
+    sub-linear option for exhaustive verification of high-input-count recipes,
+    where 2^n serial runs stop being affordable; set the env var when the
+    vector set is uniform.
     """
     import multiprocessing as _mp
-    swar = int(_os.environ.get("REDSTONE_VEC_SWAR", "1")) if swar is None else swar
+    swar = int(_os.environ.get("REDSTONE_VEC_SWAR", "0")) if swar is None else swar
     n = max(1, min(workers or (_os.cpu_count() or 1), len(combos)))
     shard = shard or max(1, len(combos) // (n * 4) or 1)
     init = (blocks, io, gates, outputs, ins, tick_cap, stall)
