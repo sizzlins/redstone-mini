@@ -842,3 +842,71 @@ GATES GREEN this session: sim.py, recipe.py, scratch/compose_check.py
 NOT re-run yet: alu4 (its verify cache was stale - an earlier "1024/1024" I
 reported was the cache being read, not the vectors being simulated), dense
 recipes. See MORNING-REPORT.md.
+
+### PART 2 -- router, and the finding that reframes the job
+
+#### alu4 is not slow to verify. It does not verify.
+probe_hard.py sampled 16 vectors across the space. Indices 0/64/128/192 settle
+in 0.4s. Indices 256..960 ALL raise "sim not settling", churn 10.4k-12.6k
+cells. The one verify_par reported: churn=11323, loop_torches at (115,1,53),
+(133,1,39), (133,1,42), (188,1,54), (194,1,39), (212,1,50), same-level=18868,
+slope=6558 edges.
+
+So the original symptom was never slowness. sim_verify simulated ALL 2^n
+vectors and only then raised, so a build that could never pass cost 22 minutes
+to say so -- which is indistinguishable from a hang to whoever is watching.
+
+FIX: verify_par fails fast on a structural fault. Not-settling / burnout /
+stall is a property of the BUILD, not of one vector -- every vector touching
+the same loop gets it -- so the rest of the 2^n runs buy nothing. The first
+fault sets a stop event the pool honours and raises the churn diagnostic
+verbatim. MEASURED 22min -> 97s, and the message now names the vector AND the
+loop. Logic MISMATCHES are still all collected (per-vector, cheap once the
+build settles) so stopping on them would hide information.
+
+#### Router: the algorithm was never the bottleneck
+Profile of compose on alu4hier (25.3s under cProfile): WaitForMultipleObjects
+10.3s (parent blocked on children), Pickler.dump 7.3s (IPC), CreateProcess
+0.62s -- and only ~5s of actual routing (astar 1.5s tottime).
+
+Two changes, both gated by scratch/router_hash.py (block count + sha256 of the
+whole block list, order included):
+1. compose_hier climbs bands in LOCKSTEP: every band's rung-N attempt is
+   launched before any is joined. Partitions are independent; only WHEN they
+   run changed. 27.27s -> 22.51s.
+2. the partition sim gate runs in the CHILD, so the shifted block list never
+   crosses the pipe -- compose_hier_parts unpacks each partition`s `out` and
+   never reads it (it consumes pctx, the UNSHIFTED tables). The gate is MOVED,
+   not dropped. 22.51s -> 20.1s.
+   sha256 c7ff3e6e6da7702321c2d871fca0762cbe95f86ac5d9863a1be41e2601206eaf
+   unchanged throughout.
+
+#### SWAR defaulted OFF (measured, not modesty)
+256 vectors on alu4: run_scalar only 21.5s, swar+fallback 22.7s. Byte-identical
+results, 5.6% slower with SWAR on. The reason is NOT gate count -- eval_net_par
+over the 82 gates costs 0.05s for 1024 vectors, so the logic side is free
+either way. It is event SHARING: bit-parallel pays only when every lane in a
+shard converges together (an all-easy 128-lane shard is 1.54s, ~110x), and
+alu4 has hard vectors that break it (6 of 8 x 128-lane shards burn the step
+budget). Kept, opt-in via REDSTONE_VEC_SWAR=1, because it is still the only
+sub-linear option for high-input-count exhaustive verification.
+
+#### ticktrace: 2.4 hours -> 0.9s
+Was 47 x _run_vec(until=T), and _run_vec re-runs the whole prefix every call,
+so 47 x the ~191s fixed startup; plus an O(34k) rescan per target per stop, and
+it printed only on change so it was silent the whole way. One run_scalar with
+snap_at now serves all 44 stops.
+
+### MEASUREMENT CAVEAT
+Absolute timings after the router work are contaminated: agent 1 runs cpu4
+concurrently and the box saturates all 20 cores (observed 6096s of CPU burned
+while a single benchmark ran). Ratios from same-process A/B are trustworthy;
+wall-clock numbers taken while both agents work are not. Flagged rather than
+quietly averaged.
+
+### NOT MINE, left untouched
+Agent 1 has uncommitted work in sim.py: the _presolve fixpoint converted to a
+worklist (170s -> 3s on the 72k-block cpu4 merge) and a daemon guard closing a
+real fork bomb (sim_verify fanning out a Pool from inside a pool worker). I did
+not edit or commit those. Everything I committed is simvec.py, compose.py
+(perf only), and scratch/.
