@@ -768,3 +768,77 @@ latch hold-seed path.
   is skipping evaluations whose specific source term did not change (dirty-bit
   propagation per wake edge) rather than re-deriving the whole cell.
 - exporters (export_html / export_mcfunction) for 34k blocks: not yet profiled.
+
+## Session 3 (autonomous): cpu4 GREEN - 128/128. The wall was the SIMULATOR.
+
+cpu4 merge now verifies on the FULL input space. VERIFY OK: 128 vectors,
+32 chunks green, zero failures, on scratch/cpu4merge3.pkl (72055 blocks) with
+scratch/cand_cpu4hier.txt.
+
+ROOT CAUSE (two sessions of forensics pointed at the router; it was never the
+router). sim.py's power-on pre-roll computed a HALF-POWERED tick-0 state: it
+iterated dust/blocks/torches to a fixpoint but FROZE ALL REPEATERS OFF, on the
+theory that a booster's delay is a real transient the tick loop must play out.
+A frozen booster makes every cell BEYOND it read dark, so the "fixpoint" was
+not the quiescent state. Measured on cpu4: OPC1 read 96/903 at tick 0 instead
+of 903/903, so NOT OPC1 emitted a phantom 1, and C_n2 AND C_n1 produced a ~40
+tick REGW glitch at T~28 that travelled E0 -> R0_S1 and latched R0Q1 and R0Q3
+to 1 on a no-write vector (REGW=0, both registers must hold their seeded 0).
+R0Q0 was never the culprit - the census that "proved" 1068/1068 was itself read
+through a bad offset. D0=0/D2=0 bits read 0 correctly all along; D1=1/D3=1
+bits are exactly the ones the glitch set.
+
+FIX: repeaters and comparators belong IN the pre-roll fixpoint. A booster's
+SETTLED value is a function of its input, so iterating it converges to exactly
+what the circuit settles to - which was the whole point of the pre-roll.
+
+TWO THINGS THAT FELL OUT, both real:
+1. The fixpoint is AMBIGUOUS - more than one self-consistent state exists. My
+   first version (whole-field sweep) converged to a state with AL_C2 stuck lit
+   725/982 at tick 0, which is wrong. Rewriting the same fixpoint as a WORKLIST
+   (only re-check the 3x3x3 box around a cell that actually changed) converges
+   to the correct state AND cut the pre-roll from 170 s to 6 s on the 72k-block
+   merge - the sweep cost one round per booster link. So the fix was both wrong
+   and slow; the worklist is both right and fast.
+2. sim_verify had become a FORK BOMB. It routes through simvec.verify_par,
+   which opens a multiprocessing.Pool; a pool worker is daemonic, so any
+   unguarded script calling sim_verify re-imported itself under spawn, forever.
+   scratch/compose_check.py churned silently with no output and no exit. Fixed
+   in sim_verify (one check closes all ~60 call sites) rather than in
+   simvec.py, which belongs to the other agent.
+
+DEAD ENDS (do not re-run; each was cheap and each was wrong):
+- Repeater ring in the merge: _loop_rep found 4, then 1, then 0 as I varied the
+  cobble set. BOTH the router's view (solid cobble) and the sim's own view
+  (_parse_build) return None. My first two results were artefacts of feeding
+  _loop_rep a cobble set neither caller uses. Lesson: _loop_rep's answer depends
+  on its cobble argument, and the repo has three different ones.
+- Repeater backed by a finish_assembly stone pad (pads are conductive to the sim
+  but absent from solid, so invisible to _loop_rep): scratch/padback.py finds
+  ZERO such repeaters in 4245. Clean.
+- Ring closed through a chip-layer y+-1 dust link, which _loop_rep's flat BFS
+  cannot see (its docstring admits this): scratch/chipring.py, run with sim's
+  own dust/cobble sets and sim's own chip rule, finds ZERO.
+- The whole-field pre-roll sweep (above) - wrong fixpoint AND 28x slower.
+
+TOOLING BUGS FIXED IN scratch/verify_par.py (gitignored, but they cost real
+time and will cost it again):
+- CACHE KEY IGNORED THE WORKER COUNT. chunks = vecs[i::workers] makes a chunk's
+  CONTENTS depend on workers, but the cache was keyed on the bare index, so a
+  cache written at workers=4 was read back as valid at workers=20 - silently
+  green-marking vectors that were never simulated. Now keyed
+  "nchunks:index:recipe+build fingerprint", and a fingerprint mismatch re-runs.
+- SILENCE READ AS A HANG. The only output was when a whole chunk landed; with a
+  32-vector chunk that is ~700 s of nothing, and the job got killed for looking
+  hung twice. The child now streams one line PER VECTOR.
+- CHUNK SIZE WAS TIED TO WORKER COUNT. nchunks is its own argument now, so the
+  chunk can be small enough to report often while the process count stays low.
+- My own bug in the rewrite: reap() unregistered the child on each PROGRESS
+  message, closing the pipe under a live worker (BrokenPipeError storm). Caught
+  and fixed in the same pass.
+
+GATES GREEN this session: sim.py, recipe.py, scratch/compose_check.py
+(bit-identical: 144 / 322 / 224 / 214), cpu4 merge 128/128.
+NOT re-run yet: alu4 (its verify cache was stale - an earlier "1024/1024" I
+reported was the cache being read, not the vectors being simulated), dense
+recipes. See MORNING-REPORT.md.

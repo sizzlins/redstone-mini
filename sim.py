@@ -399,42 +399,85 @@ def _run_vec(vec, init, ctx, until=None):
         _pins = set(init.get("t", {}))
 
         def _presolve(with_rep):
+            # ponytail: WORKLIST, not a whole-field sweep. Every rule here
+            # reads only cells within one step (plus a y step, for chip links),
+            # so a cell whose value changed can only have disturbed its own
+            # 3x3x3 box. Re-sweeping all ~75k cells per round cost 170 s on the
+            # 72k-block cpu4 merge (measured, vs 3 s for the old repeater-frozen
+            # sweep) because a booster chain needs one round per link; the
+            # worklist touches each cell once per actual disturbance instead and
+            # converges in seconds. Same fixpoint, same answer.
             for c in rep:
                 ron[c] = False
             for c in comp:
                 con[c] = 0
-            for _ in range(20000):
-                _ch = False
-                for c in dust:
+            dq, cq, tq, rq, kq = set(dust), set(cob), set(torch), set(), set()
+            if with_rep:
+                rq, kq = set(rep), set(comp)
+
+            def _box(c):
+                bx = c[0]
+                by = c[1]
+                bz = c[2]
+                for dx in (-1, 0, 1):
+                    for dy in (-1, 0, 1):
+                        for dz in (-1, 0, 1):
+                            m = (bx + dx, by + dy, bz + dz)
+                            if m in dust:
+                                dq.add(m)
+                            if m in cob:
+                                cq.add(m)
+                            if m in torch:
+                                tq.add(m)
+                            if m in rep:
+                                rq.add(m)
+                            if m in comp:
+                                kq.add(m)
+
+            # ponytail: a pop budget, not a round count. A ring oscillates
+            # forever and would spin here; the cap turns that into the same
+            # "no fixpoint" answer the round-count version gave, and the caller
+            # falls back so the tick loop still names the churn set.
+            for _ in range(40 * (len(dust) + len(cob) + len(rep)
+                                 + len(comp) + len(torch)) + 1000):
+                if dq:
+                    c = dq.pop()
                     v = dust_lvl(c)
                     if pw.get(c, 0) != v:
                         pw[c] = v
-                        _ch = True
-                for c in cob:
+                        _box(c)
+                    continue
+                if cq:
+                    c = cq.pop()
                     v, s = cob_state(c)
                     if pb.get(c, False) != v or pbs.get(c, False) != s:
                         pb[c], pbs[c] = v, s
-                        _ch = True
-                if with_rep:
-                    for c in rep:
-                        v = rep_on(c)
-                        if ron.get(c, False) != v:
-                            ron[c] = v
-                            _ch = True
-                    for c in comp:
-                        v = comp_out(c)
-                        if con.get(c, 0) != v:
-                            con[c] = v
-                            _ch = True
-                for c in torch:
+                        _box(c)
+                    continue
+                if rq:
+                    c = rq.pop()
+                    v = rep_on(c)
+                    if ron.get(c, False) != v:
+                        ron[c] = v
+                        _box(c)
+                    continue
+                if kq:
+                    c = kq.pop()
+                    v = comp_out(c)
+                    if con.get(c, 0) != v:
+                        con[c] = v
+                        _box(c)
+                    continue
+                if tq:
+                    c = tq.pop()
                     if c in _pins:
                         continue
                     v = not (pb.get(torch[c], False) or torch[c] in rblk)
                     if tl.get(c, False) != v:
                         tl[c] = v
-                        _ch = True
-                if not _ch:
-                    return True
+                        _box(c)
+                    continue
+                return True
             return False
 
         if not _presolve(True):
@@ -805,7 +848,23 @@ def sim_verify(recipe, blocks, io, seed=7, quiet=False, collect=False):
     #     merged fixpoint equals the per-vector one (see simvec's header)
     #   * states is None -> no caller wants per-vector live maps
     # REDSTONE_SERIES_VERIFY=1 forces the serial loop (differential testing).
-    if (states is None and not latchouts and _hold is None
+    # ponytail: never fan out from inside a worker. simvec.verify_par opens a
+    # multiprocessing.Pool, and a pool worker is DAEMONIC by definition, so the
+    # nested Pool raises "daemonic processes are not allowed to have children".
+    # Under spawn that is not a raise, it is a fork bomb: the child re-imports
+    # the __main__ script, which calls sim_verify again, forever (measured:
+    # compose_check.py churned with no output and no exit). The guard belongs
+    # HERE, not in simvec: sim_verify is the single function all ~60 call sites
+    # share, so one check closes the whole class regardless of whether the
+    # caller has an `if __name__ == "__main__":` guard. Falls through to the
+    # serial loop, which is correct and needs no processes.
+    _daemon = False
+    try:
+        import multiprocessing as _mpchk
+        _daemon = _mpchk.current_process().daemon
+    except Exception:
+        pass
+    if (states is None and not latchouts and _hold is None and not _daemon
             and not _os.environ.get("REDSTONE_SERIES_VERIFY")):
         import simvec
         bad, maxticks = simvec.verify_par(ins, recipe["gates"],
