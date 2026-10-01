@@ -581,3 +581,13 @@ STATUS: 20/21 green (alu4 promoted). cpu4 last red: same pipeline next.
   orphans; stub-connect capped at 6 legs/net (113 t23 orphans would take an
   hour). T23 driver area under diagnosis. Engine fixes verified safe
   (4 small bit-identical throughout; sim suite green).
+
+### mux4 GREEN via sim-gated ladder (8079 blocks, was 20239)
+Root cause of the red: correct lever physics exposed a real vanilla bug (S
+flight pillar beside A0 lever couples S lit). Fix: sim-gated standard ladder
+(opt-in REDSTONE_SIM_GATE=1 from layout_retry verify=True; big banded skip;
+previews stay fast; greens rung-1-identical). Ladder climbed past sim-red
+rungs to a clean geometry. Forensics built along the way: muxlevel (level +
+feeder scans), SOURCE (no-lit-neighbor cells), DIFF (lever-term on/off settled
+maps), rowmap, lever-pedestal self-check + budget-canary fix in sim suite.
+STATUS: 20/21. cpu4 last.
