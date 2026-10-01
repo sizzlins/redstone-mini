@@ -591,3 +591,10 @@ rungs to a clean geometry. Forensics built along the way: muxlevel (level +
 feeder scans), SOURCE (no-lit-neighbor cells), DIFF (lever-term on/off settled
 maps), rowmap, lever-pedestal self-check + budget-canary fix in sim suite.
 STATUS: 20/21. cpu4 last.
+
+## Night session 6 (autonomous, user AFK ~8h)
+ASSUMPTION: DONE = 21/21 green (cpu4 last) + 11 new builds banked. Glass
+upgrade explicitly QUEUED AFTER DONE (user agreed cpu4-first: glass changes
+sim physics and would force verifying cpu4 twice). Work target D:\redstone-mini.
+Start: 20/21 (cpu4 red at merge sim), alu4 DONE+promoted, mux4 re-greened via
+sim-gated ladder. All probes hard-bounded (rule 7); stage everything.
