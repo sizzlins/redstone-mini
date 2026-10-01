@@ -36,7 +36,14 @@ not slow convergence.
 | `ticktrace` (one trace) | ~2.4 h | **0.9s** | measured |
 | physics per vector (`_run_vec`) | 1.499s | **0.434s** (3.45x) | bit-identical to a frozen copy of the committed engine |
 | compose, alu4hier | 27.27s | **20.1s** | sha256 of all 34672 blocks unchanged |
-| bit-parallel all-1024-lane sim | (hung) | **1.54s / 128 lanes** | opt-in, see caveat |
+| bit-parallel 128-lane sim | (hung) | **1.54s** | opt-in, see caveat |
+| exporters (34k blocks) | — | **0.63s** | profiled, already fine, left alone |
+
+Router numbers carry a big caveat: the same code, same recipe, same sha256,
+measured **20.1s** and **59.6s** on different runs depending on what agent 1 was
+doing. The 27.27 -> 20.1 pair was taken back to back under comparable load and
+is the one I trust; treat single wall-clock numbers on this box as unreliable
+while two agents share it.
 
 ## What I built
 
@@ -107,8 +114,8 @@ silently mis-verified builds:
 - **astar's `ok` predicate** is called 1.37M times per compose. It is already
   tight (bound lookups hoisted); inlining it into astar's loop would remove the
   call overhead but is invasive, and I stopped short of it.
-- **`export_html` / `export_mcfunction` for 34k blocks** — never profiled. My
-  end-to-end profile was killed before reaching them. Worth a look.
+- **`export_html` / `export_mcfunction` for 34k blocks** — profiled: 0.14s +
+  0.27s + 0.22s = **0.63s** total. Already fine; nothing done, nothing needed.
 - **redstone_mini runs its 322-block demo on every invocation** (2.2s) even
   when a custom recipe follows, and that demo's exports are then overwritten.
   Left alone: the demo doubles as the file's self-test.
