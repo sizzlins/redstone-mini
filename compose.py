@@ -633,7 +633,8 @@ def _ends_ok(ctx, net, cx, cy, cz, dx, dz):
     return ctx.wires.get(_bd, net) == net and ctx.wires.get(_fd, net) == net
 
 
-def _plant_repeaters(ctx, cells, net, flow, end_boost=False, fresh=None):
+def _plant_repeaters(ctx, cells, net, flow, end_boost=False, fresh=None,
+                     own=None):
     # two passes per leg: forward every 8 (feeds hop zones) and backward
     # every 8 from the load end (tail freshness — the latch S-row needs
     # level 9 at its port). Hop dusts break straight triples, so one
@@ -669,6 +670,17 @@ def _plant_repeaters(ctx, cells, net, flow, end_boost=False, fresh=None):
             if fresh is not None and (cells[k][0], cells[k][1], cells[k][2]) not in fresh:
                 dist = 0
                 continue
+            # ponytail: never on TILE dust (own=). A tile's own run is
+            # delay-critical by construction — place_xor merges two
+            # comparator tails through two facing diodes, and a booster
+            # landing between them faces the wrong way and cuts the merge.
+            # Measured: AL_X2 went dark in the merged cpu4 build (Y2 wrong)
+            # while band 6 simmed green standalone, because the band sim runs
+            # on `out` and boosting happens after. `own` is the placement-end
+            # wire snapshot, so a routed cell is never in it.
+            if own is not None and (cells[k][0], cells[k][1], cells[k][2]) in own:
+                dist = 0
+                continue
             (px, py, pz), (cx, cy, cz), (nx, ny, nz) = cells[k - 1], cells[k], cells[k + 1]
             dist += 1
             if len(flow.get((cx, cy, cz), {(0, 0)})) != 1:
@@ -696,6 +708,8 @@ def _plant_repeaters(ctx, cells, net, flow, end_boost=False, fresh=None):
         for k in range(len(cells) - 2, 0, -1):
             if (cells[k][0], cells[k][1], cells[k][2]) in ctx.repeaters:
                 break  # an earlier diode already covers the run-in
+            if own is not None and (cells[k][0], cells[k][1], cells[k][2]) in own:
+                continue  # tile dust: see the guard in the main pass
             (px, py, pz), (cx, cy, cz), (nx, ny, nz) = cells[k - 1], cells[k], cells[k + 1]
             if len(flow.get((cx, cy, cz), {(0, 0)})) != 1:
                 continue
@@ -719,6 +733,8 @@ def _plant_repeaters(ctx, cells, net, flow, end_boost=False, fresh=None):
         for k in range(1, len(cells) - 1):
             if (cells[k][0], cells[k][1], cells[k][2]) in ctx.repeaters:
                 break  # head already driven
+            if own is not None and (cells[k][0], cells[k][1], cells[k][2]) in own:
+                continue  # tile dust: see the guard in the main pass
             (px, py, pz), (cx, cy, cz), (nx, ny, nz) = cells[k - 1], cells[k], cells[k + 1]
             if len(flow.get((cx, cy, cz), {(0, 0)})) != 1:
                 continue
@@ -1285,6 +1301,14 @@ def _compose_once(recipe):
     # routing = 12min per rung; without this check the ladder's
     # REDSTONE_COMPOSE_SECS never fires mid-rung and a doomed rung grinds.
     wsnap = (dict(ctx.wires), dict(sup), dict(ctx.solid), len(ctx.blocks))
+    # ponytail: tile-owned dust, snapshotted at placement end. A booster may
+    # only sit on ROUTED cells: a tile's own output run is delay-critical by
+    # construction (place_xor doles two facing diodes to merge two comparator
+    # tails, and a booster between them faces the wrong way and cuts the
+    # merge). Measured: a booster planted on AL_X2's own Odust turned the
+    # XOR dark in the merged cpu4 build while the band simmed green
+    # standalone — the same cells, the tile never re-verified after boosting.
+    tile_dust = frozenset(ctx.wires)
     precede = set()
     if os.environ.get("RS_WATCH82"):
         print(f"WATCH after placement (82,1,29)={ctx.wires.get((82,1,29))}",
@@ -1443,7 +1467,7 @@ def _compose_once(recipe):
             flow.setdefault((u[0], u[1], u[2]), set()).add(d)
             flow.setdefault((v[0], v[1], v[2]), set()).add(d)
     for net, full in paths:
-        _plant_repeaters(ctx, full, net, flow)
+        _plant_repeaters(ctx, full, net, flow, own=tile_dust)
     if os.environ.get("RS_WATCH82"):
         print(f"WATCH after boost (82,1,29)={ctx.wires.get((82,1,29))} "
               f"rep={ctx.repeaters.get((82,1,29))}", flush=True)
@@ -2124,6 +2148,19 @@ def compose_hier_parts(built, gates, recipe):
                     _seen.add(_m)
                     _st.append(_m)
         if (stub[0], 1, stub[1]) in _seen:
+            # ponytail: contiguity. check_opens seeds from pos/levers/torches
+            # and floods the WHOLE field, so a break anywhere on the path
+            # orphans everything past it — and the stub flood above (seeded at
+            # the path) cannot see that, so the merge died at check_opens with
+            # "OPEN" on cells the stitch never joined (measured: AL_C3, 6 cells
+            # past a break, 0 orphans reported). Every consecutive pair must be
+            # a sim link, so the path is one conductor end to end.
+            for _a, _b2 in zip(full, full[1:]):
+                if _a == _b2:
+                    continue  # a leg boundary re-emits its joint cell
+                if _b2 not in set(_nbrs(_a)):
+                    raise RuntimeError(
+                        f"hier stitch {n}: broken link {_a} -> {_b2}")
             return full
         if _mile:
             raise RuntimeError(f"hier stitch {n}: unlanded at {full[-1]}")
@@ -2310,7 +2347,16 @@ def compose_hier_parts(built, gates, recipe):
             # failure falls into the next strategy.
             _s = _snap()
             try:
-                return _landed(fn(), n, stub)
+                _p = _landed(fn(), n, stub)
+                # every strategy's own boosters can close a front-joins-back
+                # ring (a diode faces travel, so a re-entered stretch puts a
+                # front next to a back). finish_assembly kills the whole
+                # merge on one, so fail the strategy here instead and let the
+                # next one try. _legs ran this itself; the direct lwire and
+                # relay paths did not (measured: E0 at (559,1,54)).
+                if _loop_near(_p, n):
+                    raise RuntimeError(f"hier stitch {n}: rings")
+                return _p
             except RuntimeError:
                 _restore(_s)
                 raise
