@@ -1606,6 +1606,53 @@ def _rung_child(sub, force, secs):
     return None, got[1]
 
 
+def _rung_children(jobs, secs):
+    """_rung_child for several bands at once.
+
+    jobs is [(key, sub, force)]. Returns [(key, result, errmsg)] in job order.
+    Every child is launched BEFORE any is joined, so the bands genuinely run
+    concurrently; each still gets its own hard `secs` kill measured from its
+    own launch (they all launch at the same instant, so no band can be starved
+    by queueing behind an earlier one). Results are collected in job order so
+    the caller sees a deterministic sequence regardless of finish order.
+    """
+    import multiprocessing as _mp
+    pend = []
+    for key, sub, force in jobs:
+        parent, child = _mp.Pipe(duplex=False)
+        p = _mp.Process(target=_rung_worker, args=(child, sub, force),
+                        daemon=True)
+        p.start()
+        child.close()
+        pend.append((key, p, parent))
+    out = []
+    for key, p, parent in pend:
+        got = None
+        if parent.poll(secs):
+            try:
+                got = parent.recv()
+            except EOFError:
+                got = ("err", "child died (EOF)")
+        p.join(2)
+        if p.is_alive():
+            p.terminate()
+            p.join(5)
+            if p.is_alive():
+                p.kill()
+                p.join(5)
+            parent.close()
+            out.append((key, None, f"killed at {secs:g}s"))
+            continue
+        parent.close()
+        if got is None:
+            out.append((key, None, "no result (child died)"))
+        elif got[0] == "ok":
+            out.append((key, (got[1], got[2], got[3]), None))
+        else:
+            out.append((key, None, got[1]))
+    return out
+
+
 def _hier_drv(recs, net):
     # driver port cell of net from tile records (build_netspec's drv half;
     # the load half is unneeded: loads routed inside their own partition).
@@ -1672,6 +1719,8 @@ def compose_hier(recipe):
     # the call so subs take the standard path (they are small anyway).
     _hier_saved = os.environ.pop("REDSTONE_HIER", None)
     built = []
+    # ---- phase 1: build every band's partition recipe (pure, no routing) ----
+    subs = {}
     for b in bands:
         bg = [g for g in gates if g.get("band", 0) == b]
         need = set()
@@ -1699,112 +1748,127 @@ def compose_hier(recipe):
                # let the standalone extractor route identical geometry.
                "edge": {n: ("W" if prod.get(n, b) < b else "E")
                         for n in _bd}}
-        # ponytail: sub ladder WITH sim gate. A partition that routes but
-        # miscomputes (measured: band-1 COUT dark standalone, same class as
-        # the mux2/andor8 lessons) silently poisons the merge — sim never
-        # checks anything but the final build. So each band climbs forced
-        # rungs until compose AND sim_verify both pass on its listed outputs
-        # (boundary nets have no lamps yet; the merged sim covers them).
-        # Shared deadline bounds the climb; force is saved/restored.
-        from sim import sim_verify as _simv
-        _force_saved = os.environ.get("REDSTONE_FORCE")
-        # ponytail: staged pipeline. Pin a short rung subset once per recipe
-        # (REDSTONE_HIER_RUNGS="jog,spread,order;jog,spread,order;...") so
-        # merge+stitch probes run in seconds instead of re-climbing 44-rung
-        # ladders (30 min) every iteration. Discovered from standalone band
-        # probes; first compose+sim-green rung wins as usual.
-        _hr = os.environ.get("REDSTONE_HIER_RUNGS", "").strip()
-        _full = [(j, s, o) for j in ("short", "long")
-                 for s in (1, 2, 3, 4, 5, 6, 8, 10)
-                 for o in ("gates_first", "inputs_first")]
-        if _hr:
-            _rungs = []
-            for _spec in _hr.split(";"):
-                _j, _s, _o = _spec.split(",")
-                _rungs.append((_j.strip(), int(_s), _o.strip()))
-        else:
-            # ponytail: pinned-first default. The three rungs below win every
-            # alu4hier band (measured across all six partitions), so trying
-            # them first turns a 10-minute climb into ~3 minutes; the full
-            # ladder follows unchanged for anything else. Order only.
-            _pin = [("short", 1, "gates_first"),
-                    ("short", 1, "inputs_first"),
-                    ("long", 1, "gates_first")]
-            _rungs = _pin + [r for r in _full if r not in _pin]
-        _err = None
-        for (_jog, _s, _o) in _rungs:
-            if _dl_saved is not None and time.monotonic() > _dl_saved:
-                break
-            # ponytail: rule 7 AT RUNG GRANULARITY, by hard kill. A pinned
-            # rung is a single _compose_once, and nothing inside it checks a
-            # clock (lwire/astar can spin), so the deadline cannot be polled
-            # from in-process. Run it in a child and terminate it on
-            # overrun — measured one rung burning >11 min with no output,
-            # twice. terminate() is a hard kill; the child holds no state
-            # the parent needs (result comes back over a queue).
-            _got, _q = _rung_child(sub, f"{_s},{_o},{_jog}", _RUNG_SECS)
-            if _got is None:
-                _err = RuntimeError(f"hier band {b}: rung {_s}/{_o}/{_jog} "
-                                    f"killed at {_RUNG_SECS:g}s")
+        subs[b] = sub
+    from sim import sim_verify as _simv
+    _force_saved = os.environ.get("REDSTONE_FORCE")
+# ponytail: staged pipeline. Pin a short rung subset once per recipe
+    # (REDSTONE_HIER_RUNGS="jog,spread,order;jog,spread,order;...") so
+    # merge+stitch probes run in seconds instead of re-climbing 44-rung
+    # ladders (30 min) every iteration. Discovered from standalone band
+    # probes; first compose+sim-green rung wins as usual.
+    _hr = os.environ.get("REDSTONE_HIER_RUNGS", "").strip()
+    _full = [(j, s, o) for j in ("short", "long")
+             for s in (1, 2, 3, 4, 5, 6, 8, 10)
+             for o in ("gates_first", "inputs_first")]
+    if _hr:
+        _rungs = []
+        for _spec in _hr.split(";"):
+            _j, _s, _o = _spec.split(",")
+            _rungs.append((_j.strip(), int(_s), _o.strip()))
+    else:
+        # ponytail: pinned-first default. The three rungs below win every
+        # alu4hier band (measured across all six partitions), so trying
+        # them first turns a 10-minute climb into ~3 minutes; the full
+        # ladder follows unchanged for anything else. Order only.
+        _pin = [("short", 1, "gates_first"),
+                ("short", 1, "inputs_first"),
+                ("long", 1, "gates_first")]
+        _rungs = _pin + [r for r in _full if r not in _pin]
+
+    # ---- phase 2: climb the ladder for every band IN LOCKSTEP -------------
+    # ponytail: bands used to be climbed one at a time, so a recipe with six
+    # partitions paid six sequential climbs (measured alu4hier: 27s wall, of
+    # which only ~5s was routing -- the parent spent 10.3s blocked on children
+    # and 7.3s pickling their results). The partitions are INDEPENDENT, so the
+    # same rung can be tried for all of them at once. Lockstep preserves the
+    # per-band semantics exactly (same rung order, same first-green-wins, same
+    # hard kill) and only changes WHEN they run. Verified by
+    # scratch/router_hash.py: identical block list and sha before/after.
+    def _port_ok(b, _pctx, _sh):
+        # boundary-port openness. A produced cross net whose port has no open
+        # orthogonal (diode slots + foreign runs on all sides) can never be
+        # stitched, no matter how green the partition sims.
+        for _n in cross:
+            if prod.get(_n) != b:
                 continue
-            if isinstance(_got, str):
-                _err = RuntimeError(_got)
+            _c = _hier_drv(_pctx["recs"], _n)
+            if _c is None:
                 continue
-            out, _pctx, _sh = _got
+            _d = (_c[0] + _sh[0], _c[1] + _sh[1])
+            _free = (_pctx["solid"].get((_d[0], _d[1])) is None
+                     and _pctx["wires"].get((_d[0], 1, _d[1])) in (None, _n))
+            _open = 0
+            for _ax, _az in DIRS:
+                _w = _pctx["wires"].get((_d[0] + _ax, 1, _d[1] + _az))
+                _sd = _pctx["solid"].get((_d[0] + _ax, _d[1] + _az))
+                if _sd is None and _w in (None, _n):
+                    _open += 1
+            # ponytail: the port cell must be STAMPABLE (free), not just have
+            # an open side. A port whose own cell is a foreign wire is a short
+            # waiting to happen (measured: A2B2 "touches n1_2 beside
+            # (708,1,46)"). One open side is enough to leave by; a free cell
+            # plus one exit is the real bar.
+            if not _free or _open < 1:
+                return _n
+        return None
+
+    pending = list(bands)
+    got_band, err_band = {}, {}
+    for (_jog, _s, _o) in _rungs:
+        if not pending:
+            break
+        if _dl_saved is not None and time.monotonic() > _dl_saved:
+            break
+        # ponytail: rule 7 AT RUNG GRANULARITY, by hard kill. A pinned rung is
+        # a single _compose_once and nothing inside it checks a clock
+        # (lwire/astar can spin), so the deadline cannot be polled in-process.
+        # Every pending band gets its own child, launched together.
+        _jobs = [(b, subs[b], f"{_s},{_o},{_jog}") for b in pending]
+        for b, _res, _e in _rung_children(_jobs, _RUNG_SECS):
+            sub = subs[b]
+            if _res is None:
+                err_band[b] = RuntimeError(
+                    f"hier band {b}: rung {_s}/{_o}/{_jog} "
+                    f"killed at {_RUNG_SECS:g}s")
+                continue
+            if isinstance(_res, str):
+                err_band[b] = RuntimeError(_res)
+                continue
+            out, _pctx, _sh = _res
+            # ponytail: sub ladder WITH sim gate. A partition that routes but
+            # miscomputes (measured: band-1 COUT dark standalone) silently
+            # poisons the merge -- sim never checks anything but the final
+            # build. So each band climbs until compose AND sim_verify both pass
+            # on its listed outputs (boundary nets have no lamps yet).
             try:
                 if sub["outputs"]:
                     _simv(sub, out[0], out[2], quiet=True)
             except RuntimeError as e:
-                _err = e
+                err_band[b] = e
                 continue
-            # ponytail: boundary-port openness. A produced cross net whose
-            # port has no open orthogonal (diode slots + foreign runs on all
-            # sides — measured: C3 OR-port walled N/S, diodes E/W) can never
-            # be stitched, no matter how green the partition sims. Require
-            # >=2 open orthogonals (empty-or-own, non-solid), else next rung.
-            _closed = None
-            for _n in cross:
-                if prod.get(_n) != b:
-                    continue
-                _c = _hier_drv(_pctx["recs"], _n)
-                if _c is None:
-                    continue
-                _d = (_c[0] + _sh[0], _c[1] + _sh[1])
-                _free = (solid_free := _pctx["solid"].get((_d[0], _d[1])) is None
-                         and _pctx["wires"].get((_d[0], 1, _d[1])) in (None, _n))
-                _open = 0
-                for _ax, _az in DIRS:
-                    _w = _pctx["wires"].get((_d[0] + _ax, 1, _d[1] + _az))
-                    _sd = _pctx["solid"].get((_d[0] + _ax, _d[1] + _az))
-                    if _sd is None and _w in (None, _n):
-                        _open += 1
-                # ponytail: the port cell must be STAMPABLE (free), not just
-                # have an open side. A port whose own cell is a foreign wire
-                # is a short waiting to happen: the stitch must lay dust
-                # there, and stamp_wire refuses it (measured: A2B2 "touches
-                # n1_2 beside (708,1,46)"). One open side is enough to leave
-                # by; a free cell plus one exit is the real bar.
-                if not _free or _open < 1:
-                    _closed = _n
-                    break
+            _closed = _port_ok(b, _pctx, _sh)
             if _closed is not None:
-                _err = RuntimeError(f"hier band {b}: port {_closed} walled")
+                err_band[b] = RuntimeError(f"hier band {b}: port {_closed} walled")
                 continue
-            _err = None
+            got_band[b] = (out, _pctx, _sh)
             print(f"hier band {b} rung {_jog} spread {_s} {_o}", flush=True)
-            break
-        if _force_saved is None:
-            os.environ.pop("REDSTONE_FORCE", None)
-        else:
-            os.environ["REDSTONE_FORCE"] = _force_saved
-        if _err is not None:
-            if _hier_saved is not None:
-                os.environ["REDSTONE_HIER"] = _hier_saved
-            raise RuntimeError(f"hier band {b}: {_err}") from None
+        pending = [b for b in pending if b not in got_band]
+
+    if _force_saved is None:
+        os.environ.pop("REDSTONE_FORCE", None)
+    else:
+        os.environ["REDSTONE_FORCE"] = _force_saved
+    if pending:
+        _b = pending[0]
+        if _hier_saved is not None:
+            os.environ["REDSTONE_HIER"] = _hier_saved
+        raise RuntimeError(f"hier band {_b}: {err_band.get(_b)}") from None
+    for b in bands:
+        out, _pctx, _sh = got_band[b]
         # recs coords are pre-shift; everything else post-shift (snapshot now:
-        # _last_shift is global and the next sub overwrites it — measured
+        # _last_shift is global and the next sub overwrites it -- measured
         # stitch aiming 1 shift off into A0's runs without this).
-        built.append((b, sub, out, _hier_ctx(_pctx), _sh))
+        built.append((b, subs[b], out, _hier_ctx(_pctx), _sh))
     if _hier_saved is not None:
         os.environ["REDSTONE_HIER"] = _hier_saved
     return compose_hier_parts(built, gates, recipe)
