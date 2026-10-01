@@ -82,12 +82,23 @@ Two candidate fixes, cheapest first (neither verified yet — do not ship
 unverified):
 
 1. Let the head boost plant on the first LEVEL straight triple even when the
-   path is climbing into it (drop the `py == cy == ny` equality for the head
-   case, keep the support check). ~3 lines.
+   path is climbing into it (drop `py == cy == ny` for the head case only,
+   keep the support check). ~2 lines.
+   **TRIED AND REVERTED**: it changes every route's booster cost, so the
+   whole merge re-routes (76444 -> 78193 blocks) and lands a *worse* result —
+   the R0/R1 bank went fully dark (`R0Q2 0/1897`, `R1Q2 12/1746`) and `Y1`
+   joined `Y2` as red. A booster planted on a climbing head evidently becomes
+   a one-way trap (its back is a slope link the sim may not even read). So
+   the head is not the right place to fix this; the climb itself is.
 2. Make `_landed` symmetric: today it only gates the **stub** end, so a broken
    **driver** link stays silent. A per-step sim-link check over `full` would
    have caught this at compose time. Risk: it can reject a currently-green
    stitch (alu4's cached merge would have to be recomposed to prove it).
+3. Untried, and arguably the real one: stop the stitch from climbing at the
+   driver. `lwire` is free to overflight out of the latch port; forcing the
+   first leg flat (or seeding the port with a booster on the latch's own flat
+   Q tail, which is the tile's dust, not fresh street) keeps the head on
+   ground where the existing head-boost already works (R0Q0 proves it).
 
 Note `R0Q2`'s latch and the E1 run both sit inside band 2's field; the
 `(774,1,48..50)` cells are E1's own crossing, not an overwrite (they were
