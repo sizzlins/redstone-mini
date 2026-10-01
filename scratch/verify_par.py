@@ -29,10 +29,14 @@ sys.path.insert(0, ROOT)
 # ponytail: the fingerprint covers the ENGINE, not just the inputs. It used to
 # hash only the recipe and the build, so a physics fix landed sim.py and every
 # cached chunk still read "green" -- a stale pass that looks exactly like a
-# fresh one, and there is no way to tell them apart from the output. sim.py and
-# recipe.py are what decide the answer, so they are part of the answer's
-# identity. Bump the cache file by hand if you ever want to force a re-run.
-ENGINE = (os.path.join(ROOT, "sim.py"), os.path.join(ROOT, "recipe.py"))
+# fresh one, and there is no way to tell them apart from the output. Every file
+# that can change the ANSWER is part of the answer's identity. sim.py and
+# recipe.py are what this script evaluates; simvec/layout/compose/tiles/core
+# are hashed too so any engine edit anywhere voids every cache. Over-hashing
+# only ever forces a re-run; under-hashing silently lies. Bump by hand to force.
+ENGINE = tuple(os.path.join(ROOT, f + ".py") for f in
+               ("sim", "simvec", "recipe", "layout", "compose", "tiles",
+                "core"))
 
 
 def _vec_child(conn, blocks, io, recipe, vecs, idx):

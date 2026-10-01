@@ -950,3 +950,21 @@ not edit or commit those. Everything I committed is simvec.py, compose.py
    DIRECTLY (rsmp.py and anything like it) could still nest a Pool inside a pool
    worker, which under spawn is a fork bomb rather than an exception. The check
    now lives inside verify_par and a daemon caller runs in-process.
+
+## Session 3, continued: promoted + end-to-end green, fleet re-gate pending
+
+Promoted scratch/cand_cpu4hier.txt to recipes/cpu4.txt (11 BAND lines; the old
+unbanded recipe never produced a verifying build). End-to-end from the recipe:
+
+  compose(recipes/cpu4.txt) -> 98827 blocks, layout_retry(verify=True) ALL OK
+  (~1200 s single run). That is DONE by the repo'"'"'s own criterion.
+
+Regression on the engine change: scratch/alu4merge.pkl re-verified from a
+cleared cache -> VERIFY OK, 1024 vectors, 64 chunks green. The sim fix does
+not regress alu4. (An earlier "1024/1024" I reported was a stale cache read;
+this one is real vectors.) micro1 passed, alu1 OK (13300 blocks) via
+dense_status. alu4/ctrl_decode fresh-compose gate still running at handoff.
+
+verify_par.py fingerprint now hashes the full engine
+(sim/simvec/recipe/layout/compose/tiles/core), so any physics edit voids every
+cache automatically. No more hand-deleting, no more silent stale greens.
