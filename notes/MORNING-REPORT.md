@@ -49,47 +49,52 @@ their seeded 0):
 So `R0Q0` — an entire register-bank output, latch *and* stitch — is lit when it
 must be dark, and the XOR tails inherit it.
 
-### The finding to chase next (frame mapping is now certain)
+### RETRACTION — the "missing tile torches" finding below is WRONG
 
-**The merged `blocks` list is missing tile torches that `solid` still
-declares.** In `scratch/cpu4merge2.pkl`:
+I claimed the merged `blocks` list was missing tile torches. **It is not.**
+Measured over the whole build: all **230 of 230** `("torch", net)` entries in
+`solid` have a matching `wall_torch` block. Nothing is missing.
 
-- `solid` says the R0Q0 latch torches are at merge `(653,48)` and `(656,47)`
-- `finish_assembly` shifted blocks by `(-2,-26)`, so those are **block
-  `(655,74)` and `(658,73)`**
-- `blocks` contains **no** torch anywhere in x 640-680, z 60-95; in fact
-  **all 230 torches in the build sit at z 98..170**
+The error was mine: I computed the `finish_assembly` shift as `(-2,-26)` and
+so compared `solid` (merge space) against `blocks` (block space) at the wrong
+offset. The **correct, build-independent rule** is:
 
-`check_shorts`/`check_opens` read `wires` + `solid` and pass; the **sim** reads
-`blocks` and therefore cannot see those torches at all. That is why a run with
-no visible driver still reads high, and it is a merge-integrity bug, not a
-routing one.
+```
+block = merge + (3 - min_merge_x, 3 - min_merge_z)
+```
 
-**Frame rule, stated once so it stops costing time:** `solid`, `wires`,
-`repeaters`, `rings` and `stitched` in a merge dump are **merge space**;
-`blocks` (and therefore `io`) are **block space**; `block = merge - (-2,-26) =
-merge + (2,26)`. Comparing a band's `out` (finish_assembly'd on its own)
-against the merged `blocks` is a *different* frame error and manufactures a
-bogus "3388 cobble deleted" (it is 17 boundary-input levers, by design).
+because `finish_assembly` shrink-wraps with `minx = min(OCC_x) - 3`. For
+`cpu4merge2.pkl` that is `merge + (2, 86)` — my `(-2,-26)` was off by 112 in
+z. Derive it per build from the data; never hard-code it. (This is the same
+frame error that produced the bogus "3388 cobble deleted" two sessions ago.
+It has now cost two sessions. It is the single highest-value thing to fix
+next: **make the merge dump carry the shift explicitly**, e.g. store
+`{"shift": (minx, minz)}` in the pickle, so no probe can get this wrong again.)
 
-## Next step
+### The real remaining symptom (needs re-diagnosis with the right frame)
 
-Find where the merge drops those torch blocks. Prime suspects, in order:
+On `D=0101 OPC=010` (a no-write vector: `REGW=0`, so both registers must hold
+their seeded 0):
 
-1. `compose_hier_parts`'s band copy loop — it appends `pctx.blocks` verbatim
-   and separately copies `pctx.solid`, so the two can diverge if a band ctx's
-   `blocks` is short. Compare `len(solid torch entries)` against
-   `len(wall_torch blocks)` **per band, in one frame**, right after the merge
-   loop and again after `finish_assembly`.
-2. `finish_assembly`'s shrink-wrap: it shifts `blocks`, `solid`, `wires`,
-   `rings`, `junctions`, `pos`, `repeaters` — but **not** the copies embedded
-   in `io`, and it rebuilds dust/repeater blocks from `wires`/`repeaters`
-   only. A tile torch lives in `blocks` and nowhere else, so if the band
-   `blocks` list lost it, nothing restores it.
+| net | lit | should be |
+|---|---|---|
+| `R0Q0` | **1068/1068** | 0 |
+| `R1Q0` | 0/811 | 0 |
+| `AL_X0` | 63/64 | 0 |
+| `AL_S2` | 31/32 | 0 |
+| `AL_X2` | 61/315 | 0 |
 
-Add a fail-loud assertion at the merge boundary: every `("torch", net)` in
-`solid` must have a `wall_torch` block at the corresponding cell. That turns
-this whole class loud at compose time.
+`R0Q0` — a whole register-bank output, latch *and* stitch — reads lit when it
+must be dark, and the XOR tails inherit it. The net-level counts above are
+frame-independent (they come from `live`/`nets`, both block space), so this
+part stands. Only my *localisation* of it was wrong: the latch torch
+neighbourhood I dumped was read at the wrong offset, so "the latch is absent"
+was an artefact.
+
+**Next step:** re-run the latch-neighbourhood dump for `R0Q0` at
+`merge + (2, 86)` and find what actually drives it. The R0Q0 latch origin in
+merge space is `(652,48)`, i.e. block `(654,134)`.
+
 
 ## Re-gated
 

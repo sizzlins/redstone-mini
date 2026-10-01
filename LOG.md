@@ -677,12 +677,26 @@ reads blocks and cannot see those torches at all, which is why R0Q0 reads
 1068/1068 lit on a no-write vector (R1Q0 reads 0/811, correct).
 
 FRAME RULE (state once, it keeps costing): in a merge dump, solid/wires/
-repeaters/rings/stitched are MERGE space; blocks and io are BLOCK space, and
-block = merge + (2,26) for cpu4. Comparing a band's `out` (finish_assembly'd
-on its own) against merged blocks is a DIFFERENT frame error that manufactures
-a bogus "3388 cobble deleted" (really 17 boundary-input levers, by design).
+repeaters/rings/stitched are MERGE space; blocks and io are BLOCK space.
+finish_assembly shrink-wraps with minx = min(OCC) - 3, so
 
-NEXT: find where the merge drops those torch blocks, and add a fail-loud
-assertion at the merge boundary (every ("torch",net) in solid must have a
-wall_torch block at the matching cell) so the whole class goes loud at compose
-time.
+    block = merge + (3 - min_merge_x, 3 - min_merge_z)
+
+Derive it PER BUILD from the data; never hard-code it. For cpu4merge2.pkl it
+is merge + (2, 86).
+
+CORRECTION to the entry above: I claimed the merged blocks list was missing
+tile torches. IT IS NOT -- measured, all 230 of 230 ("torch",net) entries in
+solid have a matching wall_torch block. The claim came from reading solid at
+a wrong offset ((-2,-26) instead of (2,86)), the same frame error that
+produced the bogus "3388 cobble deleted". This frame mistake has now cost TWO
+sessions. Fix it at the source: have the merge dump carry the shift
+explicitly (store {"shift": (minx, minz)} in the pickle) so no probe can
+re-derive it wrongly.
+
+The symptom that DOES stand (frame-independent: it comes from live/nets, both
+block space): on D=0101 OPC=010 (a no-write vector, REGW=0, so both registers
+must hold their seeded 0) R0Q0 reads 1068/1068 lit, R1Q0 0/811 correct, and
+the XOR tails inherit it (AL_X0 63/64, AL_S2 31/32, AL_X2 61/315).
+NEXT: re-dump the R0Q0 latch neighbourhood at merge + (2,86). Its origin in
+merge space is (652,48) = block (654,134).
