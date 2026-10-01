@@ -614,10 +614,23 @@ def _walk(ctx, sup, guard, a, b, net, cells):
                     continue
                 cob.add((lx, y, lz))
                 ctx.blocks.append((lx, y, lz, "minecraft:cobblestone"))
+
     # no planting here: boosters run per full net-path after all wiring
     # (a leg starts wherever the previous leg decayed to, so per-leg
     # spacing plants on dead wire). See compose() below.
     return done
+
+
+def _ends_ok(ctx, net, cx, cy, cz, dx, dz):
+    # a diode may only sit between its own dust: back and front cells must
+    # both carry this net (bare defaults pass — an unstamped front gets its
+    # dust from the same run; a foreign front would be driven backwards).
+    # Measured: R1Q2's east booster fired straight into R0Q2's stub dust,
+    # forcing R0Q2=1 whenever R1Q2=1 (bit2 XOR/AND wrong). Checkers are
+    # diode-blind (no dust touch), so the planter must not plant it.
+    _bd = (cx - dx, cy, cz - dz)
+    _fd = (cx + dx, cy, cz + dz)
+    return ctx.wires.get(_bd, net) == net and ctx.wires.get(_fd, net) == net
 
 
 def _plant_repeaters(ctx, cells, net, flow, end_boost=False, fresh=None):
@@ -670,7 +683,8 @@ def _plant_repeaters(ctx, cells, net, flow, end_boost=False, fresh=None):
             # and y>1 needs cobble below (the flight guarantees a pillar).
             # Same straight-triple + single-flow rules as y=1; sim judges.
             if dist >= 8 and (dx, dz) == (nx - cx, nz - cz) and (dx, dz) in _VEC \
-                    and py == cy == ny:
+                    and py == cy == ny \
+                    and _ends_ok(ctx, net, cx, cy, cz, dx, dz):
                 if cy > 1 and not any(
                         b[:3] == (cx, cy - 1, cz) and "cobblestone" in b[3]
                         for b in ctx.blocks):
@@ -688,6 +702,30 @@ def _plant_repeaters(ctx, cells, net, flow, end_boost=False, fresh=None):
             dx, dz = cx - px, cz - pz
             if ((dx, dz) == (nx - cx, nz - cz) and (dx, dz) in _VEC
                     and py == cy == ny
+                    and _ends_ok(ctx, net, cx, cy, cz, dx, dz)
+                    and not (cy > 1 and not any(
+                        b[:3] == (cx, cy - 1, cz) and "cobblestone" in b[3]
+                        for b in ctx.blocks))):
+                del ctx.wires[(cx, cy, cz)]
+                ctx.repeaters[(cx, cy, cz)] = (net, _VEC[(dx, dz)])
+                break
+        # ponytail: same for the HEAD. Latch Q tails are ~10 dust cells, so
+        # a register fan-out stitch starts at level ~5 and the every-8
+        # planter's first diode (8 cells out) never fires — measured: R0Q0's
+        # stitch lit 5 cells then dark for 850, whole R1/R0 banks unreadable.
+        # One diode on the first straight flat triple re-drives the weak
+        # head to 15 (its back is the live tail, so it always fires when the
+        # driver does; a bare driver leaves it dark and the open stays loud).
+        for k in range(1, len(cells) - 1):
+            if (cells[k][0], cells[k][1], cells[k][2]) in ctx.repeaters:
+                break  # head already driven
+            (px, py, pz), (cx, cy, cz), (nx, ny, nz) = cells[k - 1], cells[k], cells[k + 1]
+            if len(flow.get((cx, cy, cz), {(0, 0)})) != 1:
+                continue
+            dx, dz = cx - px, cz - pz
+            if ((dx, dz) == (nx - cx, nz - cz) and (dx, dz) in _VEC
+                    and py == cy == ny
+                    and _ends_ok(ctx, net, cx, cy, cz, dx, dz)
                     and not (cy > 1 and not any(
                         b[:3] == (cx, cy - 1, cz) and "cobblestone" in b[3]
                         for b in ctx.blocks))):
@@ -1939,6 +1977,20 @@ def compose_hier_parts(built, gates, recipe):
                  + [x for (x, _, z) in repeaters])
     _minz0 = min([z for (x, z) in solid] + [z for (x, _, z) in wires]
                  + [z for (x, _, z) in repeaters])
+    # ponytail: purge stale lids at merge start. Partition _walks drop lids
+    # for pairs in their own field; post-merge the same cobble can sit over
+    # a stitch hop it never anticipated, breaking a legitimate slope into an
+    # OPEN (measured: lid over C3's hop lower with no foreign pair needing it
+    # anymore). A lid is cobble with dust directly below and nothing directly
+    # above (pillars always carry dust above); remove exactly those, then the
+    # fresh pass below lids current pairs only. Tile bodies live in solid,
+    # never blocks, so they are untouched.
+    _wset = {(x, y, z) for (x, y, z), _nw in wires.items()}
+    blocks[:] = [bb for bb in blocks
+                 if not (bb[3].split("[")[0] == "minecraft:cobblestone"
+                         and (bb[0], bb[1] - 1, bb[2]) in _wset
+                         and not any((bb[0] + _ex, bb[1] + 1, bb[2] + _ez) in _wset
+                                     for _ex, _ez in list(DIRS) + [(0, 0)]))]
     _dump = os.environ.get("REDSTONE_HIERDUMP")
     if _dump:
         metas = [{"b": b, "sub": sub, "shift": sh, "dx": offs[b],
@@ -1998,6 +2050,105 @@ def compose_hier_parts(built, gates, recipe):
         repeaters.update(_rp)
         del blocks[_sb:]
 
+    def _landed(full, n, stub, _mile=False):
+        # every stitch must DELIVER: the path must conduct (sim rules) onto
+        # the stub. lwire stops at the target xz whatever y it arrives with,
+        # so an elevated end over a lidded/unsupported cell is dark in sim
+        # while checkers stay silent (measured: R1Q1 ends y=2 over a lidded
+        # stub, whole bank unreadable; E1 ends y=2 over a valid slope and
+        # works; R0Q3 ends 1-off adjacent and conducts). Fail loud so the
+        # next strategy tries another approach (or splice one bounded last
+        # mile, below). Link terms mirror sim.py dust_lvl/rep_on (support +
+        # no-lid + diode-forward; keep in sync — vanilla physics, stable):
+        # support is cobble now, or any y=1 block now (finish_assembly pads
+        # stone under every y=1 comp later, except trench x,z which stay
+        # open). Flood goes WITH power flow (driver -> stub), so diodes are
+        # traversed forward only.
+        if os.environ.get("REDSTONE_NOLAND") == "1":
+            return full  # escape hatch: loose landings (diagnosis only)
+        from layout import _VEC as _VV
+        if not full:
+            raise RuntimeError(f"hier stitch {n}: empty path")
+        _trench = {(x, z) for (x, y, z) in wires if y <= 0}
+        _trench |= {(x, z) for (x, y, z) in repeaters if y <= 0}
+        # ponytail: index once (a linear blocks scan per link check is
+        # 70k x links = hours per merge; sets make it seconds).
+        _bset = {(b[0], b[1], b[2]) for b in blocks}
+        _cobset = {(b[0], b[1], b[2]) for b in blocks
+                   if b[3].split("[")[0] == "minecraft:cobblestone"}
+
+        def _cob(c):
+            return c in _cobset
+
+        def _sup(c):
+            return c in _cobset or (c[1] == 1 and c in _bset
+                                    and (c[0], c[2]) not in _trench)
+
+        def _nbrs(c):
+            # sim-conducting neighbors of c (power-flow direction irrelevant
+            # except diodes: forward only).
+            if c in mctx.repeaters:
+                _rn, _f = mctx.repeaters[c]
+                if _rn != n:
+                    return
+                _dx, _dz = _VV[_f]
+                _m = (c[0] + _dx, c[1], c[2] + _dz)
+                if wires.get(_m) == n:
+                    yield _m
+                return
+            for dx, dz in DIRS:
+                m = (c[0] + dx, c[1], c[2] + dz)
+                if wires.get(m) == n:
+                    yield m
+                elif m in mctx.repeaters and mctx.repeaters[m][0] == n:
+                    _dx, _dz = _VV[mctx.repeaters[m][1]]
+                    if (m[0] - _dx, m[1], m[2] - _dz) == c:
+                        yield m
+                up = (c[0] + dx, c[1] + 1, c[2] + dz)
+                if wires.get(up) == n and (c[0] + dx, c[1], c[2] + dz) \
+                        in _cobs and (c[0], c[1] + 1, c[2]) not in _cobs:
+                    yield up
+                dn = (c[0] + dx, c[1] - 1, c[2] + dz)
+                if wires.get(dn) == n and _sup((c[0], c[1] - 1, c[2])) \
+                        and not _cob((dn[0], c[1], dn[2])):
+                    yield dn
+
+        _cobs = _cobset
+        _seen, _st = set(full), list(full)
+        for _ in range(6000):
+            if not _st:
+                break
+            _c = _st.pop()
+            for _m in _nbrs(_c):
+                if _m not in _seen:
+                    _seen.add(_m)
+                    _st.append(_m)
+        if (stub[0], 1, stub[1]) in _seen:
+            return full
+        if _mile:
+            raise RuntimeError(f"hier stitch {n}: unlanded at {full[-1]}")
+        # ponytail: one bounded last mile instead of instant failure.
+        # Backtrack to the last y=1 cell near the stub and lwire in (the
+        # bulk path stays; the abandoned tail remains a lit connected
+        # branch, so nothing orphans). Fails loud (next strategy) if walled.
+        _ss = _snap()
+        try:
+            _bi = -1
+            for _i, _cc in enumerate(full):
+                if _cc[1] == 1 and abs(_cc[0] - stub[0]) \
+                        + abs(_cc[2] - stub[1]) <= 12:
+                    _bi = _i
+            if _bi < 0:
+                raise RuntimeError(f"hier stitch {n}: no mile start")
+            _m = lwire(mctx, sup, guard, (full[_bi][0], full[_bi][2]),
+                       stub, n)
+            if not _m or _m[0] != full[_bi]:
+                raise RuntimeError(f"hier stitch {n}: mile disjoint")
+            return _landed(full[:_bi + 1] + _m[1:], n, stub, True)
+        except RuntimeError:
+            _restore(_ss)
+            raise
+
     def _relay(drv, stub, n, wps):
         # lwire drv -> (wp, drv_z) -> ... -> (wp, stub_z) -> stub, stamping a
         # repeater facing travel at each waypoint. Each leg is street-bounded
@@ -2023,6 +2174,27 @@ def compose_hier_parts(built, gates, recipe):
             if mctx.wires.get((_wx, 1, _wz)) != n:
                 continue
             _dx = 1 if stub[0] >= drv[0] else -1
+            # ponytail: stations only on straight runs. A station is a diode;
+            # on a corner it rectifies the turn away (measured: E1's relay
+            # station at a south turn faced east, orphaning the whole south
+            # leg — 1100+ E1 cells dark, R1 bank unwritable). Corners stay
+            # dust (the turn conducts fine); the every-8 planter below
+            # covers levels on the straight stretches.
+            _cell = (_wx, 1, _wz)
+            _ii = [i for i, _c in enumerate(full) if _c == _cell]
+            _straight = False
+            for _i in _ii:
+                if 0 < _i < len(full) - 1:
+                    _p, _q = full[_i - 1], full[_i + 1]
+                    _tx, _tz = _wx - _p[0], _wz - _p[2]
+                    if ((_q[0] - _wx, _q[2] - _wz) == (_tx, _tz)
+                            and (_tx, _tz) in _VEC
+                            and _p[1] == 1 == _q[1]):
+                        _straight = True
+            if not _straight:
+                continue
+            if not _ends_ok(mctx, n, _wx, 1, _wz, _dx, 0):
+                continue
             del mctx.wires[(_wx, 1, _wz)]
             # ponytail: dict only, no blocks.append — finish_assembly emits
             # repeater blocks from this dict, and appending here too ships
@@ -2130,12 +2302,24 @@ def compose_hier_parts(built, gates, recipe):
         # waypoints with a repeater station each (re-drives 15, breaks both
         # the route and the decay into short legs). Stations face travel;
         # dust on both sides is the same net, so checkers pass.
+        def _try(fn):
+            # one strategy, atomic + landed: a routed-but-unlanded path
+            # restores (its dust would otherwise poison later strategies;
+            # measured: a landing-failed relay left its whole run in the
+            # field and every classic after it died on the corpse) and the
+            # failure falls into the next strategy.
+            _s = _snap()
+            try:
+                return _landed(fn(), n, stub)
+            except RuntimeError:
+                _restore(_s)
+                raise
         _spanlen = abs(stub[0] - drv[0]) + abs(stub[1] - drv[1])
         if _spanlen > 350:
             _wps = [x for x in _streets if min(drv[0], stub[0]) < x < max(drv[0], stub[0])]
             if _wps:
                 try:
-                    return _relay(drv, stub, n, sorted(_wps))
+                    return _try(lambda: _relay(drv, stub, n, sorted(_wps)))
                 except RuntimeError as e:
                     _err = e
                 # fall through to the classic strategies below
@@ -2155,7 +2339,7 @@ def compose_hier_parts(built, gates, recipe):
         _err = None
         for s in starts:
             try:
-                return lwire(mctx, sup, guard, s, stub, n)
+                return _try(lambda: lwire(mctx, sup, guard, s, stub, n))
             except RuntimeError as e:
                 _err = e
         if _fast:
@@ -2164,7 +2348,8 @@ def compose_hier_parts(built, gates, recipe):
                 if solid.get((_ax, _az)) is not None:
                     continue
                 try:
-                    return _legs([drv, (_ax, _az), stub], "fastwest")
+                    return _try(lambda: _legs([drv, (_ax, _az), stub],
+                                                 "fastwest"))
                 except RuntimeError as e:
                     _err = e
             # ponytail: _err can still be None here (all three west cells
@@ -2182,7 +2367,7 @@ def compose_hier_parts(built, gates, recipe):
             if solid.get((_ax, _az)) is not None:
                 continue
             try:
-                return _legs([drv, (_ax, _az), stub])
+                return _try(lambda: _legs([drv, (_ax, _az), stub]))
             except RuntimeError as e:
                 _err = e
         # ponytail: 3-segment corridor stitch. lwire's own L-paths are
@@ -2215,7 +2400,7 @@ def compose_hier_parts(built, gates, recipe):
             _sb = (stub[0], _maxz)
             if os.environ.get("REDSTONE_HIER_TRACE"):
                 print(f"hier south {n} {drv}->{_sa}->{_sb}->{stub}", flush=True)
-            return _legs([drv, _sa, _sb, stub])
+            return _try(lambda: _legs([drv, _sa, _sb, stub]))
         except RuntimeError as e:
             _err = e
         # ponytail: east-around. Same idea rotated: past the last band the
@@ -2228,7 +2413,7 @@ def compose_hier_parts(built, gates, recipe):
             _eb = (_maxx, stub[1])
             if os.environ.get("REDSTONE_HIER_TRACE"):
                 print(f"hier east {n} {drv}->{_ea}->{_eb}->{stub}", flush=True)
-            return _legs([drv, _ea, _eb, stub], "east")
+            return _try(lambda: _legs([drv, _ea, _eb, stub], "east"))
         except RuntimeError as e:
             _err = e
         # ponytail: north-around. Mirror of south: above every lever row is
@@ -2241,14 +2426,14 @@ def compose_hier_parts(built, gates, recipe):
             _nb = (stub[0], _minz)
             if os.environ.get("REDSTONE_HIER_TRACE"):
                 print(f"hier north {n} {drv}->{_na}->{_nb}->{stub}", flush=True)
-            return _legs([drv, _na, _nb, stub], "north")
+            return _try(lambda: _legs([drv, _na, _nb, stub], "north"))
         except RuntimeError as e:
             _err = e
         _xs = sorted({drv[0] + (stub[0] - drv[0]) * _q // 4 for _q in (2,)})
         for _mx in _xs:
             for _za, _zb in ((drv[1], stub[1]),):
                 try:
-                    return _legs([drv, (_mx, _za), (_mx, _zb), stub])
+                    return _try(lambda: _legs([drv, (_mx, _za), (_mx, _zb), stub]))
                 except RuntimeError as e:
                     _err = e
         _lo, _hi = sorted((drv[0], stub[0]))
@@ -2261,7 +2446,7 @@ def compose_hier_parts(built, gates, recipe):
                 if solid.get((_px, _z)) is not None or wires.get((_px, 1, _z)) is not None:
                     continue
                 try:
-                    return _legs([drv, (_px, _z), stub])
+                    return _try(lambda: _legs([drv, (_px, _z), stub]))
                 except RuntimeError as e:
                     _err = e
         hz0 = max(1, levermin.get(b, 2) - 1)
@@ -2274,7 +2459,7 @@ def compose_hier_parts(built, gates, recipe):
         for _d in (0, 4, 8, 14, 22):
             hz = max(1, hz0 - _d)
             try:
-                return _legs([drv, (px, hz), stub])
+                return _try(lambda: _legs([drv, (px, hz), stub]))
             except RuntimeError as e:
                 _err = e
         raise _err
@@ -2355,8 +2540,19 @@ def compose_hier_parts(built, gates, recipe):
     # which walk minted it: support below + foreign diagonal-below + no lid
     # over it -> drop one cobble above the lower wire. Blocks over ground
     # wire are inert, so electrics never move; only the coupling dies.
+    # ponytail: default ON again (REDSTONE_MERGE_LIDS=0 opts out): the
+    # churn it was written to fix is real (measured: R1Q*~qb legs ring
+    # forever against the R1_R* repeater output beside them).
+    # REDSTONE_MERGE_LIDS=0 opts out (A/B only); the pass is on because
+    # the coupling it prevents is measured, not theoretical.
+    # Added for a churn misdiagnosed as slope coupling (it was slow
+    # convergence under tight caps: empty loop list, huge max_gap, settled
+    # with headroom) — but a lid over a live slope breaks it into an OPEN
+    # (measured: C3's hop, lid with no foreign pair needing it, merge dead).
+    # _walk's per-walk hop lids (proven, pre-existing) still run; this pass
+    # stays available for a coupling with a measured foreign pair.
     _elev = [(x, y, z) for (x, y, z), _nw in wires.items() if y >= 2]
-    if _elev:
+    if _elev and os.environ.get("REDSTONE_MERGE_LIDS") != "0":
         _cob = {(bx, by, bz) for bx, by, bz, bid in blocks
                 if bid.split("[")[0] == "minecraft:cobblestone"}
         for (x, y, z) in _elev:
@@ -2383,6 +2579,48 @@ def compose_hier_parts(built, gates, recipe):
                     continue
                 _cob.add((lx, y, lz))
                 blocks.append((lx, y, lz, "minecraft:cobblestone"))
+
+    # ponytail: slope-clearing (runs AFTER the lid pass above, on purpose).
+    # A lid the pass just added over a live same-net slope breaks that slope
+    # into an OPEN (measured: C3 hop at (2847,2,155)). Reversing the order
+    # was the whole bug. Stale lids from (partition _walk, or an earlier merge
+    # pass) sitting over a stitch hop's lower cell breaks a legitimate slope
+    # into an OPEN (measured: C3's hop, lid with no foreign pair needing it).
+    # Instead of lidding the world, clear exactly the slope airspace each
+    # stitch needs: for every elevated stitch cell with support below, drop
+    # cobble found directly above its same-net diagonal-below neighbour —
+    # but only when nothing sits above the lid cell itself (a structural
+    # pillar carrying dust stays, always). Protective lids elsewhere (over
+    # genuinely foreign pairs) are untouched.
+    # ponytail: hoisted (a rebuild per cell hung the merge: 34k blocks ×
+    # thousands of path cells). Removals discard manually; nothing here adds
+    # cobble, so the set only shrinks and stays exact.
+    _cob_all = {(bx, by, bz) for bx, by, bz, bid in blocks
+                if bid.split("[")[0] == "minecraft:cobblestone"}
+
+    for _n, _paths in stitched.items():
+        for _full in _paths:
+            for (_x, _y, _z) in _full:
+                if _y < 2 or (_x, _y - 1, _z) not in _cob_all:
+                    continue
+                for _dx, _dz in DIRS:
+                    _lx, _ly, _lz = _x + _dx, _y - 1, _z + _dz
+                    if wires.get((_lx, _ly, _lz)) != _n:
+                        continue
+                    _lid = (_lx, _y, _lz)
+                    if _lid not in _cob_all:
+                        continue
+                    # ponytail: directly-above only. Pillars carry dust
+                    # straight up; the earlier version kept any lid with dust
+                    # anywhere in the 3x3 above, which protects nothing real
+                    # and blocked the exact slope it was written to clear
+                    # (measured: R1Q3 dust at (2847,3,154) vetoed clearing).
+                    if wires.get((_lid[0], _lid[1] + 1, _lid[2])) is not None:
+                        continue
+                    blocks[:] = [bb for bb in blocks
+                                 if not (bb[0] == _lid[0] and bb[1] == _lid[1] and bb[2] == _lid[2]
+                                         and bb[3].split("[")[0] == "minecraft:cobblestone")]
+                    _cob_all.discard(_lid)
     # ponytail: connect producer stubs. A cross net with no in-band loads
     # leaves placement stub dust around its tile ports (never routed — there
     # was nothing to route to); after the merge that dust is OPEN (nothing

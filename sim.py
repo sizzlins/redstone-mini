@@ -41,6 +41,7 @@ _STALL = int(_os.environ.get("REDSTONE_SIM_STALL", "5000"))
 # (measured: 80.6s for two cpu4 seeds at grow=0, cap 700).
 _MAX_SECS = float(_os.environ.get("REDSTONE_MAX_SECS", "0") or 0)
 _BOUT_N = int(_os.environ.get("REDSTONE_BURNOUT", "8"))
+_BOUT_GRACE = int(_os.environ.get("REDSTONE_BURNOUT_GRACE", "60"))
 _BOUT = {}
 
 
@@ -148,7 +149,7 @@ def _run_vec(vec, init, ctx, until=None):
     init carries live/torch/repeater state across phases (memory!); None
     starts blank. until caps the run at a tick (for sim_pulse timelines).
     Returns (lamps, live, torches, ticks, repeaters)."""
-    dust, torch, lampat, rep, rblk, cob, repdelay, lever, lampnet, attach_rev, comp = ctx
+    dust, torch, lampat, rep, rblk, cob, repdelay, lever, lampnet, attach_rev, comp, leveratt = ctx
     # tick-accurate vanilla timing: dust/cobble settle instantly each tick,
     # torch outputs flip 1 tick after their block changes, repeaters flip
     # after their delay=1..4 stage. Levels still drain phantom latches.
@@ -273,24 +274,17 @@ def _run_vec(vec, init, ctx, until=None):
                 pwrd = True
             if m in rblk:
                 pwrd, strong = True, True
-            # ponytail: a LEVER powers the block it is attached to (wiki:
-            # levers and buttons strongly power their host). This was a model
-            # gap, not a layout choice: every other strong source above is
-            # here, levers were not, so a cobble under a wall lever read
-            # dark and dust on top of it stayed unlit. It is the one
-            # direction-agnostic, ZERO-WIRE source available: the dust is on
-            # top of the pedestal, the lever is on its side, so the run that
-            # feeds it can arrive from any direction without touching the
-            # lever cell. Used for hier boundary stubs, where a lane-crossing
-            # route is otherwise unroutable.
-            # ponytail: REDSTONE_LEVER_POWER=0 restores the old gap (levers
-            # never power their host) for differential diagnosis only: same
-            # field, term on/off, diff the settled maps to name exactly which
-            # cells the term lights. The term itself is wiki-correct (levers
-            # strongly power a full-solid-opaque host); the knob exists to
-            # attribute failures, not to ship old physics.
+            # ponytail: a LEVER powers its ATTACHMENT block only (wiki:
+            # levers strongly power their attachment block; adjacent dust is
+            # powered directly, see dust_lvl). Floor levers attach below,
+            # wall to the faced-away side, ceiling above. The old term
+            # powered EVERY side block, so a floor input lever lit adjacent
+            # foreign cobble — measured: D3's floor lever at (1012,34) drove
+            # R0Q0's stitch dust at (1011,33) to 15 through (1012,33). Bare
+            # bids (hand tests) keep legacy all-side power (attach None).
             if (m in lever and vec.get(lever[m], False)
-                    and _os.environ.get("REDSTONE_LEVER_POWER", "1") == "1"):
+                    and _os.environ.get("REDSTONE_LEVER_POWER", "1") == "1"
+                    and (leveratt.get(m) is None or leveratt.get(m) == c)):
                 pwrd, strong = True, True
             # ponytail: a lit torch powers adjacent blocks — except the one
             # it is attached to (wiki; the same host exception the torch rule
@@ -377,6 +371,44 @@ def _run_vec(vec, init, ctx, until=None):
         if comp[c]["mode"] == "subtract":
             return max(rl - sl, 0)
         return rl if sl <= rl else 0
+
+    if init and init.get("_solve"):
+        # ponytail: glitch-free power-on. Every gate output torch starts OFF,
+        # so at tick 1 each fires once before its inputs arrive — a 1-2 tick
+        # pulse on EVERY combinational output. Harmless for DAG logic (it
+        # settles), but a boosted S/R run delivers that pulse to an idle
+        # latch at T~9 (measured: R1_S1 spikes to 10, the seeded hold-0
+        # breaks into a permanent symmetric hunt, whole-ALU churn=15016).
+        # The pre-roll iterates dust/blocks/torches to their tick-0 fixpoint
+        # (repeaters/comparators frozen: their delays are REAL transients the
+        # loop must still play out; hold-0 ~qb torches pinned ON), so tick 0
+        # starts per truth with zero pulses and only genuine arrivals move.
+        # Undriven dust still decays, driven S|R still force, so opens/shorts
+        # stay loud. Latch-free builds never set _solve (untouched path).
+        _pins = set(init.get("t", {}))
+        for _ in range(20000):
+            _ch = False
+            for c in dust:
+                v = dust_lvl(c)
+                if pw.get(c, 0) != v:
+                    pw[c] = v
+                    _ch = True
+            for c in cob:
+                v, s = cob_state(c)
+                if pb.get(c, False) != v or pbs.get(c, False) != s:
+                    pb[c], pbs[c] = v, s
+                    _ch = True
+            for c in torch:
+                if c in _pins:
+                    continue
+                v = not (pb.get(torch[c], False) or torch[c] in rblk)
+                if tl.get(c, False) != v:
+                    tl[c] = v
+                    _ch = True
+            if not _ch:
+                break
+        else:
+            raise RuntimeError("comb pre-solve did not converge (loop?)")
 
     for c in dust:
         sched(0, "d", c)
@@ -484,7 +516,17 @@ def _run_vec(vec, init, ctx, until=None):
                     _bout[c] = _bt
                     if len(_bt) > max(_BOUT.get(c, 0), 0):
                         _BOUT[c] = len(_bt)
-                    if len(_bt) > _BOUT_N:
+                    # ponytail: power-on grace (REDSTONE_BURNOUT_GRACE ticks,
+                    # default 60). Latches with stitched enables ring during
+                    # the power-on transient (enable arrives ~20-30 ticks in
+                    # on a 200-cell boosted stitch; the symmetric ring flips
+                    # every ~2 ticks and burns at ~16, before the enable can
+                    # force it). The grace delays the verdict, never flips
+                    # it: a true oscillator flaps forever (burns after grace
+                    # all the same); a transient settles (green either way).
+                    # Verdict-preserving by construction; greens that settle
+                    # early never notice it.
+                    if len(_bt) > _BOUT_N and now >= _BOUT_GRACE:
                         tl[c] = False
                         if _os.environ.get("REDSTONE_TRACE"):
                             import json as _json
@@ -557,6 +599,7 @@ def _parse_build(blocks, io):
     dust, torch, lampat, rep, rblk, cob = set(), {}, set(), {}, set(), set()
     comp = {}
     repdelay = {}
+    leveratt = {}
     for x, y, z, bid in blocks:
         b, c = base(bid), (x, y, z)
         if b == "minecraft:redstone_wire":
@@ -612,6 +655,25 @@ def _parse_build(blocks, io):
             # net a lever drives comes from io["levers"], never from its
             # block (face/facing state is irrelevant to power). Explicitly
             # ignored here so the fail-loud below does not fire on them.
+            # The ATTACHMENT (wiki: a lever strongly powers only its
+            # attachment block) does matter, so it is recorded: wall levers
+            # attach to the faced-away side cell, floor below, ceiling above.
+            # Bare bids (hand tests) record None = legacy all-side power.
+            if "face=" in bid and "facing=" in bid:
+                _face = bid.split("face=")[1].split(",")[0]
+                _facing = bid.split("facing=")[1].split(",")[0]
+                if _face == "wall":
+                    _back = {"east": (-1, 0), "west": (1, 0),
+                             "south": (0, -1), "north": (0, 1)}[_facing]
+                    leveratt[c] = (c[0] + _back[0], c[1], c[2] + _back[1])
+                elif _face == "floor":
+                    leveratt[c] = (c[0], c[1] - 1, c[2])
+                elif _face == "ceiling":
+                    leveratt[c] = (c[0], c[1] + 1, c[2])
+                else:
+                    leveratt[c] = None
+            else:
+                leveratt[c] = None
             pass
         else:
             # ponytail: fail loud on unknown bids. _parse_build used to drop
@@ -627,7 +689,44 @@ def _parse_build(blocks, io):
     attach_rev = {}
     for t, a in torch.items():
         attach_rev.setdefault(a, []).append(t)
-    return dust, torch, lampat, rep, rblk, cob, repdelay, lever, lampnet, attach_rev, comp
+    return dust, torch, lampat, rep, rblk, cob, repdelay, lever, lampnet, attach_rev, comp, leveratt
+
+
+def _latch_hold_seed(blocks, io):
+    """Blank-init hold state for SR latches (Q=0): preset ~qb dust lit AND its
+    driver torch ON.
+
+    A NOR latch with S=R=0 from a fully-dark start is symmetric: both torches
+    fire together and hunt forever (measured: a lone LATCH burns out on S=R=0),
+    while vanilla skew breaks it within a few ticks to a held 0-or-1 and
+    eval_net's Gauss-Seidel order assumes hold-0. The hold-0 half needs BOTH
+    halves (each alone was measured to fail): dust alone drains before the
+    ~10-cell ~qb chain can charge past the tick-0 race (cpu4 R0Q2 still burned
+    9+ times), torch alone still faces dark dust so the Q torch fires on its
+    tick-0 read (same). Together the Q block reads powered from tick 0, the Q
+    torch never fires, and the loop holds with zero flips. Any driven S|R
+    forces the latch either way, and undriven dust decays back to dark within
+    ~15 ticks, so driven behavior is untouched and S/R opens/shorts still
+    mismatch loudly. Latch-free builds have no ~qb nets and get None
+    (bit-identical by construction). The driver torch is found by adjacency
+    (~qb dust beside a torch is its own torch; the torch-adjacency seal
+    forbids foreign dust there), so no torch net table is needed.
+    """
+    nets = io.get("nets", {})
+    dust = {c for c, n in nets.items()
+            if isinstance(n, str) and n.endswith("~qb")}
+    if not dust:
+        return None
+    seed_w = {c: 15 for c in dust}
+    seed_t = {}
+    for x, y, z, bid in blocks:
+        if "torch" not in bid:
+            continue
+        for dx, dz in DIRS:
+            if (x + dx, y, z + dz) in dust:
+                seed_t[(x, y, z)] = True
+                break
+    return {"w": seed_w, "t": seed_t, "_solve": True}
 
 
 def sim_verify(recipe, blocks, io, seed=7, quiet=False, collect=False):
@@ -639,6 +738,7 @@ def sim_verify(recipe, blocks, io, seed=7, quiet=False, collect=False):
     """
     import random as _r
     P = _parse_build(blocks, io)
+    _hold = _latch_hold_seed(blocks, io)
 
     ins = recipe["inputs"]
     if 2 ** len(ins) <= 4096:
@@ -665,7 +765,7 @@ def sim_verify(recipe, blocks, io, seed=7, quiet=False, collect=False):
         if latchouts and not any(exp.get(a, False) for a in latchargs):
             continue  # undefined power-on: hold needs history (real hardware
             # too — reset first). The sequence proof covers hold properly.
-        got, live, tlive, nticks, rlive, _conc = _run_vec(vec, None, P)
+        got, live, tlive, nticks, rlive, _conc = _run_vec(vec, _hold, P)
         maxticks = max(maxticks, nticks)
         for net in recipe["outputs"]:
             if net not in latchouts and bool(got.get(net, False)) != bool(exp[net]):
@@ -693,7 +793,7 @@ def sim_sequence(recipe, blocks, io, phases):
     list of (vec, expected-lamps); tick counters reset per phase, only lamps
     are asserted. Raises RuntimeError on mismatch."""
     P = _parse_build(blocks, io)
-    carry = None
+    carry = _latch_hold_seed(blocks, io)
     for vec, exp in phases:
         got, live, tlive, _, rlive, _conc = _run_vec(vec, carry, P)
         for net, want in exp.items():
@@ -708,7 +808,7 @@ def sim_pulse(recipe, blocks, io, schedule):
     press is just [({B: 1}, 20), ({B: 0}, n)]. Returns [(lamps, elapsed)]
     per segment. Lamp trailing edge stays unmodeled (2-tick-off gap)."""
     P = _parse_build(blocks, io)
-    carry, out = None, []
+    carry, out = _latch_hold_seed(blocks, io), []
     for vec, dwell in schedule:
         if dwell < 1:
             raise ValueError(f"bad dwell {dwell} (use >= 1 tick)")
@@ -779,6 +879,19 @@ if __name__ == "__main__":
                                   ({"S": 0, "R": 1}, {"Q": 0}),
                                   ({"S": 0, "R": 0}, {"Q": 0})])
     print("latch ok: set/hold/reset/hold")
+    # ponytail: an UNDRIVEN latch must hold, not hunt. A NOR latch released
+    # from a fully dark start is symmetric in this model: both torches fire
+    # and hunt until burnout (measured: a lone LATCH burned out on S=R=0, and
+    # cpu4's whole R1 register bank rang forever at churn=14736). Real
+    # hardware breaks the symmetry by update-order skew; here the hold-0
+    # state is seeded (see _latch_hold_seed) and the glitch-free power-on
+    # pre-roll removes the tick-1 output pulse, so a blank start settles at
+    # 0 with zero flips. This asserts the whole class in one call.
+    _hr = parse_recipe("IN S, R\nOUT Q\nQ = LATCH S R\n")
+    _hb, _, _hio = layout(_hr, seed=None, grow=0)
+    _hp = _parse_build(_hb, _hio)
+    assert _run_vec({"S": 0, "R": 0}, _latch_hold_seed(_hb, _hio),
+                     _hp)[0].get("Q", True) is False, "idle latch must hold 0"
     # ponytail: gate-fed latch, EVERY seed — a lever-fed latch proves the tile,
     # gate-fed proves arrival level too. Killed two classes: dust+repeater
     # double-stamped on the S-row cell (seeds 4/5 held set across hold) and a
@@ -938,10 +1051,12 @@ if __name__ == "__main__":
     assert _run_vec({}, None, _tp)[0].get("y", False) is True, "lit torch must light"
     # ponytail: lever -> host block -> dust on top, with the lever on the
     # SIDE and the feeding run arriving from the far side (wiki: a lever
-    # strongly powers the block it is attached to). This is the zero-wire,
-    # direction-agnostic source the hier boundary stubs need; assert both
-    # directions so a future "levers are weak-power only" edit fails here.
-    _lv = [(0, 1, 0, "minecraft:lever[face=wall,facing=east,powered=false]"),
+    # strongly powers its ATTACHMENT block). facing=north attaches south
+    # onto the host (facing points away, same convention as wall torches).
+    # This is the zero-wire, direction-agnostic source the hier boundary
+    # stubs need; assert both directions so a future "levers are weak-power
+    # only" edit fails here.
+    _lv = [(0, 1, 0, "minecraft:lever[face=wall,facing=north,powered=false]"),
            (0, 1, 1, CB), (0, 2, 1, W_),
            (-1, 1, 1, W_), (-2, 1, 1, CB), (-3, 1, 1, W_)]
     _lp3, _ = _hand(_lv, {(0, 0): "a"}, {(0, 2): "y"})
@@ -949,6 +1064,16 @@ if __name__ == "__main__":
         "lever must power its host block and the dust on top"
     assert _run_vec({"a": 0}, None, _lp3)[0].get("y", False) is False, \
         "unpowered lever must not light the pedestal"
+    # ponytail: a FLOOR lever powers only the block it stands on. The old
+    # all-sides term let a floor input lever strongly power foreign cobble
+    # beside it, and any dust on THAT read lit — measured on cpu4: D3's floor
+    # lever drove a register-stitch run to 15 and forced R0Q2 high whenever
+    # D3 was set. Assert the negative so the term can never widen again.
+    _lf = [(0, 0, 0, CB), (0, 1, 0, "minecraft:lever[face=floor,facing=north,powered=false]"),
+           (1, 1, 0, CB), (1, 2, 0, W_), (2, 2, 0, "minecraft:redstone_lamp")]
+    _lpf, _ = _hand(_lf, {(0, 1): "a"}, {(2, 2): "y"})
+    assert _run_vec({"a": 1}, None, _lpf)[0].get("y", False) is False, \
+        "floor lever must not power the block beside it"
     # ponytail: dust directly above a torch (wiki: powered in vanilla; the
     # parser comment asked for this term gated on a canary — this is it).
     # Standing torch on dark cobble (lit) lights dust above; powered support
