@@ -2081,7 +2081,12 @@ def compose_hier_parts(built, gates, recipe):
                     return _legs([drv, (_ax, _az), stub])
                 except RuntimeError as e:
                     _err = e
-            raise _err
+            # ponytail: _err can still be None here (all three west cells
+            # solid skips every attempt). Raising None is a TypeError that
+            # masks the real wall — fall through to the next strategy, which
+            # is what every other strategy block already does.
+            if _err is not None:
+                raise _err
         # ponytail: west approach — an edge-lever stub sits at the head of a
         # lane that runs INTO the field, so the cell west of it on its own
         # row is the empty lever row, not tile. Drive to that cell, then one
@@ -2527,6 +2532,10 @@ def compose(recipe):
                         raise
                     print(f"compose {jog} spread {spread} {order} terr failed "
                           f"({str(e)[:60]}); retrying", flush=True)
+        # ponytail: last is None only if attempts was empty (no rung ran).
+        # Raising None is a TypeError; name the real wall instead.
+        if last is None:
+            raise RuntimeError("compose: empty ladder (no rungs attempted)")
         raise last
     finally:
         _DEADLINE = None
