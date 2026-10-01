@@ -1,175 +1,112 @@
-# Morning report
+# Morning report — cpu4 session (autonomous, 2026-10-01)
 
-Overnight autonomous session on `D:\redstone-mini`, branch `phase2-design`.
-Started from 2/5 dense green. Nothing is committed that isn't verified.
+**DONE = cpu4 green. NOT DONE.** cpu4 is at *merge reaches the simulator,
+3 of 5 outputs correct* (was: torch burnout, then all-dark). Two real root
+causes were found and fixed; a third is now the wall.
 
-## DONE bar
+Repo `D:\redstone-mini`, branch `phase2-design`. Commits this session:
+`7fdbd72`, `c8fb1d2`, `0b773eb`, `a893b82`, `e8cd0c8`. Working tree clean
+except `notes/MORNING-REPORT.md`.
 
-**1. All dense recipes build and verify** — 16 of 18 do. Two are still red
-(`alu4`, `cpu4`), both with the same identified architectural wall. Not fully
-met.
+## What is green now (authoritative, re-run this session)
 
-**2. 3+ new dense builds that never built before** — **met, with margin: 8.**
+| gate | result |
+|---|---|
+| `python recipe.py` | pass |
+| `python sim.py` | pass (2 new oracles added) |
+| `scratch/compose_check.py` | bit-identical 144 / 322 / 224 / 214 |
+| `scratch/dense_status.py` | OK: example_and, latch_sr, mux2, sub2, micro1, decode3, cmp2 |
+| `scratch/verify_par.py scratch/alu4merge.pkl recipes/alu4.txt` | **VERIFY OK 1024/1024** (re-composed *and* re-verified with the new physics) |
 
-| new recipe | what it is | blocks | size |
-|---|---|---|---|
-| `sub2.txt` | 2-bit subtractor with borrow out | 3487 | 187x129 |
-| `sub4.txt` | 4-bit subtractor with borrow out | 12501 | 471x290 |
-| `cmp4.txt` | 4-bit comparator (GT/EQ/LT) | 25408 | 735x266 |
-| `mux4.txt` | 4-bit 2:1 mux, 9 inputs | 20239 | 991x106 |
-| `andor8.txt` | 8-input AND tree + 8-input OR tree | 17997 | 739x117 |
-| `decode3.txt` | 3-to-8 decoder | 9799 | 541x99 |
-| `add2.txt` | 2-bit adder (corrected carry) | 12539 | 689x87 |
-| `chainmix.txt` | 24-gate logic chain | 11497 | 415x273 |
+alu4 was re-stitched from scratch (35516 blocks, was 34734) and re-verified
+all 1024 vectors — the physics and router both changed this session, so the
+old cache proved nothing.
 
-`mux4` at 20239 blocks was the largest build in the repo until `cmp4`
-landed at 25408 blocks.
-
-## Verified green (authoritative: compose -> maze -> verify)
-
-All via `tools/gate.ps1` (parallel, hard-bounded, exit 1 iff anything is red).
+## What still fails
 
 ```
-add2.txt         OK    12539 blocks  (689, 87)    16.2s
-alu1.txt         OK    13300 blocks  (359, 140)  127.6s   <- was RED
-andor8.txt       OK    17997 blocks  (739, 117)  170.1s   <- NEW
-chainmix.txt     OK    11497 blocks  (415, 273)    5.2s
-ctrl_decode.txt  OK     5501 blocks  (341, 86)    18.5s
-decode3.txt      OK     9799 blocks  (541, 99)    59.5s
-example_2gates   OK      322 blocks  (44, 36)      0.1s
-example_and.txt  OK      144 blocks  (28, 24)      0.0s
-example_xor.txt  OK      214 blocks  (24, 30)      0.0s
-latch_sr.txt     OK      224 blocks  (28, 31)      0.1s
-micro1.txt       OK     2925 blocks  (173, 89)     2.0s
-mux4.txt         OK    20239 blocks  (991, 106)  150.5s   <- NEW
-sub2.txt         OK     3487 blocks  (187, 129)  106.9s   <- NEW
+$ python scratch/hier_stitch.py scratch/cpu4bands2.pkl scratch/cand_cpu4hier.txt 300
+STITCH RED: repeater loop on R1Q3 at (2850, 1, 43): front joins back
 ```
 
-`alu1` went from red to green. That is the one previously-"hard" build the
-session cracked.
+**cpu4 is blocked by a pre-existing repeater ring in a band tile**, not by
+the stitch. `finish_assembly` rejects the whole merge on any
+front-joins-back diode pair. The gate added this session
+(`_try` → `layout._loop_rep`, new-loop-only) correctly does *not* blame the
+stitch for it, so the merge still dies at the end.
 
-## Still failing, with logs
+`place_xor` builds its XOR from two subtract comparators whose tails merge
+through **two facing diodes** at `(ox-2, gz+3)` and `(ox-2, gz+5)`. When
+those two end up facing each other across one cell, `_loop_rep` sees a
+front joining a back. The band sims green (the sim does not model the
+bistable pair the same way), so the band cache accepts it.
 
-### cmp2.txt -- GREEN (constant eliminated)
-Was red all night through three different walls (`SHORT3D` on a hop
-slope-linking the constant net, then `OPEN` with the constant orphaned, then a
-maze fallback that could not place `nB1`). Fixed by removing the need, not the
-bug: `s0 = d0 XOR 1` is `NOT d0`, `v0 = d0 AND 1` is `d0` (buffered). Same
-circuit, proven over all 16 vectors, and the sourceless multi-load constant net
-vanishes. **OK 4633 blocks.**
+### Next step (not attempted — out of context budget)
 
-### alu4.txt / cpu4.txt -- architectural wall, confirmed ten ways
-```
-low spreads:  no ground (no corridor)
-high spreads: wire touches (legs cross, even at spread 20)
-3D-only:      no ground after 500s (no 3D path either)
-maze grow 4/6: 610s CPU each, zero output (exponential, killed)
-dead gates:   removed, proven equivalent -- rung 1 still fails identically
-6 seeds:      6 different nets fail (O3/B2/X3/R0_R2/AL_n0/R0_nD3) -- not order
-YMAX=8:       no ground (congestion is planar, not vertical)
-maze sweep:   20 seeds x 3 grows too slow (4+ min/attempt, blowup not progress)
-budgets:      900-3300s exhausted on every attempt
-```
-Ten diverse approaches, all fail systemically. The order-seed result is
-decisive: different trajectories hit different walls, so no trajectory works.
-Needs a bus/hierarchical router (new subsystem, days + design). Not attempted
-overnight: risks the 16 working builds for near-zero payoff.
-Both have 10+ inputs. Tried: spread ladder to 10, clearance window to 1 cell,
-nearest-first load ordering from each input's port (gated at >9 inputs), and
-`REDSTONE_NOFLAT` (skip flat entirely, astar + full 3D envelope only). The 3D
-run proves it is not an ordering problem: the field is genuinely unroutable by
-flat candidates plus overflights. Needs a bus/hierarchical router or much
-sparser placement -- a new subsystem, not a ladder rung.
+Reject a *band rung* whose own output contains a diode ring, at the point the
+band cache is built (`scratch/hier_bands.py` already runs `sim_verify` and
+`check_hier_ports` per rung; add `layout._loop_rep` there). That is ~5 lines
+and turns this from a merge-time wall into a rung-selection problem, which
+the existing ladder already knows how to answer. It is the same shape as the
+`AL_X2` fix that unblocked Y2: **a tile's own dust is a fixed shape, and
+`_loop_rep` is the authority on whether that shape is buildable.**
 
-**`mux4` at 9 inputs is the proven ceiling.** That is the useful number.
+## Root causes found and fixed (all measured)
 
-### shift4.txt -- LATCH chain
-```
-no route for Q0: (12, 27) -> (29, 16) (grid full, widen W)
-```
-My own recipe (4-stage SR shift register), not part of the original dense set.
-It got past compose (was `TORCH BURNOUT at (64,1,47)`) and now dies in the maze
-step: latch tiles are large enough to saturate the grid for a 17-cell route.
+1. **Undriven SR latch hunted forever** (`sim.py`, `7fdbd72`). A NOR latch
+   released from a dark start is symmetric in this model: both torches fire,
+   hunt, burn out. Vanilla breaks it with update-order skew; `eval_net`
+   already assumed hold-0. `_latch_hold_seed` presets `~qb` dust **and** its
+   driver torch (each alone was measured to fail), and a power-on pre-roll
+   (`_solve`) removes the tick-1 output pulse that reached idle latches at
+   T~9 and broke the seeded hold. Latch-free builds take a byte-identical path.
+2. **A lever powered every block beside it** (`sim.py`, `7fdbd72`). D3's floor
+   lever drove cpu4's R0Q0 stitch run to 15, forcing R0Q2 high whenever D3=1
+   — bit-0 AND/XOR wrong. Wiki: a lever powers its *attachment* only.
+3. **A booster planted on a tile's own output run** (`compose.py`, `a893b82`).
+   `place_xor` merges two comparator tails through two facing diodes, so a
+   booster between them faces the wrong way and cuts the merge. This is why
+   **Y2 was wrong**: AL_X2 went dark in the merged build while band 6 simmed
+   green standalone — a band sim runs on `out`, and boosting happens *after*.
+   Guard: `own=` is the placement-end wire snapshot, so only routed cells can
+   be boosted. This is the fix that took cpu4 from 3/5 to a single wrong net.
 
-## What actually fixed things
+Three more guards landed with it, each from a measured failure: relay
+stations only on straight runs; every stitch must **deliver** onto its stub
+by sim-conducting links; every consecutive pair of *fresh* path cells must be
+a sim link (check_opens floods the whole field, so one break orphans
+everything past it while the stub flood — seeded at the path — reported 0).
 
-1. **Routing order became a retry axis.** Inputs routed last into a saturated
-   field and collided (alu1 `OP1`/`OP0` at y=3). Inputs-first gives them clean
-   ground. This is what turned alu1 green.
-2. **Jog depth became a retry axis.** The 16-32 row jogs are what unseal a
-   sprawling field (alu1) but they once let add2's input march wander unsealed
-   and killed all four of its input ports. Both are rungs now: short first
-   (proven baseline), long as escalation.
-3. **Spread ladder 1..5 -> 1,2,3,4,5,6,8,10.** alu4/cpu4 die of `no ground`;
-   tile fields are fully stamped before any routing, so a far input has no
-   corridor at spread 5.
-4. **Slope-link lids** (the one that moved cmp2 past a wall it could not escape
-   at any spread). sim couples y=1 dust to a diagonal y=2 wire only when the
-   upper has support *and* the lower has no lid over it. Hops and 3D overflights
-   mint elevated dust on fresh cobble, and the search that placed them could not
-   see the foreign wire landing diagonally below -- so `check_shorts` raised
-   `SHORT3D` only after the fact. `_walk` now drops one cobble directly above
-   the lower wire, mirroring `check_shorts`' dy=-1 case cell for cell. Because it
-   mirrors the raise condition exactly, a build that already passes gets **zero**
-   extra blocks: latch_sr 224, micro1 2925, chainmix 11497 all unchanged.
-5. **Near-end clearance 3 cells -> 1.** Only the port cell itself may sit inside
-   a foreign wire's neighbourhood.
+## Assumptions
 
-Every one of these is an *axis* on the existing retry ladder, not new machinery.
-All 13 greens still succeed on rung 1, bit-identical -- the gates never move.
+- Work target is `D:\redstone-mini` (DONE says so; `D:\redstone-compiler` is
+  a separate Rust project with no recipes).
+- `recipes/cpu4.txt` stays the original unbanded recipe until cpu4 verifies
+  128/128. `scratch/cand_cpu4hier.txt` (10-band, 128-vector equivalent) is
+  the candidate.
+- Band caches are built with `REDSTONE_ASTAR_CAP` **unset**. Setting it to
+  6000 makes bands 5 and 6 lose their only green rung (`no ground for
+  AL_n0_5`) — measured, and reproducible in a single process.
 
-## Two bugs worth keeping in mind
+## Notes / traps found
 
-**`sim_verify` checks fidelity to the recipe, never the recipe's arithmetic.**
-add2 once shipped *green* with a wrong carry (`C1 = A0 AND B0` instead of
-`A0 OR B0`). Fixed. So I added `scratch/recipe_check.py`, which checks a
-recipe's outputs against a reference expression over *every* input vector with
-no placement involved. It immediately caught that my first `sub2` was wrong too:
-bit-0 sum is `A0 XOR B0` (the +1 carry-in cancels the inversion) and the bit-0
-carry is OR, not AND. **Any new recipe should pass `recipe_check.py` before
-anyone spends an hour routing it.**
-
-**andor8's 3-level dust OR tree was SIM-RED on 7/256 vectors while its gate
-tracing was correct**, and 40000 settle ticks changed nothing -- so the dust OR
-tree itself was racing, not the wiring. Rewriting `O8` as `NOT(AND of NOTs)`
-(torch ANDs and inverters only, no dust OR) made it green. Prefer AND/NOT trees
-over dust OR trees for wide fan-in.
-
-## Hang-proofing (your rule 7)
-
-- `compose()` had **no wall-clock bound at all** and the ladder was about to
-  grow to 32 attempts, so a hard recipe could spin forever. Added
-  `REDSTONE_COMPOSE_SECS`: a deadline over the whole ladder.
-  `REDSTONE_MAX_SECS` still bounds a single attempt.
-- `tools/gate.ps1` runs the fleet in parallel, one bounded process per recipe,
-  and exits 1 iff anything is red.
-- **My own polling was the thing that looked like a hang** -- I used
-  `Start-Sleep` for 5-10 minutes inside a tool call, so the shell sat silent.
-  Builds are detached and polled with sub-minute calls now.
+- Comparing a band's `out` (finish_assembly'd on its own) against the merged
+  block list is a **frame error** — every count comes out as "3388 cobble
+  deleted". The correct map is `ctx.blocks + OFFS[band] + (2, 26)`. Two hours
+  of the session went into that false lead; the real deletion set is 17
+  boundary-input levers, which is by design.
+- `scratch/hier_bands.py` picks the **smallest** green rung, so
+  `HIER_SKIP` rarely moves a band. Force a rung with
+  `REDSTONE_HIER_RUNGS` instead.
 
 ## What I need from you
 
-Nothing blocking. Decisions I made on your behalf, flagged in case you disagree:
+Nothing blocking. Two decisions worth a word, both cheap either way:
 
-1. **`tools/gate.ps1` is tracked; the older runners in `scratch/` are not**
-   (`scratch/` is gitignored). The gate is the reproducibility contract, so it
-   should not be ignored.
-2. **`shift4.txt` is still in `recipes/`** and stays red, so `tools/gate.ps1`
-   exits 1 until it is fixed or moved out. I left it visible rather than delete
-   it, because "LATCH chains saturate the maze grid" is a real finding. Say the
-   word and I will move it to a `known-hard/` folder so the gate goes green.
-3. **I did not treat the constant-net bug as a blocker** even though cmp2 is the
-   most promising of the four, because it needs a routing change I could not
-   land inside this session.
-
-## Ordered next steps
-
-1. cmp2: the maze layout cannot place `nB1`'s 142-cell route (`grid full`). It
-   composes now. Try a wider maze grid or a lighter `nB1` route; the constant
-   `'1'` net and the `A0` `no ground` that haunted it all night are gone.
-3. alu4/cpu4: attack the approach cone, not the port row. Cheapest experiment is
-   ordering each input's loads by distance from its port instead of by
-   `(x, z)` lexicographic -- currently `sorted(netspec[net]['loads'])`. Expect
-   hashes to move; check the 13 greens still pass.
-4. shift4: reduce latch count, or find out why a 17-cell route saturates the
-   grid. Latch tiles are the outlier in footprint.
+1. The glass feature (non-conductive support; `_parse_build` still rejects
+   it) is still queued after cpu4, per your earlier call. It would delete most
+   of the lid/slope-coupling machinery this repo fights — worth doing right
+   after cpu4.
+2. `scratch/` has 539 files of probes. Most are single-purpose forensics with
+   the finding already in a `ponytail:` comment. Pruning them would make the
+   next session's forensics much faster to navigate.

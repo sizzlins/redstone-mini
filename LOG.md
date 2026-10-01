@@ -598,3 +598,58 @@ upgrade explicitly QUEUED AFTER DONE (user agreed cpu4-first: glass changes
 sim physics and would force verifying cpu4 twice). Work target D:\redstone-mini.
 Start: 20/21 (cpu4 red at merge sim), alu4 DONE+promoted, mux4 re-greened via
 sim-gated ladder. All probes hard-bounded (rule 7); stage everything.
+
+## Session: cpu4 root causes (autonomous, user AFK)
+
+DONE = cpu4 green. NOT DONE: merge reaches sim, 3/5 outputs correct. Commits
+7fdbd72, c8fb1d2, 0b773eb, a893b82, e8cd0c8.
+
+THREE root causes, each measured before fixing:
+
+1. Undriven SR latch hunted forever (sim.py). A NOR latch from a dark start
+   is symmetric in this model; vanilla breaks it with update-order skew.
+   _latch_hold_seed presets ~qb dust AND its driver torch (each alone fails),
+   plus a power-on pre-roll (_solve) that removes the tick-1 output pulse
+   which reached idle latches at T~9. Latch-free builds: byte-identical path.
+
+2. A lever powered every block beside it (sim.py). D3's floor lever drove
+   cpu4's R0Q0 stitch run to 15, forcing R0Q2 high whenever D3=1 (bit-0
+   AND/XOR wrong). Wiki: a lever powers its ATTACHMENT only. leveratt is now
+   parsed from face/facing; _parse_build returns a 12-tuple.
+
+3. A booster planted on a TILE's own output run (compose.py). place_xor
+   merges two comparator tails through two facing diodes, so a booster
+   between them faces the wrong way and cuts the merge. This is why Y2 was
+   wrong: AL_X2 went dark in the merged build while band 6 simmed GREEN
+   standalone, because a band sim runs on `out` and boosting happens after.
+   Guard: own= is the placement-end wire snapshot; only routed cells boost.
+   This took cpu4 from 3/5 to one wrong net.
+
+Landed with it (each from a measured failure): relay stations only on
+straight runs; every stitch must DELIVER onto its stub by sim-conducting
+links (_landed, with a bounded last-mile lwire); every consecutive pair of
+FRESH path cells must be a sim link; ring gate now asks layout._loop_rep and
+rejects only a NEW loop.
+
+REMAINING WALL: finish_assembly rejects the merge on a pre-existing
+front-joins-back diode ring inside a BAND TILE (R1Q3 at (2850,1,43)).
+place_xor's two facing diodes can form one; the band sims green because the
+sim does not model the bistable pair. Next step: reject a band rung whose own
+output rings, in scratch/hier_bands.py, next to the sim_verify and
+check_hier_ports it already runs per rung. ~5 lines.
+
+RE-GATED: recipe.py, sim.py pass; compose_check bit-identical
+(144/322/224/214); dense_status OK for example_and/latch_sr/mux2/sub2/
+micro1/decode3/cmp2; alu4 re-stitched (35516 blocks) and re-verified
+1024/1024 with the new physics. mux2 grows 4226->5387 (fewer boosters =>
+longer routes; still correct).
+
+TRAPS FOUND (cost real time, record them):
+- Comparing a band's `out` (finish_assembly'd separately) against the merged
+  block list is a FRAME ERROR. Correct map: ctx.blocks + OFFS[band] + (2,26).
+  It manufactures a bogus "3388 cobble deleted" that looks like a purge bug.
+- Band caches must be built with REDSTONE_ASTAR_CAP UNSET. At 6000, bands 5
+  and 6 lose their only green rung ("no ground for AL_n0_5"), reproducible
+  in a single process.
+- scratch/hier_bands.py picks the SMALLEST green rung, so HIER_SKIP rarely
+  moves a band. Use REDSTONE_HIER_RUNGS to force a rung.
