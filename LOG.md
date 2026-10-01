@@ -539,3 +539,17 @@ canary (assumed alu1 stays red; broke when alu1 went green) -> forced-fail
 precondition + fixed a silent-no-op monkeypatch (patched compose.compose while
 layout_retry reads sim.compose). Full sim.py suite green, exit 0.
 Use: zero-wire direction-agnostic boundary driver for hier stitches.
+
+### ALU4 DONE (1024/1024) + promoted to recipes/alu4.txt
+- Endpoint booster (end_boost, hier-only): stub read 7 (8 back), tail died.
+  Smoke 4/4 green after. Full verify_par staged (16 chunks, resumed across
+  calls): slow vectors need 20000 ticks (false REDs at defaults) — raised
+  worker caps AND sim defaults (5000/300000 -> 20000/2000000, ceilings only).
+  16/16 chunks green = 1024 vectors. verify_par hardened en route: round-robin
+  poll (sequential join stalled 500s silent), resume cache (one 1024-chunk
+  held the whole space), no false OK (tail claimed full verify after 2/16).
+- recipes/alu4.txt replaced by the banded/restructured recipe (82 gates,
+  equiv-proven 1024v vs original). scratch/hier_verify.py = the hier gate
+  (bands -> merge -> staged verify; layout_retry would take a silent hour).
+- Pinned-first sub-ladder default (3 measured rungs, full ladder follows).
+STATUS: 20/21 green (alu4 promoted). cpu4 last red: same pipeline next.

@@ -14,10 +14,13 @@ from recipe import eval_gate, eval_net
 # legitimately needs more ticks (a 40-cell boosted run alone costs 40), so the
 # old fixed 500 ticks / 20000 steps expired mid-convergence and got reported as
 # "sim not settling" — which reads as a router fault and is not one. Measured:
-# micro1 converges at 5000/300000 in 0.4s. Env knobs, same idea as
-# REDSTONE_ASTAR_CAP, for builds that need more.
-_TICK_CAP = int(_os.environ.get("REDSTONE_SIM_TICKS", "5000"))
-_STEP_CAP = int(_os.environ.get("REDSTONE_SIM_STEPS", "300000"))
+# micro1 converges at 5000/300000 in 0.4s; the 34k-block hier alu4 needs
+# 20000 ticks for its slowest vectors (they RED at 5000 as "not settling"
+# then settle in 1s at 20000 — slow convergence, no loop: empty loop list,
+# huge max_gap). Ceilings only: greens settle long before them either way, and
+# true oscillators never settle at any cap, so verdicts only gain true greens.
+_TICK_CAP = int(_os.environ.get("REDSTONE_SIM_TICKS", "20000"))
+_STEP_CAP = int(_os.environ.get("REDSTONE_SIM_STEPS", "2000000"))
 # ponytail: stall window. Progress, not a bigger constant: stale queued events
 # drain for hundreds of steps (measured max_gap 444-662 on a real oscillator),
 # so "no value change for N steps" is a real, separate failure from "still

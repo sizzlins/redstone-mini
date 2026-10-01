@@ -611,12 +611,19 @@ def _walk(ctx, sup, guard, a, b, net, cells):
     return done
 
 
-def _plant_repeaters(ctx, cells, net, flow):
+def _plant_repeaters(ctx, cells, net, flow, end_boost=False):
     # two passes per leg: forward every 8 (feeds hop zones) and backward
     # every 8 from the load end (tail freshness — the latch S-row needs
     # level 9 at its port). Hop dusts break straight triples, so one
     # direction alone strands the other side; over-boosting is cheap
     # (block count is reported, never scored). Facing always along travel.
+    # ponytail: end_boost (hier stitches only) plants one extra repeater at
+    # the nearest straight triple to the ENDPOINT. Every-8 leaves the endpoint
+    # up to 7 cells past the last booster (level 7), and a consumer-side tail
+    # that was boosted for a lever-driven 15 (its own partition sim) dies on
+    # 7 (measured: A0B0 stub reads 7, 8-cell tail to dark, Y1 wrong). One more
+    # diode near the end delivers 14-15 and the tail survives. Default off:
+    # partition and green geometry never see it.
     # Safe on shared prefixes: composer runs are driver->load L-paths, so a
     # shared cell flows away from the driver for every run using it.
     # ponytail: same-net repeaters passed through by later runs are assumed
@@ -653,6 +660,22 @@ def _plant_repeaters(ctx, cells, net, flow):
                 del ctx.wires[(cx, cy, cz)]
                 ctx.repeaters[(cx, cy, cz)] = (net, _VEC[(dx, dz)])
                 dist = 0
+    if end_boost and len(cells) > 3:
+        for k in range(len(cells) - 2, 0, -1):
+            if (cells[k][0], cells[k][1], cells[k][2]) in ctx.repeaters:
+                break  # an earlier diode already covers the run-in
+            (px, py, pz), (cx, cy, cz), (nx, ny, nz) = cells[k - 1], cells[k], cells[k + 1]
+            if len(flow.get((cx, cy, cz), {(0, 0)})) != 1:
+                continue
+            dx, dz = cx - px, cz - pz
+            if ((dx, dz) == (nx - cx, nz - cz) and (dx, dz) in _VEC
+                    and py == cy == ny
+                    and not (cy > 1 and not any(
+                        b[:3] == (cx, cy - 1, cz) and "cobblestone" in b[3]
+                        for b in ctx.blocks))):
+                del ctx.wires[(cx, cy, cz)]
+                ctx.repeaters[(cx, cy, cz)] = (net, _VEC[(dx, dz)])
+                break
 
 
 def _strip_buffers(gates, outs=()):
@@ -1611,15 +1634,23 @@ def compose_hier(recipe):
         # ladders (30 min) every iteration. Discovered from standalone band
         # probes; first compose+sim-green rung wins as usual.
         _hr = os.environ.get("REDSTONE_HIER_RUNGS", "").strip()
+        _full = [(j, s, o) for j in ("short", "long")
+                 for s in (1, 2, 3, 4, 5, 6, 8, 10)
+                 for o in ("gates_first", "inputs_first")]
         if _hr:
             _rungs = []
             for _spec in _hr.split(";"):
                 _j, _s, _o = _spec.split(",")
                 _rungs.append((_j.strip(), int(_s), _o.strip()))
         else:
-            _rungs = [(j, s, o) for j in ("short", "long")
-                      for s in (1, 2, 3, 4, 5, 6, 8, 10)
-                      for o in ("gates_first", "inputs_first")]
+            # ponytail: pinned-first default. The three rungs below win every
+            # alu4hier band (measured across all six partitions), so trying
+            # them first turns a 10-minute climb into ~3 minutes; the full
+            # ladder follows unchanged for anything else. Order only.
+            _pin = [("short", 1, "gates_first"),
+                    ("short", 1, "inputs_first"),
+                    ("long", 1, "gates_first")]
+            _rungs = _pin + [r for r in _full if r not in _pin]
         _err = None
         for (_jog, _s, _o) in _rungs:
             if _dl_saved is not None and time.monotonic() > _dl_saved:
@@ -1818,6 +1849,18 @@ def compose_hier_parts(built, gates, recipe):
     # wrong: the same-level adjacency guard fires with no ends context —
     # measured: C1 touches A0 at stale coords (42,1,13).)
     seal_tiles(mctx)
+    # ponytail: bare torches forbid everything. seal_tiles only records a
+    # torch when dust already sits beside it — but a torch with bare
+    # surroundings gets NO entry, so later stamping walks dust right past a
+    # foreign torch and the sim reads the torch's value into the net
+    # (measured: A0B0's y=3 flight beside A0B0_0's torches reads lit when the
+    # net is dark -> Y1 mismatch on 1010101010). Recording every torch with
+    # an empty allow turns that silent corruption loud (no-ground) instead.
+    # Merge-only: partitions sealed themselves during sub-compose, so no
+    # green geometry moves.
+    for (x, z), (kind, _n) in solid.items():
+        if kind == "torch" and (x, z) not in mctx.tile_adj:
+            mctx.tile_adj[(x, z)] = set()
     # ponytail: allow-list ONLY owner torches. A stitch wire beside a
     # NEIGHBOR tile's torch is driven by lever AND inverter at once — a ring
     # oscillator that sim reports as "not settling" (measured: merged alu4
@@ -1935,9 +1978,9 @@ def compose_hier_parts(built, gates, recipe):
         # Try intermediate x at quarters between the endpoints, both row
         # orders; each leg is one bounded lwire, so the whole attempt is
         # seconds, never the minutes a blind astar burns.
-        _xs = sorted({drv[0] + (stub[0] - drv[0]) * _q // 4 for _q in (1, 2, 3)})
+        _xs = sorted({drv[0] + (stub[0] - drv[0]) * _q // 4 for _q in (2,)})
         for _mx in _xs:
-            for _za, _zb in ((drv[1], stub[1]), (stub[1], drv[1])):
+            for _za, _zb in ((drv[1], stub[1]),):
                 try:
                     p1 = lwire(mctx, sup, guard, drv, (_mx, _za), n)
                     p2 = lwire(mctx, sup, guard, (_mx, _za), (_mx, _zb), n)
@@ -1976,6 +2019,13 @@ def compose_hier_parts(built, gates, recipe):
             except RuntimeError as e:
                 _err = e
         raise _err
+    # ponytail: flow starts EMPTY (reverted undirected seeding). Seeding
+    # flow from partition wires marked every straight cell 2-dir
+    # (forward+back), so _plant_repeaters (needs exactly 1 dir) planted
+    # NOTHING on any stitch — measured: max-unboosted == full length on all
+    # 9 stitch paths (170-471 cells, zero boosters), boundary nets arriving
+    # dark (Y1 mismatches via dark A0B0). The back-feed it was meant to stop
+    # was never measured; the under-boosting was. Fresh stitch dirs only.
     flow = {}
     stitched = {}
     for n in sorted(cross, key=_span):
@@ -2001,6 +2051,8 @@ def compose_hier_parts(built, gates, recipe):
         _cur = drv_of[n]
         for (b, sx, sz) in _cons:
             stub = (sx, sz)
+            if os.environ.get("REDSTONE_HIER_TRACE"):
+                print(f"hier leg {n} band {b} {drv_of[n]}->{stub}", flush=True)
             try:
                 full = _stitch(_cur, stub, n, b)
             except RuntimeError as e:
@@ -2011,10 +2063,37 @@ def compose_hier_parts(built, gates, recipe):
                 d = (v[0] - u[0], v[2] - u[2])
                 flow.setdefault((u[0], u[1], u[2]), set()).add(d)
                 flow.setdefault((v[0], v[1], v[2]), set()).add(d)
-            _plant_repeaters(mctx, full, n, flow)
+            _plant_repeaters(mctx, full, n, flow, end_boost=True)
             stitched[n] = stitched.get(n, []) + [full]
         if _fail:
             raise RuntimeError(f"hier stitch {n}: " + " | ".join(_fail))
+    # ponytail: merge-wide slope-link lids. Partitions route (and 3D-fly)
+    # assuming open surroundings; after the merge a foreign y=1 run can sit
+    # diagonally below supported y>=2 dust, and the sim couples them while
+    # check_shorts stays silent (measured: 273 elevated cells over band
+    # fields, churn with no torch loop, all in a stitch corridor). Same rule
+    # as _walk's per-walk lids, applied to EVERY elevated cell regardless of
+    # which walk minted it: support below + foreign diagonal-below + no lid
+    # over it -> drop one cobble above the lower wire. Blocks over ground
+    # wire are inert, so electrics never move; only the coupling dies.
+    _elev = [(x, y, z) for (x, y, z), _nw in wires.items() if y >= 2]
+    if _elev:
+        _cob = {(bx, by, bz) for bx, by, bz, bid in blocks
+                if bid.split("[")[0] == "minecraft:cobblestone"}
+        for (x, y, z) in _elev:
+            _un = wires[(x, y, z)]
+            if (x, y - 1, z) not in _cob:
+                continue
+            for dx, dz in DIRS:
+                lx, ly, lz = x + dx, y - 1, z + dz
+                fw = wires.get((lx, ly, lz))
+                if fw is None or fw == _un or (lx, y, lz) in _cob:
+                    continue
+                if (wires.get((lx, y, lz)) is not None
+                        or (lx, ly, lz) in repeaters):
+                    continue
+                _cob.add((lx, y, lz))
+                blocks.append((lx, y, lz, "minecraft:cobblestone"))
     check_shorts(wires, junctions, blocks)
     check_opens(wires, junctions, repeaters, solid, pos, blocks)
     _out = finish_assembly(blocks, solid, wires, rings, junctions, repeaters, pos)
