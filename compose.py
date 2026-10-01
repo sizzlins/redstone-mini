@@ -2074,6 +2074,14 @@ def compose_hier_parts(built, gates, recipe):
         repeaters.update(_rp)
         del blocks[_sb:]
 
+    # the wire set as it stood when the CURRENT stitch started. The
+    # contiguity gate in _landed judges only cells NOT in it: a step inside a
+    # tile is that tile's own construction (its merge-tail diodes chain
+    # repeater->repeater on purpose and the band already simmed them), and
+    # the producer hand-off is the stub-connect pass's job. Rebound per leg
+    # below; a list so the nested defs can rebind without nonlocal.
+    _prews = [frozenset()]
+
     def _landed(full, n, stub, _mile=False):
         # every stitch must DELIVER: the path must conduct (sim rules) onto
         # the stub. lwire stops at the target xz whatever y it arrives with,
@@ -2155,10 +2163,17 @@ def compose_hier_parts(built, gates, recipe):
             # "OPEN" on cells the stitch never joined (measured: AL_C3, 6 cells
             # past a break, 0 orphans reported). Every consecutive pair must be
             # a sim link, so the path is one conductor end to end.
+            _freshc = {c for c in full if c not in _prews[0]}
             for _a, _b2 in zip(full, full[1:]):
                 if _a == _b2:
                     continue  # a leg boundary re-emits its joint cell
-                if _b2 not in set(_nbrs(_a)):
+                if (_a in _freshc or _b2 in _freshc) \
+                        and _b2 not in set(_nbrs(_a)):
+                    # only FRESH cells are the stitch's responsibility: a
+                    # step inside a TILE is that tile's own construction (its
+                    # merge-tail diodes legitimately chain repeater->repeater
+                    # and the band already simmed them), and the producer
+                    # stub hand-off is the stub-connect pass's job.
                     raise RuntimeError(
                         f"hier stitch {n}: broken link {_a} -> {_b2}")
             return full
@@ -2249,11 +2264,15 @@ def compose_hier_parts(built, gates, recipe):
         # is live but bistable, and finish_assembly rejects it. Fail the
         # strategy here (rollback) instead of the whole merge downstream.
         from layout import _VEC as _VV
+        # A real radius-25 box per path cell. The old shape (every dx at the
+        # path's own z, plus only the two extreme z rows) left a hole in the
+        # middle of the window, so a ring a few cells off the path's z was
+        # invisible and finish_assembly killed the whole merge on it
+        # (measured: R1Q3 at (2850,1,43) against a path sitting at z=52).
         _near = set()
         for (_x, _y, _z) in cells:
             for _dx in range(-25, 26):
-                _near.add((_x + _dx, _y, _z))
-                for _dz in (-25, 25):
+                for _dz in range(-25, 26):
                     _near.add((_x + _dx, _y, _z + _dz))
         _cob = {(bx, by, bz) for bx, by, bz, bid in blocks
                 if bid.split("[")[0] == "minecraft:cobblestone"}
@@ -2346,16 +2365,27 @@ def compose_hier_parts(built, gates, recipe):
             # field and every classic after it died on the corpse) and the
             # failure falls into the next strategy.
             _s = _snap()
+            from layout import _loop_rep as _lr
+            _dust0 = set(mctx.wires) - set(mctx.repeaters)
+            _cob0 = {b[:3] for b in blocks
+                     if b[3].split("[")[0] == "minecraft:cobblestone"}
+            _pre_loop = _lr(mctx.wires, mctx.repeaters, _dust0, _cob0)
             try:
                 _p = _landed(fn(), n, stub)
-                # every strategy's own boosters can close a front-joins-back
-                # ring (a diode faces travel, so a re-entered stretch puts a
-                # front next to a back). finish_assembly kills the whole
-                # merge on one, so fail the strategy here instead and let the
-                # next one try. _legs ran this itself; the direct lwire and
-                # relay paths did not (measured: E0 at (559,1,54)).
-                if _loop_near(_p, n):
-                    raise RuntimeError(f"hier stitch {n}: rings")
+                # Every strategy's own boosters can close a front-joins-back
+                # ring, and finish_assembly kills the WHOLE merge on one
+                # (measured: E0 at (559,1,54), R1Q3 at (2850,1,43)). Ask the
+                # checker the merge will ask — layout._loop_rep, which picks
+                # the net from the diode's FRONT cell and so also sees
+                # cross-net rings a net-scoped probe misses. Only a NEW loop
+                # rejects: a band tile can leave one behind, and that is not
+                # this strategy's to fix.
+                _dust = set(mctx.wires) - set(mctx.repeaters)
+                _cob = {b[:3] for b in blocks
+                        if b[3].split("[")[0] == "minecraft:cobblestone"}
+                _post = _lr(mctx.wires, mctx.repeaters, _dust, _cob)
+                if _post is not None and _post != _pre_loop:
+                    raise RuntimeError(f"hier stitch {n}: rings at {_post[0]}")
                 return _p
             except RuntimeError:
                 _restore(_s)
@@ -2524,6 +2554,7 @@ def compose_hier_parts(built, gates, recipe):
     # second (measured: AL_C2's driver walled by AL_AB0's landed stitch);
     # order decides who claims it. Env-gated experiment, default unchanged.
     _rev = os.environ.get("REDSTONE_HIER_ORDER") == "asc"
+    _freshc = set()
     for n in sorted(cross, key=_span, reverse=_rev):
         pb = prod[n]
         if os.environ.get("REDSTONE_HIER_TRACE"):
@@ -2549,7 +2580,8 @@ def compose_hier_parts(built, gates, recipe):
             stub = (sx, sz)
             if os.environ.get("REDSTONE_HIER_TRACE"):
                 print(f"hier leg {n} band {b} {drv_of[n]}->{stub}", flush=True)
-            _prew = set(wires)
+            _prew = set(wires) | set(repeaters)
+            _prews[0] = _prew
             try:
                 full = _stitch(_cur, stub, n, b)
             except RuntimeError as e:
