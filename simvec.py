@@ -899,12 +899,21 @@ def _comp_out_s(c, st, pw, pbs, tl, ron, con, vec):
 
 
 def run_scalar(vec, ctx, init=None, until=None, tick_cap=None, step_cap=None,
-               stall=None):
+               stall=None, snap_at=None):
     """One vector, scalar, over the precomputed tables.
 
     Returns sim._run_vec's 6-tuple exactly (lamps, live, torch, ticks, rep,
     comp) so callers cannot tell the two apart, and raises the same RuntimeError
     messages for stall / tick-cap / burnout.
+
+    snap_at: optional. Either an iterable of ticks, or a dict the caller owns
+    which the engine fills in place as {tick: live-dust map at the END of that
+    tick}. This exists so a tick-by-tick diagnostic can be ONE simulation
+    instead of one per stop: _run_vec(until=T) re-runs the whole prefix, so
+    asking for 47 stops cost 47 x the fixed startup (measured 191s each on
+    alu4 = 2.4 hours for one trace). Stops never reached are filled with the
+    final state, which is what they would have shown anyway. The return value
+    stays the 6-tuple either way.
 
     Deliberately NOT implemented: the latch hold-seed pre-solve (init with
     _solve). Callers with an init must use sim._run_vec; this raises instead of
@@ -915,6 +924,8 @@ def run_scalar(vec, ctx, init=None, until=None, tick_cap=None, step_cap=None,
     tick_cap = _TICK_CAP if tick_cap is None else tick_cap
     step_cap = _STEP_CAP if step_cap is None else step_cap
     stall = _STALL if stall is None else stall
+    want = snap_at if isinstance(snap_at, dict) else (
+        {int(t): None for t in snap_at} if snap_at else None)
     if init:
         raise NotImplementedError(
             "run_scalar: no latch pre-solve; use sim._run_vec when init is given")
@@ -977,6 +988,8 @@ def run_scalar(vec, ctx, init=None, until=None, tick_cap=None, step_cap=None,
         i = now % RING
         items = buckets[i]
         if not items:
+            if want is not None and now in want:
+                want[now] = {c: v for c, v in pw.items() if v}
             now += 1
             steps += 0
             if steps - last_change > stall_cap:
@@ -1091,6 +1104,13 @@ def run_scalar(vec, ctx, init=None, until=None, tick_cap=None, step_cap=None,
                             alive += 1
 
     lamps = {}
+    if want:
+        # any stop the run never reached (it settled first) shows the final
+        # state, which is what it would have shown anyway
+        final = {c: v for c, v in pw.items() if v}
+        for t in list(want):
+            if want[t] is None:
+                want[t] = dict(final)
     for cell, net in lampnet.items():
         lit = False
         for a in st["l_arm"][cell]:
