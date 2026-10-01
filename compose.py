@@ -2081,6 +2081,9 @@ def compose_hier_parts(built, gates, recipe):
     # the producer hand-off is the stub-connect pass's job. Rebound per leg
     # below; a list so the nested defs can rebind without nonlocal.
     _prews = [frozenset()]
+    # set by _try once it has planted the leg's boosters, so the stitch loop
+    # does not plant them a second time.
+    _planted = [False]
 
     def _landed(full, n, stub, _mile=False):
         # every stitch must DELIVER: the path must conduct (sim rules) onto
@@ -2372,6 +2375,21 @@ def compose_hier_parts(built, gates, recipe):
             _pre_loop = _lr(mctx.wires, mctx.repeaters, _dust0, _cob0)
             try:
                 _p = _landed(fn(), n, stub)
+                # ponytail: a run must be a SIMPLE path. A path that re-enters
+                # its own cell is a ring waiting for a booster: the diode lands
+                # where the path doubles back and front joins back (measured:
+                # R1Q3's leg ends ...(2849,25),(2848,25),(2847,25) then turns
+                # north past its own (2848,26),(2849,26)). Rejecting the
+                # overlap is cheaper and more direct than hunting the ring.
+                # An ADJACENT repeat is legal (a leg boundary re-emits its
+                # joint cell) and is the only one allowed.
+                _hit = set()
+                for _i2, _c in enumerate(_p):
+                    if _c in _hit and not (
+                            _i2 and _p[_i2 - 1] == _c):
+                        raise RuntimeError(
+                            f"hier stitch {n}: path re-enters {_c}")
+                    _hit.add(_c)
                 # Every strategy's own boosters can close a front-joins-back
                 # ring, and finish_assembly kills the WHOLE merge on one
                 # (measured: E0 at (559,1,54), R1Q3 at (2850,1,43)). Ask the
@@ -2386,6 +2404,25 @@ def compose_hier_parts(built, gates, recipe):
                 _post = _lr(mctx.wires, mctx.repeaters, _dust, _cob)
                 if _post is not None and _post != _pre_loop:
                     raise RuntimeError(f"hier stitch {n}: rings at {_post[0]}")
+                # Boost HERE, not in the caller: a booster can close a ring
+                # where the path doubles back on an EARLIER LEG of the same
+                # net (R1Q3 is consumed by two bands and the legs chain stub
+                # to stub), and the ring gate only sees the truth once the
+                # diodes exist. Inside _try that rolls back and the NEXT
+                # strategy runs; outside it the whole net failed.
+                for _u, _v in zip(_p, _p[1:]):
+                    _d = (_v[0] - _u[0], _v[2] - _u[2])
+                    flow.setdefault((_u[0], _u[1], _u[2]), set()).add(_d)
+                    flow.setdefault((_v[0], _v[1], _v[2]), set()).add(_d)
+                _plant_repeaters(mctx, _p, n, flow, end_boost=True,
+                                 fresh={c for c in _p if c not in _prews[0]})
+                _dust = set(mctx.wires) - set(mctx.repeaters)
+                _cob = {b[:3] for b in blocks
+                        if b[3].split("[")[0] == "minecraft:cobblestone"}
+                _post = _lr(mctx.wires, mctx.repeaters, _dust, _cob)
+                if _post is not None and _post != _pre_loop:
+                    raise RuntimeError(f"hier stitch {n}: rings at {_post[0]}")
+                _planted[0] = True
                 return _p
             except RuntimeError:
                 _restore(_s)
@@ -2582,18 +2619,43 @@ def compose_hier_parts(built, gates, recipe):
                 print(f"hier leg {n} band {b} {drv_of[n]}->{stub}", flush=True)
             _prew = set(wires) | set(repeaters)
             _prews[0] = _prew
+            _ss = _snap()
+            from layout import _loop_rep as _lr
+            _du0 = set(wires) - set(repeaters)
+            _cb0 = {bb[:3] for bb in blocks
+                    if bb[3].split("[")[0] == "minecraft:cobblestone"}
+            _lp0 = _lr(wires, repeaters, _du0, _cb0)
             try:
                 full = _stitch(_cur, stub, n, b)
             except RuntimeError as e:
                 _fail.append(f"band {b} stub {stub}: {str(e)[:60]}")
                 continue
             _cur = stub
-            for u, v in zip(full, full[1:]):
-                d = (v[0] - u[0], v[2] - u[2])
-                flow.setdefault((u[0], u[1], u[2]), set()).add(d)
-                flow.setdefault((v[0], v[1], v[2]), set()).add(d)
-            _plant_repeaters(mctx, full, n, flow, end_boost=True,
-                             fresh={c for c in full if c not in _prew})
+            if not _planted[0]:
+                for u, v in zip(full, full[1:]):
+                    d = (v[0] - u[0], v[2] - u[2])
+                    flow.setdefault((u[0], u[1], u[2]), set()).add(d)
+                    flow.setdefault((v[0], v[1], v[2]), set()).add(d)
+                _plant_repeaters(mctx, full, n, flow, end_boost=True,
+                                 fresh={c for c in full if c not in _prew})
+            _planted[0] = False
+            # ponytail: the ring gate has to run AFTER boosting. _stitch's own
+            # check fires before _plant_repeaters, so a booster that lands
+            # where the path re-enters itself closes the ring unobserved
+            # (measured: R1Q3's leg ends ...(2849,25),(2848,25),(2847,25)
+            # then turns north past its own (2848,26),(2849,26), and the
+            # west-facing diode at (2848,25) joins its own back — the merge
+            # died in finish_assembly, thousands of blocks later). Roll the
+            # leg back and let the net's next consumer try.
+            _du = set(wires) - set(repeaters)
+            _cb = {bb[:3] for bb in blocks
+                   if bb[3].split("[")[0] == "minecraft:cobblestone"}
+            _lp = _lr(wires, repeaters, _du, _cb)
+            if _lp is not None and _lp != _lp0:
+                _restore(_ss)
+                _cur = drv_of[n]
+                _fail.append(f"band {b} stub {stub}: rings at {_lp[0]}")
+                continue
             stitched[n] = stitched.get(n, []) + [full]
             # ponytail: per-stitch dump (HIERDUMP_EACH=prefix): post-stitch
             # field snapshots so a later stitch's corridor can be debugged
@@ -2813,15 +2875,32 @@ def compose_hier_parts(built, gates, recipe):
         # output. Attempt the first few (covers real stubs); the rest stay
         # for check_opens to report loudly instead of hanging here.
         for (_x, _y, _z) in _orph[:6]:
+            _ss = _snap()
+            from layout import _loop_rep as _lr
+            _du0 = set(mctx.wires) - set(mctx.repeaters)
+            _cb0 = {b[:3] for b in blocks
+                    if b[3].split("[")[0] == "minecraft:cobblestone"}
+            _lp0 = _lr(mctx.wires, mctx.repeaters, _du0, _cb0)
             try:
                 _full = lwire(mctx, sup, guard, _anchor, (_x, _z), _n)
+                # same gate as _stitch: a leg's own booster can close a
+                # front-joins-back ring, and finish_assembly kills the WHOLE
+                # merge on one. This path is outside _try, so it had none
+                # (measured: R1Q3 at (2850,1,43) came from a stub leg).
+                for _u, _v in zip(_full, _full[1:]):
+                    _dd = (_v[0] - _u[0], _v[2] - _u[2])
+                    flow.setdefault((_u[0], _u[1], _u[2]), set()).add(_dd)
+                    flow.setdefault((_v[0], _v[1], _v[2]), set()).add(_dd)
+                _plant_repeaters(mctx, _full, _n, flow)
+                _du = set(mctx.wires) - set(mctx.repeaters)
+                _cb = {b[:3] for b in blocks
+                       if b[3].split("[")[0] == "minecraft:cobblestone"}
+                _lp = _lr(mctx.wires, mctx.repeaters, _du, _cb)
+                if _lp is not None and _lp != _lp0:
+                    raise RuntimeError(f"hier stub {_n}: rings at {_lp[0]}")
             except RuntimeError as _e:
+                _restore(_ss)
                 raise RuntimeError(f"hier stub {_n}: {_e}") from None
-            for _u, _v in zip(_full, _full[1:]):
-                _dd = (_v[0] - _u[0], _v[2] - _u[2])
-                flow.setdefault((_u[0], _u[1], _u[2]), set()).add(_dd)
-                flow.setdefault((_v[0], _v[1], _v[2]), set()).add(_dd)
-            _plant_repeaters(mctx, _full, _n, flow)
             stitched[_n] = stitched.get(_n, []) + [_full]
             # ponytail: the new leg is wired and live by construction — mark
             # its whole path reached, or the next orphan on the same run
