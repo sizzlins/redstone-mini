@@ -213,6 +213,20 @@ def _run_vec(vec, init, ctx, until=None):
 
     def dust_lvl(c):
         lv = 0
+        # ponytail: dust directly ABOVE a lit torch reads 15 (wiki; the code
+        # comment at the standing-torch parser admitted this gap and asked
+        # for it gated on a canary — the canary is below in __main__).
+        # Never exercised by our tiles (nothing stacks on a torch) so zero
+        # behavior change for every green build; verified by the fleet gate.
+        _below = (c[0], c[1] - 1, c[2])
+        if _below in torch and tl.get(_below, False):
+            return 15
+        # ponytail: dust on top of a strongly powered block reads 15 (wiki:
+        # strong power covers dust on top and beneath, not just beside).
+        # Same class as the torch-below term: support power the old model
+        # could see (cob_state) but dust never read.
+        if _below in cob and pbs.get(_below, False):
+            return 15
         for dx, dz in DIRS:
             m = (c[0] + dx, c[1], c[2] + dz)
             if m in torch and tl.get(m, False):
@@ -277,6 +291,14 @@ def _run_vec(vec, init, ctx, until=None):
             # attribute failures, not to ship old physics.
             if (m in lever and vec.get(lever[m], False)
                     and _os.environ.get("REDSTONE_LEVER_POWER", "1") == "1"):
+                pwrd, strong = True, True
+            # ponytail: a lit torch powers adjacent blocks — except the one
+            # it is attached to (wiki; the same host exception the torch rule
+            # itself uses, via torch[m] != c). Without this, dust sitting on
+            # cobble whose only power is a neighboring torch reads lit (dust
+            # above torch, done above) while its support reads dark — a split
+            # model of one vanilla fact. Canary below in __main__.
+            if m in torch and tl.get(m, False) and torch[m] != c:
                 pwrd, strong = True, True
             if m in rep:
                 d = rep[m]
@@ -576,8 +598,28 @@ def _parse_build(blocks, io):
             comp[c] = {"rear": r, "mode": mode}
         elif b == "minecraft:redstone_block":
             rblk.add(c)
-        elif b == "minecraft:cobblestone":
+        elif b in ("minecraft:cobblestone", "minecraft:stone"):
+            # ponytail: stone pads (finish_assembly, y=0 under every y=1
+            # component) join cob. Pads are unpowered lumps, so this changes
+            # no value anywhere — but slope-support, loop-flood and lid sets
+            # all derive cob from blocks, and leaving pads out meant the sim
+            # disagreed with vanilla about what is support. Deliberately NOT
+            # extended to _loop_rep/flood cobble (those assume powered when
+            # crossing; pads tiling the field would join everything).
             cob.add(c)
+        elif b == "minecraft:lever":
+            # ponytail: levers are electrical identity, not geometry: which
+            # net a lever drives comes from io["levers"], never from its
+            # block (face/facing state is irrelevant to power). Explicitly
+            # ignored here so the fail-loud below does not fire on them.
+            pass
+        else:
+            # ponytail: fail loud on unknown bids. _parse_build used to drop
+            # anything it did not recognize (piston/glass/slab/stair hybrids
+            # from a foreign build read as air), so a build could verify
+            # green while vanilla conducted/cut through the ignored blocks.
+            # Zero behavior change for every bid above.
+            raise ValueError(f"sim: unsupported block {bid!r} at {c}")
     def _y(k):
         return (k[0], 1, k[1]) if len(k) == 2 else k
     lever = {_y(k): n for k, n in io["levers"].items()}
@@ -907,6 +949,34 @@ if __name__ == "__main__":
         "lever must power its host block and the dust on top"
     assert _run_vec({"a": 0}, None, _lp3)[0].get("y", False) is False, \
         "unpowered lever must not light the pedestal"
+    # ponytail: dust directly above a torch (wiki: powered in vanilla; the
+    # parser comment asked for this term gated on a canary — this is it).
+    # Standing torch on dark cobble (lit) lights dust above; powered support
+    # (torch off) leaves it dark. Asserted on dust levels directly (a lamp
+    # beside would add pointing-shape noise to a physics canary).
+    _tb2 = [(0, 1, 0, CB), (0, 2, 0, "minecraft:redstone_torch"),
+            (0, 3, 0, W_)]
+    _tp2, _ = _hand(_tb2, {}, {})
+    assert _run_vec({}, None, _tp2)[1].get((0, 3, 0), 0) == 15, \
+        "dust above a lit torch must light"
+    # ponytail: torch powers neighboring blocks except its host. Wall torch
+    # beside (not on) a cobble lights dust on top of that cobble; the same
+    # torch does NOT power the block it is attached to (host exception).
+    _tb3 = [(0, 1, 0, CB), (1, 1, 0, "minecraft:redstone_wall_torch[facing=west]"),
+            (0, 2, 0, W_)]
+    _tp3, _ = _hand(_tb3, {}, {})
+    assert _run_vec({}, None, _tp3)[1].get((0, 2, 0), 0) == 15, \
+        "torch beside cobble must power it (dust on top lights)"
+    # ponytail: host exception — a wall torch does NOT power the block it is
+    # attached to. Torch at (1,1,0) facing west attaches east to (2,1,0):
+    # dust on top of the host stays dark, while dust on top of the western
+    # neighbour cobble (0,1,0) lights.
+    _tb4 = [(2, 1, 0, CB), (1, 1, 0, "minecraft:redstone_wall_torch[facing=west]"),
+            (2, 2, 0, W_), (0, 1, 0, CB), (0, 2, 0, W_)]
+    _tp4, _ = _hand(_tb4, {}, {})
+    _pw4 = _run_vec({}, None, _tp4)[1]
+    assert _pw4.get((2, 2, 0), 0) == 0, "host block of a torch stays dark"
+    assert _pw4.get((0, 2, 0), 0) == 15, "neighbour block of a torch lights"
     print("lamp-sources ok: top dust, powered block, free torch, lever-pedestal")
     _sb = [(2, 1, 0, "minecraft:lever"), (1, 1, 0, W_),
            (0, 1, 0, CMP + "[facing=east,mode=subtract]"),
