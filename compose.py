@@ -2500,11 +2500,25 @@ def compose(recipe):
                     raise
                 print(f"compose hier failed ({str(e)[:60]}); retrying",
                       flush=True)
+        # ponytail: sim-gated ladder (REDSTONE_SIM_GATE=1, set by layout_retry
+        # when verify=True). A rung that routes but miscomputes used to ship
+        # (measured: mux4 rung-1 routes, Y3 wrong on 32 vectors under correct
+        # lever physics) because the ladder stops at the first ROUTE. With the
+        # gate, a routed-but-red rung retries instead — every current green
+        # lands rung 1 sim-green bit-identical, so the gate is a no-op for
+        # them. Big banded recipes skip it (their hier path sim-gates its own
+        # partitions; a 1024-vector sim per rung would 50x the ladder).
+        # Default OFF (previews stay fast); all sim failures retry (rung
+        # geometry, not logic — a later rung can be clean).
+        _simgate = (os.environ.get("REDSTONE_SIM_GATE") == "1"
+                    and not big_banded)
+        if _simgate:
+            from sim import sim_verify as _simv
         for i, (jog, spread, order, terr) in enumerate(attempts):
             _SPREAD, _ORDER, _TERR = spread, order, terr
             _JOGS = _JOGS_SHORT if jog == "short" else _JOGS_LONG
             try:
-                return _compose_once(recipe)
+                _res = _compose_once(recipe)
             except RuntimeError as e:
                 last = e
                 if (i == len(attempts) - 1
@@ -2514,6 +2528,23 @@ def compose(recipe):
                 print(f"compose {jog} spread {spread} {order}"
                       f"{' terr' if terr else ''} failed "
                       f"({str(e)[:60]}); retrying", flush=True)
+                continue
+            if not _simgate:
+                return _res
+            if deadline and time.monotonic() > deadline:
+                return _res  # budget spent: ship the route ungated (old
+                # behavior); the caller still sims it when verifying.
+            try:
+                _simv(recipe, _res[0], _res[2], quiet=True)
+            except RuntimeError as e:
+                last = e
+                if (i == len(attempts) - 1
+                        or (deadline and time.monotonic() > deadline)):
+                    raise
+                print(f"compose {jog} spread {spread} {order} sim-red "
+                      f"({str(e)[:60]}); retrying", flush=True)
+                continue
+            return _res
         # standard ladder exhausted: escalate big banded recipes to territories
         if (not force and not terr_only
                 and len(recipe["gates"]) >= _TERR_MIN_GATES

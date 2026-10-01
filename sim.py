@@ -75,22 +75,34 @@ def layout_retry(recipe, tries=12, verify=False, grows=3):
         return out
 
     last = None
+    # ponytail: sim-gate the compose ladder when verifying (see
+    # REDSTONE_SIM_GATE in compose()). Saved/restored so previews and probes
+    # keep the fast ungated path; only layout_retry(verify=True) opts in.
+    _sg = _os.environ.get("REDSTONE_SIM_GATE")
+    if verify:
+        _os.environ["REDSTONE_SIM_GATE"] = "1"
     try:
-        out = compose(recipe)
-    except RuntimeError as e:
-        last = e
-        tried("compose", None, 0, False, e)
-    else:
-        if not verify:
-            return done(out + (None,))
         try:
-            st, ticks = sim_verify(recipe, out[0], out[2], quiet=True, collect=True)
+            out = compose(recipe)
         except RuntimeError as e:
-            e.blocks, e.size, e.io = out[:3]
             last = e
             tried("compose", None, 0, False, e)
         else:
-            return done(out + (st,))
+            if not verify:
+                return done(out + (None,))
+            try:
+                st, ticks = sim_verify(recipe, out[0], out[2], quiet=True, collect=True)
+            except RuntimeError as e:
+                e.blocks, e.size, e.io = out[:3]
+                last = e
+                tried("compose", None, 0, False, e)
+            else:
+                return done(out + (st,))
+    finally:
+        if _sg is None:
+            _os.environ.pop("REDSTONE_SIM_GATE", None)
+        else:
+            _os.environ["REDSTONE_SIM_GATE"] = _sg
     for _res in (False, True):
         for t in range(tries):
             if _MAX_SECS and _time.monotonic() - t0 > _MAX_SECS:
@@ -257,7 +269,14 @@ def _run_vec(vec, init, ctx, until=None):
             # feeds it can arrive from any direction without touching the
             # lever cell. Used for hier boundary stubs, where a lane-crossing
             # route is otherwise unroutable.
-            if m in lever and vec.get(lever[m], False):
+            # ponytail: REDSTONE_LEVER_POWER=0 restores the old gap (levers
+            # never power their host) for differential diagnosis only: same
+            # field, term on/off, diff the settled maps to name exactly which
+            # cells the term lights. The term itself is wiki-correct (levers
+            # strongly power a full-solid-opaque host); the knob exists to
+            # attribute failures, not to ship old physics.
+            if (m in lever and vec.get(lever[m], False)
+                    and _os.environ.get("REDSTONE_LEVER_POWER", "1") == "1"):
                 pwrd, strong = True, True
             if m in rep:
                 d = rep[m]
