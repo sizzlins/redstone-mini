@@ -1163,6 +1163,7 @@ def run_scalar(vec, ctx, init=None, until=None, tick_cap=None, step_cap=None,
 # comes from an engine that finished.
 
 _W = {}
+_CTX = None
 
 
 def _init_worker(blocks, io, gates, outputs, ins, tick_cap, stall):
@@ -1269,6 +1270,36 @@ def _shard_job(combos):
     return _serial_shard(combos)
 
 
+def _serial_drain(combos, ins, gates, outputs, blocks, io):
+    """verify_par's body, run in THIS process with no pool (daemon callers)."""
+    _init_worker(blocks, io, gates, outputs, ins, 20000, 5000)
+    _W["swar"], _W["swar_cap"], _W["stop"] = 0, 4000000, None
+    bad, ticks = [], 0
+    for vec in combos:
+        try:
+            got, live, tlv, tk, rlv, cn = run_scalar(vec, _parse_build_ctx())
+        except NotImplementedError:
+            break
+        except RuntimeError as e:
+            raise RuntimeError("sim not settling / burnout on vector %s: %s"
+                               % (vec, str(e)[:400]))
+        ticks = max(ticks, tk)
+        from recipe import eval_net
+        exp = eval_net({"inputs": ins, "gates": gates, "outputs": outputs}, vec)
+        for net in outputs:
+            if bool(got.get(net, False)) != bool(exp[net]):
+                bad.append((vec, net, bool(got.get(net, False)), bool(exp[net])))
+    return bad, ticks
+
+
+def _parse_build_ctx():
+    global _CTX
+    if _CTX is None:
+        from sim import _parse_build
+        _CTX = _parse_build(_W["blocks"], _W["io"])
+    return _CTX
+
+
 def verify_par(ins, gates, outputs, blocks, io, combos, workers=None,
                shard=None, tick_cap=20000, step_cap=4000000, stall=5000,
                swar=None, progress=None):
@@ -1295,6 +1326,19 @@ def verify_par(ins, gates, outputs, blocks, io, combos, workers=None,
     vector set is uniform.
     """
     import multiprocessing as _mp
+    # ponytail: refuse to fan out from inside a pool worker. A pool worker is
+    # DAEMONIC by definition, so the nested Pool raises "daematic processes are
+    # not allowed to have children" -- and under spawn that is not a raise, it
+    # is a fork bomb: the child re-imports the __main__ script, which calls
+    # verify again, forever. sim.sim_verify has its own guard, but that only
+    # covers callers that go through sim_verify; anything calling verify_par
+    # DIRECTLY was still exposed. One line here closes the whole class. Falls
+    # back to running in this process, which is correct and needs no children.
+    try:
+        if _mp.current_process().daemon:
+            return _serial_drain(combos, ins, gates, outputs, blocks, io)
+    except Exception:
+        pass
     swar = int(_os.environ.get("REDSTONE_VEC_SWAR", "0")) if swar is None else swar
     n = max(1, min(workers or (_os.cpu_count() or 1), len(combos)))
     shard = shard or max(1, len(combos) // (n * 4) or 1)
