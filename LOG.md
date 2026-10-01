@@ -553,3 +553,31 @@ Use: zero-wire direction-agnostic boundary driver for hier stitches.
   (bands -> merge -> staged verify; layout_retry would take a silent hour).
 - Pinned-first sub-ladder default (3 measured rungs, full ladder follows).
 STATUS: 20/21 green (alu4 promoted). cpu4 last red: same pipeline next.
+
+### cpu4 hier (Try 4): sliced, all bands green, merge at stub-connect
+- cand_cpu4hier: decode(8)/enables(3)/R0-bank(16,latches)/R1-bank(16)/bit0(17)/
+  bit1(21)/bit2(19)/carry-micro(2)/mux3(16)/carry-micro2(7-9). Dead gates
+  dropped (MEMR/MEMW/BRANCH+C_m1+C_b1, equiv-proven). OP load-shedding +
+  m30-dedup + A0B0-split + per-slice controls (all alu4 lessons reapplied).
+  128 vectors equiv OK.
+- Latch banks burn on rung-1 (symmetric power-on ring, same torch every vec)
+  but sim-gated ladder finds clean rungs (inputs_first). All 10 bands cached
+  green in ~76s parallel.
+- Min-blocks selection (was first-green): sprawl pushed merge past 3000 cells.
+- HIER_SKIP per-band rung exclusion; re-rung band-5 off a pocketed geometry.
+- Repeater relay stations (span>350 split at streets); south-around via empty
+  south margin (R1Q3 1600 cells in 0.1s); staggered margins; margin-base
+  snapshot (creep stretched south legs); atomic multi-leg strategies (partial
+  relay legs polluted later stitches — silent cascading failures).
+- LONG jogs wander (R0Q1 dies touching E0 under LONG, routes under SHORT);
+  overflights stay allowed (south legs need their hop over live runs; NO3D
+  killed them). Stitch order env (asc tried, kept desc).
+- Producer-stub OPENs: stub-connect pass (BFS driver, short legs to unreached
+  same-net cells in producer band); false walls fixed (repeaters + hops +
+  junctions in flood; R=12 cap dropped for exact check_opens mirror).
+- pos[net] = producer driver (merged pos was last-band-wins, often bare ->
+  check_opens seeded nothing and flagged connected networks).
+- STATUS: cpu4 merges (all 20 stitches land) but check_opens flags t23/C3
+  orphans; stub-connect capped at 6 legs/net (113 t23 orphans would take an
+  hour). T23 driver area under diagnosis. Engine fixes verified safe
+  (4 small bit-identical throughout; sim suite green).
