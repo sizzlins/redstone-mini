@@ -910,3 +910,43 @@ worklist (170s -> 3s on the 72k-block cpu4 merge) and a daemon guard closing a
 real fork bomb (sim_verify fanning out a Pool from inside a pool worker). I did
 not edit or commit those. Everything I committed is simvec.py, compose.py
 (perf only), and scratch/.
+
+### PART 3 -- agent 3 review, all three points conceded and acted on
+
+1. **My 5.6% SWAR figure was too precise.** Physics is ~99.8% of that benchmark
+   (eval_net_par over 82 gates = 0.05s of 1024 vectors), so a 1.2s delta is
+   measured against a component that is 0.2% of the runtime. Replicated:
+       run 1: run_scalar 21.5s / swar 22.7s  -> +5.6%
+       run 2: run_scalar 21.4s / swar 25.6s  -> +19.6%
+   run_scalar is rock-stable (0.5% apart); the SWAR number swings 12%. So the
+   penalty is consistently POSITIVE but unpredictable in size -- not noise
+   around zero, and not the tidy 5.6% I wrote. Default-OFF stands, but it rests
+   on the measured MECHANISM (6 of 8 x 128-lane shards burn the whole step
+   budget), not on the delta.
+
+2. **Cached greens were void, and the cache would have hidden it.**
+   cpu4merge3.pkl.verify.json (32/32) and alu4merge.pkl.verify.json (58/64) were
+   both produced by a pre-fix engine. The key covered recipe + build path but
+   NOT the physics, so re-running the identical command reused them silently and
+   reported a clean pass. This is the worst failure mode in this repo, because
+   one of the bugs I fixed made builds "settle dark and early" -- a build can go
+   GREEN FOR THE WRONG REASON. Fixed going forward: the key now hashes
+   sim/simvec/recipe/layout/compose/tiles/core, so any engine edit voids every
+   cache. The three existing cache files still hold pre-fix greens and must be
+   deleted by hand (the fix prevents reuse, it does not scrub what is stored).
+
+3. **The mismatch branch had never been watched succeed.** Every bad alu4 chunk
+   raised NOT-SETTLING, so the logic-MISMATCH path had zero observed successes
+   -- and I had just changed the physics that eval_net's expectation is compared
+   against. scratch/test_mismatch.py now builds a deliberately miscomputing
+   recipe (one gate's op flipped) and asserts the mismatch is reported with the
+   right shape and the right (got, want). It does: flipping a AND b to OR
+   inverts y for exactly {a=1,b=0} and {a=0,b=1}, which is what came back, and
+   nothing is mislabelled as RED. The same test drives verify_par from a
+   DAEMONIC process and completes in 0.1s in-process.
+
+4. **The daemon guard was in the wrong file.** It lived in sim.sim_verify, so
+   only callers going through sim_verify were protected; verify_par called
+   DIRECTLY (rsmp.py and anything like it) could still nest a Pool inside a pool
+   worker, which under spawn is a fork bomb rather than an exception. The check
+   now lives inside verify_par and a daemon caller runs in-process.

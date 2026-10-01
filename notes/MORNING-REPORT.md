@@ -69,15 +69,27 @@ the parent blocked on children and 7.3s was pickling.
 
 ## Two things I want to flag
 
-**1. The bit-parallel path is OFF by default, and that is a measurement.**
-At 256 vectors it came out **5.6% slower** than `run_scalar` alone (22.7s vs
-21.5s), byte-identical results. It pays only when every lane in a shard
-converges together — an all-easy 128-lane shard is ~110x — and alu4 has hard
-vectors that break that (6 of 8 x 128-lane shards burn the whole step budget).
-It stays, opt-in via `REDSTONE_VEC_SWAR=1`, as the only sub-linear option for
-high-input-count exhaustive verification. If you would rather not carry the
-code, deleting `simvec.run` + `_swar_shard` costs nothing else: `run_scalar`
-and the fail-fast driver are independent of it.
+**1. The bit-parallel path is OFF by default. Two runs, and my first number was
+too precise.** Agent 3 was right that the single 5.6% figure overstated things:
+physics is ~99.8% of that benchmark (`eval_net_par` over 82 gates is 0.05s of
+1024 vectors), so a 1.2s delta is measured against a component that is 0.2% of
+the runtime. I replicated:
+
+| run | run_scalar only | swar+fallback | delta |
+|---|---|---|---|
+| 1 | 21.5s | 22.7s | +5.6% |
+| 2 | 21.4s | 25.6s | **+19.6%** |
+
+`run_scalar` is rock-stable (21.5 / 21.4, 0.5% apart); the SWAR number swings
+(22.7 / 25.6, 12% apart). So the penalty is consistently positive but
+unpredictable in size — not noise around zero, and not the tidy 5.6% I first
+wrote. The decision rests on the *mechanism*, which is directly measured: SWAR
+pays only when every lane in a shard converges together (an all-easy 128-lane
+shard is ~110x), and 6 of 8 x 128-lane shards on alu4 burn the entire step
+budget instead. It stays, opt-in via `REDSTONE_VEC_SWAR=1`, as the only
+sub-linear option for high-input-count exhaustive verification. If you would
+rather not carry the code, deleting `simvec.run` + `_swar_shard` costs nothing
+else — `run_scalar` and the fail-fast driver do not touch it.
 
 **2. My absolute timings after the router work are contaminated.** Agent 1 runs
 cpu4 concurrently and the box saturates all 20 cores (I observed 6096s of CPU
@@ -122,15 +134,26 @@ silently mis-verified builds:
 
 ## What I need from you
 
-Nothing is blocked. Two decisions are yours:
+Nothing is blocked. Three decisions are yours:
 
-1. **Delete the SWAR path or keep it opt-in?** It is currently opt-in and
-   costs nothing when off. Deleting `simvec.run` + `_swar_shard` is clean if you
-   want less code.
+1. **Delete the SWAR path or keep it opt-in?** It is currently opt-in and costs
+   nothing when off. Deleting `simvec.run` + `_swar_shard` is clean if you want
+   less code.
 2. **alu4's oscillators** — that is a routing bug (6 loop torches, 11k churn
    cells), and it is agent 1's lane, not mine. Flagging it because it is the
    reason the CLI looked hung in the first place, and it will bite anyone
    verifying a banded recipe of this size.
+3. **Any cached greens are void.** Agent 3 caught this and was right:
+   `cpu4merge3.pkl.verify.json` (32/32) and `alu4merge.pkl.verify.json` (58/64)
+   were produced by a *pre-fix* engine, and the cache key covered recipe + build
+   path but not the physics — so re-running the identical command would have
+   reused them and reported a clean pass that meant nothing. This is worse than
+   a red build: one of the bugs I fixed made builds "settle dark and early",
+   which is a way to go **green for the wrong reason**. I have since made the
+   key include a hash of `sim/simvec/recipe/layout/compose/tiles/core`, so any
+   engine edit now voids every cache automatically — but **the existing three
+   cache files still hold pre-fix greens and should be deleted by hand**,
+   because the fix only prevents reuse going forward.
 
 ## Files
 
