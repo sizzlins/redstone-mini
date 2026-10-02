@@ -1087,3 +1087,42 @@ green, compose_check bit-identical.
   tiles. End-to-end stacking needs the 2D→3D map migration (or
   deck-segregated 2D maps per level). Anchor comment at tiles.new_ctx.
   Compiler project, correctly sized, not an overnight task.
+
+## Glass + slab transparent physics (wiki-measured, 2026-10-02)
+
+Request was vague ("vertical wires using glass, a new block called slab"),
+so the reference repos went first: HDL repos have no glass; redstone-compiler
+uses "slab" geometrically; redstone-university's ALU lesson names the actual
+idiom (glass towers + slabs as inter-floor insulation: dust sits/climbs on
+them, they refuse to pass power through). Vanilla rules verified against
+minecraft.wiki (Redstone Dust + Slab pages) before modeling:
+
+- dust sits on glass (1.16+) and upside-down slabs; top-slab dust reads from
+  below but never transmits down; slabs carry signals yet never block a
+  vertical connection; non-conductive never passes power downward; only an
+  opaque block between dusts cuts the diagonal.
+- Full-cell model: slab at (x,y,z) rests dust in the cell above (half-height
+  nuance unmodeled — logic position is what the sim reads; documented).
+
+Three sets, three roles (layout._src3/_sup3/_flood3; lids stay
+cobblestone-only): src=opaque down-sources, sup=any solid rest,
+flood=powerable crossing (no pads, no glass). sim: pwr=cob|slab in
+wake/dust-side/rep/comp/lamp/presolve/sched paths, dn-term support accepts
+sup3, up-term stays opaque-only, _check_supports accepts glass/slab rests.
+Router search sets untouched (never stamps glass/slab; hand glass invisible
+to search = conservative rejections only). Checkers/floods mirror sim
+cell-for-cell (check_shorts also fixed its y>=2 gate to y!=1 — trench slopes
+couple exactly like high ones). simvec declines glass/slab to serial
+(NotImplementedError → _serial_shard fallback, latch precedent). Export:
+colors, glass.png, slab state completion (type+waterlogged), torch mounts.
+_parse_build is a 14-tuple now (3 scratch unpacks updated; scratch/ ignored).
+
+Validation: 4 new sim oracles (tower climbs, glass dark, down-off-glass
+blocked with cobble control twin, slab power/up/lid, support gate ±), full
+suites green, compose_check bit-identical, diff_engine ALL IDENTICAL after
+re-freezing the reference (mkref — the gate was stale from six feature
+commits, not from these terms: empty-set deltas are identical by
+construction), ctrl_decode dense green, export + fallback probes green.
+Deliberately NOT done: router auto-stamping glass (supports must stay
+conservative — a glass pillar under a run that must feed down goes dark),
+panes/stained/wood slabs (still loud).

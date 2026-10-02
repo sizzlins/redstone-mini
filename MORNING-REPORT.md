@@ -1,5 +1,15 @@
 # MORNING-REPORT — finish session 2026-10-02 (all three deferred items closed)
 
+## Glass + slab: transparent vertical physics, modeled and gated
+
+Glass (`minecraft:glass`) and stone-family slabs are first-class sim citizens:
+dust climbs onto glass, glass stays dark and never feeds down, slabs carry
+power/feed dust on top, transparent lids never cut slopes. Router never
+stamps them (conservative); hand-placed shafts/floors/lids verify instead of
+hard-rejecting. 4 sim oracles lock the physics; suites green, compose_check
+bit-identical, diff reference re-frozen (was stale 6 commits), ctrl_decode
+green. Full account in LOG.md.
+
 ## cpu4: DONE, 128/128 — root cause was stale diodes, not the router
 
 R0Q0's wall is gone. Forensics (9 bounded probes, all offline against
