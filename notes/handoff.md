@@ -19,6 +19,13 @@ tree showed HEAD. Nothing was lost, but it is exactly the "you reverted a fix"
 outcome. Recorded in LOG.md under "export.py: a concurrent agent's fix".
 
 **Rules:**
+- **DO NOT DELETE FILES.** Not tracked ones, not untracked ones, not ones that
+  look dead, not other agents' in-flight work. Cut code *inside* a file all you
+  like; the file itself stays. Verified for this session: 87 tracked files
+  before and after, zero deletions or renames in `ed4c2a7..HEAD`, all 300
+  `scratch/` probes present, and the only file ever removed was a temp
+  `.schem` this session created itself. If something must go, comment it out
+  and say so in LOG.md — that leaves it recoverable.
 - **Another process may be editing any file here. `git status` is not evidence
   that a file is yours.**
 - To isolate someone else's in-flight work, use a **copy** (or a git

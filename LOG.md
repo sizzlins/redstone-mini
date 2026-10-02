@@ -1238,6 +1238,13 @@ packer reads, which is what made `sim.py` red twice (`ValueError: too many
 values to unpack`, then `KeyError: 'o'`). Their `_pack_states` was never wrong;
 the fixture was. One line, committed with their work in `9be02f8`.
 
+Standing rule from the user, recorded here and in notes/handoff.md: **do not
+delete files.** Cut code inside a file freely; the file stays. Comment out
+rather than remove. Verified for this session: 87 tracked files before and
+after, zero deletions/renames in `ed4c2a7..HEAD`, all 300 `scratch/` probes
+present, and the audit's file-level candidates (`debug.py`, `serve.py`, ~290
+scratch probes) deliberately left in place.
+
 Verified after adoption: `sim.py` green, and the real alu4 preview regenerated
 — packed rows present, zero raw vector JSON in the page, 4.0MB for 4 vectors
 (against ~1.6GB extrapolated for the full 1024).
