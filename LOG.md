@@ -1613,3 +1613,103 @@ immediately west of the band instead (empty top to bottom, 160 cells of
 approach), and check `A3B3` first -- its stub is at z=63, far inside band 4, so
 its latitude may not be reachable from a street either. Full list in
 MORNING-REPORT.md.
+### DONE: one lever column, verified 1024 vectors / 16 chunks green
+
+`REDSTONE_INPUT_BANK` now defaults **ON** and alu4 is green with every input
+lever on ONE column:
+
+    LEVERS: 10   x 3..3 (span 0)   z 3..93
+    VERIFY OK: 1024 vectors, 16 chunks green
+    60724 blocks (was 35082), size (1980,285)
+
+Five things had to be true at once. Each was found by measurement, and the
+order matters -- each one only became visible once the previous was fixed.
+
+1. **The lever column sits north of the merge**, one row per input, rows **10
+   apart**. 10 is not arbitrary: `_hop_free`'s shape is a 5-cell staircase
+   whose back and front sit two cells either side of the wire it crosses, so
+   a row needs 9 clear cells to be hoppable. At 6 apart there was no room and
+   the walk answered "compose: stitch rings for OP1".
+2. **Rows ordered by how far east each input reaches, longest row
+   SOUTHERNMOST.** A drop crosses exactly the rows south of it, so this makes
+   a drop cross only the rows of inputs reaching *further* east than the band
+   it feeds. Cut the crossings from ten to three.
+3. **Every row run is stamped UP FRONT**, straight, in open ground; only the
+   drops are routed. This puts every row/drop crossing in a drop, where the
+   hop fits. The other order put them in a 1000-cell row run, and the router's
+   detour to hop a single drop came back through a waypoint and the leg was
+   rejected ("path re-enters (332,1,-116)"). The rows are genuinely free: they
+   sit north of every gate-net margin row and no drop exists yet, so
+   `stamp_wire`'s adjacency/solid/ring/torch guards all pass.
+4. **The bank is stitched LAST and its cluster is built after `_minz0`.** A
+   full-width trunk in the north margin takes away the only open margin the
+   gate nets have -- `A3B3` died with "no ground for A3B3: (1834,50) ->
+   (1341,1)". Building the column before the loop but routing the bank after
+   every gate net gives each gate net the field it verified green with.
+   `_gate + _bank` in the stitch loop is the whole of it.
+5. **Drop columns prefer the stub's OWN column**, checked clear of solids and
+   repeaters. `_streets` is the midpoint of two band START offsets, which is
+   *inside the earlier band*, not in the reserved gap (so the first relay
+   attempt descended band 3's middle); and a gate net's 3D flyover roofs a
+   whole gap with y=1 pillars, so no fixed gap column is reliable. The stub's
+   column is `minx_band - 1`, one cell west of the tiles in the band's north
+   margin, which is empty by construction, and the input lane that leaves the
+   stub already runs down it -- so arriving from the north is the same net.
+   `_bankstreets` was left in place as the gap fallback list; `_streets` is
+   untouched so no gate net's geometry moves.
+
+### Third engine bug: `_landed`'s contiguity checker had repeaters backwards
+
+`_landed` flood-checks that every consecutive pair of a stitch path is a sim
+link, and it re-implements the repeater rule locally. Both halves were
+inverted against `sim.py:835` (which stores `rep[c] = -parsed_facing`, i.e.
+TRAVEL):
+
+- `if c in repeaters` yielded `c + stored` -- the cell BEHIND the repeater.
+  A flood has to continue out the FRONT.
+- `elif m in repeaters` tested `c == m - stored` -- the cell AHEAD.
+
+So every correctly-oriented booster counted as a break, and the error walked
+along the banked row one cell at a time as each half was corrected
+("broken link (-4,1,-115) -> (-3,1,-115)", then "(-3) -> (-2)", then
+"(813,1,-95) -> (814,1,-95)"). The third hop needed one more fix: the two
+every-8 passes (forward from the driver, backward from the load) can leave two
+boosters one cell apart where they meet, and sim reads that fine ("repeaters
+chain back-to-back (standard)"), so the front test now accepts a booster too.
+
+Harmless to the old path: `REDSTONE_INPUT_BANK=0` still merges byte identical
+to the shipped `alu4merge.pkl` (35082 blocks, `io["levers"]` equal, 4/4 smoke
+OK), re-verified after every change including this one.
+
+### Also fixed while making the failure legible
+
+- A banked leg no longer falls through to the six generic strategies. All six
+  are anchored on the driver's own cell or at the stub's latitude, which for a
+  bank means running east at the TRUNK row through six fields; every one has
+  been measured to fail on every banked leg, and running them cost ~40s per leg
+  while replacing the error that mattered.
+- `_loop_near` is skipped for the bank. It floods a +-25 box around EVERY path
+  cell, so a 1000-cell trunk run sees the whole consumer band and reports a
+  ring that was already there and already fine. `_try` wraps every strategy in
+  a before/after `_lr` diff, which is the check that can tell a NEW ring from
+  an old one.
+- `REDSTONE_HIERDUMP_FAIL` fires on a stitch failure, not just opens/finish.
+- Leg failure messages are no longer truncated to 60 chars (that alone hid
+  every bank error behind the last generic strategy's message).
+
+### Exported and installed
+
+    build_alu4bank.schem       17390 bytes   60724 placed cells, 22 palette
+    build_alu4bank.mcfunction  3999496 bytes
+    build_alu4bank.html      25100239 bytes  1024 vectors, full states
+
+The schematic is installed at
+`…\FreesmLauncher\instances\26.3\minecraft\config\worldedit\schematics\build.schem`
+and last night's 35082-block build is preserved beside it as
+`build.schem.bak-20261003-063141`. Read back and confirmed after the copy:
+60724 placed cells, 22 palette entries, `minecraft:lever` present.
+
+The old `build_alu4.html` (4.0 MB) turns out to have been exported from a
+partial states set -- its wire blob is ~29 bytes per vector, i.e. ~58 wire
+instances, not a whole build. The new page's is ~13 KB per vector, which is
+the full 25815-wire field at 4 bits each.
