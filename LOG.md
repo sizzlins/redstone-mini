@@ -1209,16 +1209,38 @@ Tracked python: 9,795 -> **9,731** lines net after all three batches
 (layout 2,288 -> 2,212, simvec 1,456 -> 927; sim.py and compose.py grew by
 the bug fixes they needed, which is not what this audit was for).
 
-### Third-party edit found mid-audit (export.py)
+### export.py: a concurrent agent's fix, and how I nearly buried it
 
-While verifying, `export.py` began changing under me: 149 uncommitted lines
-appeared (a base64/nibble state-packing layer for the HTML preview, ~139
-insertions), then 169, then it broke `sim.py`'s own self-check twice
-(`_pack_states` unpacking `st["lamps"]` as 2-tuples when sim_verify writes
-string keys; then `KeyError: 'o'`). Not written by this session, so it was set
-aside (`git checkout -- export.py`) for the test runs and left untouched.
-**It needs a decision**: it is a real feature (a 1024-vector preview page would
-otherwise be ~1.6GB of JSON) but it is uncommitted and currently red.
+Mid-audit `export.py` began changing under me — 139-169 uncommitted lines
+appearing between two commands. It was another agent's work (confirmed by the
+user), and it is a real fix: the HTML preview shipped every vector's state as
+raw JSON plus per-page coordinate→instance maps, which is ~1.6GB of page for
+alu4's 1024 vectors. The replacement packs one nibble of dust level per cell
+and one bit per repeater/torch/comparator into base64 rows, ordered to match
+the page's InstancedMesh build order so the page indexes by instance number
+and never builds a coordinate map.
+
+**What I did wrong:** I ran `git stash push -- export.py` and later
+`git checkout -- export.py` to isolate it while I ran my own test batches.
+Both were meant as temporary set-asides and I did not put it back. Nothing was
+lost (git keeps the stash and I had a copy), but for several minutes another
+agent's uncommitted fix was sitting in a stash while its working tree showed
+HEAD. Lesson, written where the next agent will hit it: **another process may
+be editing this tree.** `git status` is not evidence that a file is yours.
+Isolate with a worktree or a copy, never with `checkout --`/`stash` on a path
+you did not write.
+
+**Resolution:** restored their furthest-along version (a Temp copy; the earlier
+514-line variant is at `Temp/opencode/export_earlier_514.py` for the record),
+and instead of touching their code I fixed the one thing that was actually
+broken — sim.py's hand-rolled preview fixture omitted the comparator field the
+packer reads, which is what made `sim.py` red twice (`ValueError: too many
+values to unpack`, then `KeyError: 'o'`). Their `_pack_states` was never wrong;
+the fixture was. One line, committed with their work in `9be02f8`.
+
+Verified after adoption: `sim.py` green, and the real alu4 preview regenerated
+— packed rows present, zero raw vector JSON in the page, 4.0MB for 4 vectors
+(against ~1.6GB extrapolated for the full 1024).
 
 alu4 was never green under current physics, and the `64/64` in
 `scratch/alu4merge.pkl.verify.json` was a pre-flip ghost: re-verified today
