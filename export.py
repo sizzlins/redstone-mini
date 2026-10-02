@@ -10,7 +10,7 @@ COLORS = {"minecraft:stone": 0x8a8a8a, "minecraft:redstone_wire": 0xe02020,
           "minecraft:lever": 0x7a5a2e, "minecraft:redstone_lamp": 0xffa726,
           "minecraft:redstone_block": 0xb01010, "minecraft:repeater": 0xc7a17a,
           "minecraft:comparator": 0x9a8a7a, "minecraft:glass": 0xd8f0f0,
-          "minecraft:stone_slab": 0x9a9a9a,
+          "minecraft:target": 0xfffcf5, "minecraft:stone_slab": 0x9a9a9a,
           "minecraft:smooth_stone_slab": 0x9a9a9a,
           "minecraft:cobblestone_slab": 0x7a7a7a}
 # ponytail: textures stream from the upstream asset pack at runtime, no PNGs in this repo.
@@ -58,6 +58,7 @@ _DEFAULT_PROPS = {
     "minecraft:redstone_wall_torch": (("lit", "true"),),
     "minecraft:redstone_torch": (("lit", "true"),),
     "minecraft:redstone_lamp": (("lit", "false"),),
+    "minecraft:target": (("power", "0"),),
     "minecraft:stone_slab": (("type", "bottom"), ("waterlogged", "false")),
     "minecraft:smooth_stone_slab": (("type", "bottom"), ("waterlogged", "false")),
     "minecraft:cobblestone_slab": (("type", "bottom"), ("waterlogged", "false")),
@@ -123,9 +124,9 @@ def export_html(blocks, size, path, label="build", extra=None):
               "a": arms(x, y, z) if base(b) == "minecraft:redstone_wire" else 0}
             for x, y, z, b in blocks if not (b == "minecraft:stone" and y == 0)]
     fdir = {"east": (1, 0), "west": (-1, 0), "south": (0, 1), "north": (0, -1)}
-    # ponytail: torch mounts include glass/slab (both wall-mountable).
+    # ponytail: torch mounts include glass/slab/target (all wall-mountable).
     _MOUNT = ("minecraft:cobblestone", "minecraft:stone", "minecraft:glass",
-              "minecraft:stone_slab", "minecraft:smooth_stone_slab",
+              "minecraft:target", "minecraft:stone_slab", "minecraft:smooth_stone_slab",
               "minecraft:cobblestone_slab")
     mountxy = {(x, z) for x, y, z, b in blocks if y == 1 and base(b) in _MOUNT}
     torchinfo, repinfo, cmpinfo = {}, {}, {}

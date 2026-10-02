@@ -140,7 +140,7 @@ def _tables_from(P, inp):
     already known to matter".
     """
     dust, torch, lampat, rep, rblk, cob, repdelay, lever, lampnet, \
-        attach_rev, comp, leveratt, glass, slab = P
+        attach_rev, comp, leveratt, glass, slab, target = P
     # ponytail: transparent power sets (glass/slab feature, mirrors sim):
     # pwr holds power (cobble/stone + slabs; glass never), sup is any solid
     # rest (pwr + glass). Lid tests stay opaque-cobble. Identical tables when
@@ -212,7 +212,7 @@ def _tables_from(P, inp):
         rblk_side = False
         for d in DIRS:
             m = (x + d[0], y, z + d[1])
-            if m in dust and (-d[0], -d[1]) in dust_points(m, dust):
+            if m in dust and (-d[0], -d[1]) in dust_points(m, dust, target):
                 dd.append(m)
             if m in rep and back(m, c):
                 rr.append(m)
@@ -354,7 +354,7 @@ def _tables_from(P, inp):
         l_up[cell] = up if up in dust else None
 
     return {"dust": dust, "torch": torch, "rep": rep, "comp": comp,
-            "cob": cob, "pwr": pwr, "repdelay": repdelay, "inp": inp,
+            "cob": cob, "pwr": pwr, "target": target, "repdelay": repdelay, "inp": inp,
             "d_below": d_below, "d_dirs": d_dirs,
             "c_dust": c_dust, "c_rep": c_rep, "c_torch": c_torch,
             "c_lev": c_lev, "c_rblk": c_rblk, "c_up": c_up,
@@ -914,7 +914,7 @@ def _comp_out_s(c, st, pw, pbs, tl, ron, con, vec):
 
 
 def run_scalar(vec, ctx, init=None, until=None, tick_cap=None, step_cap=None,
-               stall=None, snap_at=None):
+               stall=None, snap_at=None, target_hits=None):
     """One vector, scalar, over the precomputed tables.
 
     Returns sim._run_vec's 6-tuple exactly (lamps, live, torch, ticks, rep,
@@ -945,7 +945,15 @@ def run_scalar(vec, ctx, init=None, until=None, tick_cap=None, step_cap=None,
         raise NotImplementedError(
             "run_scalar: no latch pre-solve; use sim._run_vec when init is given")
     dust, torch, lampat, rep, rblk, cob, repdelay, lever, lampnet, \
-        attach_rev, comp, leveratt, glass, slab = ctx
+        attach_rev, comp, leveratt, glass, slab, target = ctx
+    if target_hits:
+        # A projectile hit is time-dependent; the fixed tables only model the
+        # target's idle opaque-conductive role. Validate first, then let the
+        # caller fall back to sim._run_vec rather than freeze a transient.
+        from sim import _target_shots
+        _target_shots(target_hits, target)
+        raise NotImplementedError(
+            "run_scalar: no timed target hits; use sim._run_vec")
     pwr = cob | slab
     st = _tables(ctx)
     pw, pb, pbs = {}, {}, {}

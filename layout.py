@@ -52,11 +52,11 @@ _OPP = {(1, 0): (-1, 0), (-1, 0): (1, 0), (0, 1): (0, -1), (0, -1): (0, 1)}
 # Three roles, three sets — collapsing them reintroduces the exact bugs the
 # split fixes, so read twice before touching:
 #   _src3  opaque supports that can SOURCE downward power (cobble/stone/
-#          double slabs). Sim's up-term needs the upper dust on conductive.
+#          double slabs/targets). Sim's up-term needs the upper dust on conductive.
 #   _sup3  any solid rest a slope may legally sit on (_src3 + glass +
 #          single slabs). Sim's dn-term accepts glass/slab rests.
 #   _flood3 blocks a loop-flood may cross assuming powered (cobble + all
-#          slabs; NOT stone pads, which tile the field, and NOT glass,
+#          slabs + targets; NOT stone pads, which tile the field, and NOT glass,
 #          which never holds power).
 # Lids are deliberately NOT here: only opaque cobblestone cuts a diagonal
 # (transparent never does), so every `not in cob` lid test stays exactly as
@@ -65,6 +65,7 @@ _OPP = {(1, 0): (-1, 0), (-1, 0): (1, 0), (0, 1): (0, -1), (0, -1): (0, 1)}
 # conservative rejections only, never silent wrongness.
 _SLAB_BIDS = {"minecraft:stone_slab", "minecraft:smooth_stone_slab",
               "minecraft:cobblestone_slab"}
+_TARGET_BID = "minecraft:target"
 
 
 def _slab_double(bid):
@@ -73,7 +74,8 @@ def _slab_double(bid):
 
 def _src3(blocks):
     return {(x, y, z) for x, y, z, bid in blocks
-            if base(bid) in ("minecraft:cobblestone", "minecraft:stone")
+            if base(bid) in ("minecraft:cobblestone", "minecraft:stone",
+                             _TARGET_BID)
             or _slab_double(bid)}
 
 
@@ -88,16 +90,16 @@ def _ig3(blocks):
 def _sup3(blocks):
     return {(x, y, z) for x, y, z, bid in blocks
             if base(bid) in ("minecraft:cobblestone", "minecraft:stone",
-                             "minecraft:glass") or base(bid) in _SLAB_BIDS}
+                             "minecraft:glass", _TARGET_BID) or base(bid) in _SLAB_BIDS}
 
 
 def _flood3(blocks):
     return {(x, y, z) for x, y, z, bid in blocks
-            if base(bid) == "minecraft:cobblestone"
+            if base(bid) in ("minecraft:cobblestone", _TARGET_BID)
             or base(bid) in _SLAB_BIDS}
 
 
-def dust_points(cell, dust):
+def dust_points(cell, dust, targets=frozenset()):
     """The directions a dust cell points, i.e. where it can power a SIDE block.
 
     Vanilla (minecraft.wiki, Redstone Dust -> Placement / Behavior): powered
@@ -120,22 +122,26 @@ def dust_points(cell, dust):
     ponytail: this lives here because layout owns the net map that defines the
     shape, and sim.py already imports from here, so the sim's block-power test
     and the exporter's blockstate writer share one table and cannot drift.
-    Not yet consumed by either: wiring it into the sim changes verdicts, and
-    that waits on the in-game end-cell test (see handoff).
+    Targets are connection endpoints even when idle (wiki Target: a power
+    source redirects adjacent dust toward itself). Empty by default, so every
+    target-free shape is unchanged.
     """
     live = [d for d in DIRS
             if (cell[0] + d[0], cell[1], cell[2] + d[1]) in dust]
-    if not live:
+    ends = [d for d in DIRS
+            if (cell[0] + d[0], cell[1], cell[2] + d[1]) in targets]
+    links = live + ends
+    if not links:
         return frozenset(DIRS)                             # cross
-    if len(live) == 1:
-        return frozenset((live[0], _OPP[live[0]]))         # end: its own axis
-    return frozenset(live)                                 # line / corner / T
+    if len(links) == 1:
+        return frozenset((links[0], _OPP[links[0]]))       # end: its own axis
+    return frozenset(links)                               # line / corner / T
 
 
 _DIRNAME = {(1, 0): "east", (-1, 0): "west", (0, 1): "south", (0, -1): "north"}
 
 
-def wire_bid(cell, dust):
+def wire_bid(cell, dust, targets=frozenset()):
     """Full wire block id: base id plus pointing states from dust_points().
 
     The game stores a wire's connection shape per cell, so the FILE must
@@ -145,7 +151,7 @@ def wire_bid(cell, dust):
     ponytail: flat dirs only (an elevated slope link bakes as none until the
     game updates it — needs a shared slope predicate if 3D ever ships);
     """
-    pts = dust_points(cell, dust)
+    pts = dust_points(cell, dust, targets)
     return "minecraft:redstone_wire[" + ",".join(
         f"{_DIRNAME[d]}={'side' if d in pts else 'none'}" for d in DIRS) + ",power=0]"
 
@@ -787,14 +793,18 @@ def finish_assembly(blocks, solid, wires, rings, junctions, repeaters, pos):
     repeaters = {(x - minx, y, z - minz): v for (x, y, z), v in repeaters.items()}
     W, D = maxx - minx + 1, maxz - minz + 1
     out = list(blocks)
-    # ponytail: one coordinate, one block. A wire stamped into a glass/slab
-    # cell (or any double-stamp the guards missed) pastes as one block while
-    # the sim sees two — silent wrongness. Loud here instead. O(N).
+    # ponytail: one cell, one block ID. A wire stamped into a glass/slab cell
+    # (or any mix the guards missed) pastes as ONE block while the sim sees
+    # two — silent wrongness. Loud here instead. The same block listed twice
+    # is NOT a fault: the world keeps one copy either way, and the router
+    # genuinely emits a duplicate pillar (measured: cobble vs cobble at
+    # (24,2,11) on the gate-fed D-latch, seed None). O(N).
     _seenxy = {}
     for _b in out:
         _k = (_b[0], _b[1], _b[2])
-        if _k in _seenxy:
-            raise RuntimeError(f"duplicate block at {_k}: {_seenxy[_k]} vs {_b[3]}")
+        _prev = _seenxy.get(_k)
+        if _prev is not None and _prev != _b[3]:
+            raise RuntimeError(f"duplicate block at {_k}: {_prev} vs {_b[3]}")
         _seenxy[_k] = _b[3]
     # ponytail: one component per cell; a repeater wins over dust. The router
     # can re-stamp a wire label onto a tile repeater cell (tile dels it, route
@@ -802,6 +812,10 @@ def finish_assembly(blocks, solid, wires, rings, junctions, repeaters, pos):
     # holds itself lit across phases (D-latch seeds 4/5). The world gets one
     # block, so the sim must see one.
     dust = set(wires) - set(repeaters)
+    # Hand targets redirect adjacent dust toward themselves even when idle, so
+    # bake their endpoint into the shipped wire state (no router-stamped
+    # targets exist, hence no behavior change for generated builds).
+    _tgt = {(x, y, z) for x, y, z, bid in out if base(bid) == _TARGET_BID}
     # ponytail: loop-flood crosses what can hold power (cobble + slabs;
     # never stone pads, never glass — see _flood3).
     _cob = _flood3(out)
@@ -812,7 +826,7 @@ def finish_assembly(blocks, solid, wires, rings, junctions, repeaters, pos):
     for (x, y, z), net in wires.items():
         if (x, y, z) in repeaters:
             continue
-        out.append((x, y, z, wire_bid((x, y, z), dust)))
+        out.append((x, y, z, wire_bid((x, y, z), dust, _tgt)))
     for (x, y, z), (net, facing) in repeaters.items():
         out.append((x, y, z, f"minecraft:repeater[facing={facing},delay=1]"))
     # ponytail: stone only where a ground component sits (flat worlds have
@@ -2030,6 +2044,24 @@ if __name__ == "__main__":
     assert dust_points((1, 1, 0), _T) == frozenset({(-1, 0), (1, 0), (0, 1)}), \
         "T points at its three links"
     print("pointing ok: cross/end/line/corner/T per wiki Redstone Dust")
+    # ponytail: a Target block is a dust CONNECTION ENDPOINT even while idle
+    # (wiki Target: being a power source redirects adjacent dust toward it).
+    # It is the only block that joins a wire's shape without being dust, so
+    # it is asserted directly: end cell beside a target points BOTH ways, and
+    # the same cell with no target keeps the plain end shape.
+    _TGT = frozenset({(1, 1, 0)})
+    _SOLO = {(0, 1, 0)}
+    assert dust_points((0, 1, 0), _SOLO, _TGT) == frozenset({(1, 0), (-1, 0)}), \
+        "dust beside a target points at it"
+    assert dust_points((0, 1, 0), _SOLO) == frozenset(DIRS), \
+        "no target: still a cross"
+    assert "east=side" in wire_bid((0, 1, 0), _SOLO, _TGT), wire_bid((0, 1, 0), _SOLO, _TGT)
+    _TIP = {(0, 1, 0), (0, 1, -1)}
+    assert dust_points((0, 1, 0), _TIP, _TGT) == frozenset({(0, -1), (1, 0)}), \
+        "a wire link plus a target is a corner through both"
+    assert dust_points((0, 1, 0), _TIP) == frozenset({(0, -1), (0, 1)}), \
+        "no target: the T is unchanged"
+    print("target-endpoint ok: idle target redirects the wire, no target is bit-identical")
     # ponytail: the export round-trip — the FILE is the shipping gate and the
     # sim never reads it, so a bare-id regression would go green everywhere
     # and ship dots. Export a real build, read the .schem back, assert every
