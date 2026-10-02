@@ -1126,3 +1126,28 @@ construction), ctrl_decode dense green, export + fallback probes green.
 Deliberately NOT done: router auto-stamping glass (supports must stay
 conservative — a glass pillar under a run that must feed down goes dark),
 panes/stained/wood slabs (still loud).
+
+## The three conservative holds, worked (2026-10-02)
+
+1. **simvec tables: DONE.** _tables_from precomputes pwr/sup sets; new side
+   code 8 = slab (powerable like 4, transparent unlike it: cup keeps
+   `code == 4`, cdn lid keeps `code != 4`, power terms take both); wake
+   vertices/edges, r_src, side(), l_cob, ncells, both sched loops extended.
+   Tri-engine probe: serial == scalar == SWAR on a glass tower. diff_engine
+   ALL IDENTICAL (empty deltas on glass-free builds). No refusal left.
+2. **Search awareness: DONE.** _support gains reuse (ownerless hand glass/
+   slab → None, stamp nothing); astar gains reuse/ig (slopes onto hand
+   glass legal, wire INTO glass refused at every level); _ig3 helper.
+   Probe: astar climbs a glass gate stamping nothing (vs a colliding pillar
+   without reuse). route()/lwire threading deliberately SKIPPED: both
+   builders start from empty fields and never stamp glass, so a threaded
+   set is provably always empty — direct astar callers pass ig explicitly.
+   finish_assembly now rejects duplicate coordinates (the whole double-block
+   class, O(N), proven safe by the full suite).
+3. **Router auto-stamp: MEASURED ZERO, not built.** Provably-safe rule would
+   be glass iff all 4 diagonal-below cells are immutably occupied (else a
+   future dust could need down-feed). Audit on cpu4merge3: 0 of 4709
+   off-ground pillars qualify (corridors are open by construction). YAGNI:
+   no code for zero fires. Honest boundary: auto-glass has no routing
+   payoff in clean fields (coupling avoidance, not stamping, is what
+   shortens routes); its value is hand-designed insulation, which verifies.

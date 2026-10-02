@@ -4,11 +4,46 @@
 
 Glass (`minecraft:glass`) and stone-family slabs are first-class sim citizens:
 dust climbs onto glass, glass stays dark and never feeds down, slabs carry
-power/feed dust on top, transparent lids never cut slopes. Router never
-stamps them (conservative); hand-placed shafts/floors/lids verify instead of
-hard-rejecting. 4 sim oracles lock the physics; suites green, compose_check
-bit-identical, diff reference re-frozen (was stale 6 commits), ctrl_decode
-green. Full account in LOG.md.
+power/feed dust on top, transparent lids never cut slopes. Hand-placed
+shafts/floors/lids verify instead of hard-rejecting. 4 sim oracles lock the
+physics; suites green, compose_check bit-identical, diff reference re-frozen
+(was stale 6 commits), ctrl_decode green. Full account in LOG.md.
+
+### The three conservative holds — all worked, none declined (bc446af)
+
+1. simvec no longer refuses: new side code 8 = slab, power terms take 4 and
+   8, cup/cdn stay cobble-only (slab is powerable but transparent), wake
+   vertices/edges + r_src + side() + l_cob + ncells + both scheduler loops
+   extended. Tri-engine probe: serial == scalar == SWAR on a glass tower;
+   diff_engine ALL IDENTICAL (the delta is empty on glass-free builds, so the
+   bit-identity gate alone could never have caught a mistake here).
+2. The search knows glass/slab: `_support(..., reuse=)` returns None (stamp
+   nothing) over ownerless hand glass/slab, and `astar(..., reuse=, ig=)`
+   slopes onto them while refusing to route *into* them at any height.
+   finish_assembly now rejects duplicate coordinates, so the whole
+   two-blocks-one-cell paste class is loud. `route()` threading deliberately
+   skipped: both builders start from empty fields, so the set is provably
+   always empty — direct astar callers pass it explicitly.
+3. Router auto-glass: measured, not built. The provably-safe rule (glass iff
+   all four diagonal-below cells are immutably occupied) fires 0 times on
+   cpu4merge3 — 0 of 4709 off-ground pillars qualify, because corridors are
+   open by construction. Zero-fire code is YAGNI, so the honest answer is the
+   measurement plus the search-awareness above: glass pays off as hand-placed
+   insulation, and the router's glass payoff is *avoiding* couplings, not
+   stamping pillars.
+
+### Slab halves: checked against the wiki, full-cell is the correct model
+
+minecraft.wiki/w/Redstone_Dust: dust is placed on "conductive blocks ...
+upside-down slabs, glass, upside-down stairs"; the block *between* two dust
+must be air or non-conductive; downfeed needs the higher dust "on a
+conductive block one level higher", and "the signal can never go down from
+slabs". At integer-block granularity all three hold for a full-cell slab: the
+slab owns its own cell so anything resting on it is necessarily the cell
+above (both halves), the slab is transparent for connections, and it never
+passes power down. `export.py` emits explicit `type=bottom` for hand slabs, so
+half-height never has to be modelled — the only slab states we accept are the
+transparent single ones; `type=double` is an opaque full block by design.
 
 ## cpu4: DONE, 128/128 — root cause was stale diodes, not the router
 
