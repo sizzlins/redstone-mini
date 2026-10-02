@@ -1152,7 +1152,73 @@ panes/stained/wood slabs (still loud).
    payoff in clean fields (coupling avoidance, not stamping, is what
    shortens routes); its value is hand-designed insulation, which verifies.
 
-## alu4 root cause: a booster that feeds a tile torch which feeds it back (2026-10-02)
+## Repo-wide over-engineering audit (2026-10-02 night, applied in 3 batches)
+
+Committed before starting: `629f262`. Each batch verified with sim.py +
+layout.py + compose_check.py + diff_engine, then alu1 spot-check, then the full
+alu4 1024-vector sweep. Three commits, no behaviour change (alu1 geometry
+identical at 13,300 blocks, ctrl_decode 5,499).
+
+**b1 `68dd094` (-85 lines).** Dead flexibility, found by asking who actually
+passes the thing:
+- `_support(..., reuse=)` and `astar(..., reuse=, ig=)` — the ONLY two
+  occurrences in the whole tree were the definitions themselves. No caller,
+  no test, no probe. Cut with `_ig3`.
+- `_unused_ok_reference` and `_unused_touches_foreign_reference` in astar:
+  70 lines of second implementation of the hot-path rules, reachable only
+  under `REDSTONE_XCHECK`, which nothing in the repo ever sets. They were the
+  pre-optimization predicates kept beside the optimized ones.
+- Three inline copies of the torch-attach map while `core.TORCH_BACK` already
+  existed and was imported by two modules. sim.py did not even import it.
+  This is the drift class that produced the facing bug earlier tonight.
+
+**b2 `a197c86` (-601 lines, simvec 1456 -> 855).** The bit-parallel SWAR
+engine: `run()`, `_swar_shard`, `_Ops`, `Indecisive`, `eval_net_par`,
+`lanes_of` and the five lane-wise rules. Its own comment recorded the verdict
+(22.7s vs 21.5s on alu4 = 5.6% SLOWER, byte-identical), it was default-off,
+nothing enabled it, and it could not terminate on a hunting vector at all
+(sim's torch-burnout rule was never reimplemented) which is why it needed
+shards, a 4M-step budget and a fallback path. `verify_par` lost the whole
+retry/re-dispatch branch that existed only to feed it. The module docstring
+advertised SWAR as the reason the file exists; it now describes the table
+engine, and the name is documented as historical. Restore point recorded in
+the driver note (68dd094) with the trigger: a 12+ input recipe making 2^n
+unaffordable.
+
+**b3 `17adc59` (-7 lines, 14-field parse tuple).** `lampat` was collected by
+the parser and read by nothing — six unpack sites just named it. One less
+field to thread through every future edit of `_parse_build`.
+
+**Not applied, on purpose:**
+- `scratch/` holds 299 files / 28,036 lines of one-off probes. It is
+  gitignored (0 lines in the repo), and it is the live tooling for the alu4
+  and cpu4 pipelines plus every forensic probe in this log. Pruning it is a
+  judgement call about evidence, not dead code — the six tools that matter
+  (hier_bands, hier_stitch, verify_par, mkref, diff_engine, dense_status)
+  are the ones to keep, and the other ~290 are dead. Worth a decision when
+  nobody is relying on them for a bisect.
+- The ~40 `REDSTONE_*` env knobs that nothing sets: several are documented
+  escape hatches (band depth for a sealer that has not appeared yet), so
+  cutting them removes capability, not complexity.
+- Delegating-wrapper parameters (`tiles.stamp_cobble(o, ...)`, `tiles.ring`,
+  `export.build_stamp(label, nblocks)`): each names the one value it forwards.
+  Removing them means touching every call site for no behaviour change —
+  pure churn, so they stay.
+
+Tracked python: 9,795 -> **9,731** lines net after all three batches
+(layout 2,288 -> 2,212, simvec 1,456 -> 927; sim.py and compose.py grew by
+the bug fixes they needed, which is not what this audit was for).
+
+### Third-party edit found mid-audit (export.py)
+
+While verifying, `export.py` began changing under me: 149 uncommitted lines
+appeared (a base64/nibble state-packing layer for the HTML preview, ~139
+insertions), then 169, then it broke `sim.py`'s own self-check twice
+(`_pack_states` unpacking `st["lamps"]` as 2-tuples when sim_verify writes
+string keys; then `KeyError: 'o'`). Not written by this session, so it was set
+aside (`git checkout -- export.py`) for the test runs and left untouched.
+**It needs a decision**: it is a real feature (a 1024-vector preview page would
+otherwise be ~1.6GB of JSON) but it is uncommitted and currently red.
 
 alu4 was never green under current physics, and the `64/64` in
 `scratch/alu4merge.pkl.verify.json` was a pre-flip ghost: re-verified today
