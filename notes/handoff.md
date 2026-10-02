@@ -1,252 +1,195 @@
-# handoff — cpu4 (2026-10-01, autonomous session)
+# handoff — 2026-10-02 night session (alu4 green, target block, over-engineering audit)
 
 Repo: `D:\redstone-mini`, branch `phase2-design`.
-Last commit: `f376fd8`. Working tree clean.
+Last commit: `7af4caa`. Working tree clean apart from the two pre-existing
+`build.mcfunction.bak` / `build.schem.bak`, which nobody may delete or commit.
 
 ---
 
-## ⚠️ Read this first: shared working tree
+## ⚠ Read this first: the working tree is SHARED
 
-**Another agent is working in this repo** (`simvec.py`, sim optimisation). Two
-incidents this session, both mine, both harmless but both avoidable:
+Another agent has been editing this repo **during** this session. Concretely:
+`export.py` gained 139-169 uncommitted lines between two of my commands.
 
-1. I deleted `alu4.txt` and `simvec.py` in a "clean up stray files" step. Both
-   were **0 bytes** at the time (verified with `Get-Content` first), so no work
-   was lost — but I removed files I did not create.
-2. My commit `f376fd8` **swept in the other agent's staged `simvec.py`**
-   (746 lines) alongside my `compose.py` change. Nothing lost, but it is now
-   inside my commit and their next commit may conflict.
+**What I got wrong, so the next session doesn't repeat it:** I ran
+`git stash push -- export.py` and then `git checkout -- export.py` to isolate
+that file while running my own verification. Both were meant to be temporary and
+I did not put it back, so another agent's bug fix sat in a stash while their
+tree showed HEAD. Nothing was lost, but it is exactly the "you reverted a fix"
+outcome. Recorded in LOG.md under "export.py: a concurrent agent's fix".
 
-**Rules for the next session here:**
-- Never `rm` or `git clean` anything you did not create.
-- `git add <file>` then `git commit` sweeps up *whatever else is staged*.
-  Use `git commit -- <paths>` or `git status` first.
-- Do not edit `simvec.py`.
+**Rules:**
+- **Another process may be editing any file here. `git status` is not evidence
+  that a file is yours.**
+- To isolate someone else's in-flight work, use a **copy** (or a git
+  worktree), never `checkout --` / `stash push` on a path you did not write.
+- Never `rm` / `git clean` anything you did not create.
+- `git add <file>` then `git commit` sweeps up *whatever else is staged*. Use
+  `git commit -- <paths>`, and `git status` first.
+- Before assuming a file is stale, check `LastWriteTime` and `git diff` again.
 
 ---
 
 ## Goal
 
-**DONE = every recipe in `recipes/` generates and verifies.** `cpu4` is the
-only red one. It is built as a 10-band hierarchical layout from
-`scratch/cand_cpu4hier.txt` (equivalence-checked over all 128 vectors).
-Secondary goal (already exceeded long ago): 11 new dense recipes banked.
+**Reached this session:** the three glass/slab holds the user rejected, a full
+Target-block implementation, `alu4` green end to end and exported, and a
+repo-wide over-engineering audit applied.
+
+**Still the standing goal:** every recipe in `recipes/` generates, verifies and
+exports. `alu4` and `cpu4` are done; the rest are green. The remaining
+*architectural* goal is true 3D tile stacking (scoped, not built — see Next).
 
 ---
 
 ## Current state
 
-`cpu4` merge **completes** and reaches the simulator:
-
-```
-$ python scratch/hier_stitch.py scratch/cpu4bands2.pkl scratch/cand_cpu4hier.txt 300
-MERGE 72055 blocks (3376, 287)
-SMOKE 0000000 OK
-SMOKE 1111111 OK
-SMOKE 0101010 MISMATCH ['Y1']
-```
-
-That is up from "torch burnout, no output at all" at the start of the session.
-The remaining failure is one output, `Y1`.
-
-Everything else in the repo is green and was **re-gated this session** (the sim
-physics and the router both changed, so the old caches proved nothing):
-
-| gate | result |
-|---|---|
-| `python recipe.py` | pass |
-| `python sim.py` | pass (2 new oracles added) |
-| `scratch/compose_check.py` | bit-identical: 144 / 322 / 224 / 214 |
-| `scratch/dense_status.py` | OK: example_and, latch_sr, mux2, sub2, micro1, decode3, cmp2 |
-| `scratch/verify_par.py scratch/alu4merge.pkl recipes/alu4.txt` | **VERIFY OK 1024/1024** |
-
-alu4 was re-stitched **from scratch** (35516 blocks, was 34734) and re-verified
-across all 1024 vectors. `mux2` grew 4226 → 5387 blocks (planting fewer boosters
-lengthens routes; still correct).
-
----
-
-## What changed
-
-### `sim.py` — three physics fixes, each from a measured failure
-
-1. **An undriven SR latch must hold, not hunt.** From a fully dark start a NOR
-   latch is symmetric in this model: both torches fire, hunt, burn out
-   (a lone `LATCH` burned out on `S=R=0`; cpu4's R1 bank rang forever at
-   churn=14736). Vanilla breaks the symmetry with update-order skew; `eval_net`
-   already assumes hold-0. New `_latch_hold_seed` presets `~qb` dust **and** its
-   driver torch — *each alone was measured to fail*. A power-on pre-roll
-   (`_solve`) iterates dust/blocks/torches to their tick-0 fixpoint so no gate
-   output pulses on tick 1; that pulse reached an idle latch's S/R at T~9 and
-   broke the seeded hold. Latch-free builds take a byte-identical path.
-   *Oracle added to `sim.py` __main__.*
-2. **A lever powers its ATTACHMENT block only.** The old all-sides term let a
-   floor input lever strongly power foreign cobble beside it. D3's lever drove
-   cpu4's R0Q0 stitch run to 15, forcing R0Q2 high whenever `D3=1` — bit-0
-   AND/XOR wrong. `_parse_build` now records `leveratt` from `face`/`facing` and
-   returns a **12-tuple** (three scratch probes unpacked 11; all updated).
-   *Oracle added (floor lever must NOT power the block beside it).*
-3. `_ends_ok`-style helpers and the tiebreaker fixes are described in the
-   `ponytail:` comments at each site.
-
-### `compose.py` — five router fixes
-
-1. **Never boost a tile's own dust** (`own=` = the placement-end wire snapshot).
-   This was the `Y2` root cause: `place_xor` merges two comparator tails
-   through two *facing* diodes, so a booster landing between them faces the
-   wrong way and cuts the merge. **AL_X2 went dark in the merged build while
-   band 6 simmed green standalone** — a band sim runs on `out`, and boosting
-   happens *after*. The tile's own run is delay-critical by construction.
-2. **Every stitch must DELIVER** onto its stub by sim-conducting links
-   (`_landed`). `lwire` stops at the target xz whatever y it arrived with, so an
-   elevated end over a lidded/unsupported stub was dark in sim while every
-   checker stayed silent. One bounded last-mile `lwire` before giving up; a
-   failed strategy restores, because its dust otherwise poisons every later one.
-3. **Contiguity**: every consecutive pair of *fresh* path cells must be a sim
-   link. `check_opens` floods the whole field from pos/levers/torches, so one
-   break orphans everything past it — while the stub flood (seeded at the path)
-   reported 0 orphans. Measured: `AL_C3` died at `check_opens` on 6 cells the
-   stitch never joined. *Only fresh cells are judged*: a step inside a tile is
-   that tile's own construction, and the producer hand-off is the stub-connect
-   pass's job.
-4. **Boost inside `_try`**, with a ring check either side. The gate used to run
-   before `_plant_repeaters`, so a booster landing where a leg doubles back on
-   an *earlier leg of the same net* (R1Q3 feeds two bands, legs chain
-   stub-to-stub) closed a ring nobody was watching, and `finish_assembly` killed
-   the merge thousands of blocks later. Inside `_try` a failure rolls back and
-   the **next strategy** runs. Also: a run must be a *simple* path (an adjacent
-   repeat at a leg joint is the only legal one), and the stub-connect pass got
-   the same post-boost gate it never had.
-5. **The merge dump carries its own shift** (`"shift"` key) — see the trap below.
-
-Smaller, same theme: relay stations only on straight runs (a station is a
-diode; on a corner it rectifies the turn away — this orphaned 1100+ `E1` cells),
-a head-boost diode (a latch Q tail starts at level ~5 and dies in 5 cells), and
-`_ends_ok` (a booster may not fire into foreign dust).
-
----
-
-## What failed (and why it was wrong)
-
-Do not re-run any of these.
-
-| Attempt | Outcome | Why it was wrong |
+| build | verdict | evidence |
 |---|---|---|
-| Widening the head-boost to climbing heads (`py == cy == ny` → `cy == ny`) | Whole merge re-routed (76444 → 78193 blocks), **worse**: both register banks went dark, `Y1` joined `Y2` as red | A booster planted on a climbing head becomes a one-way trap |
-| "The stale-lid purge deletes band cobble" | Restoring 3388 cells changed the verdict | **Frame error** (below). The purge removes 0 |
-| "230 tile torches are missing from the merged build" | **Retracted** — all 230 are present | Same frame error; my offset was wrong |
-| Reverting `REDSTONE_NOLAND` / `REDSTONE_PURGE_LIDS` | Both reverted, no value added | Diagnostic knobs that proved nothing; left out |
-| `HIER_SKIP` to move bands 5/6 | No effect | `hier_bands.py` picks the **smallest** green rung. Use `REDSTONE_HIER_RUNGS` |
+| **alu4** (10 inputs, 1024 vectors) | **GREEN** | `scratch/alu4merge.pkl` + `verify.json` 16/16 green, fp `363f613324b5` |
+| cpu4 (7 inputs, 128 vectors) | GREEN | `scratch/cpu4merge3.pkl` 16/16 green, fp `47fb2a6e0efb` |
+| alu1 / ctrl_decode | GREEN | 13,300 and 5,499 blocks, `sim_verify` clean |
+| example_and / 2gates / latch_sr / xor | GREEN | `scratch/compose_check.py` |
+| suites | GREEN | `sim.py`, `layout.py`, `diff_engine` ALL IDENTICAL |
 
-### The frame error that cost two sessions
+Canonical caches (all current-engine): `alu4bands.pkl`, `alu4merge.pkl` (+verify
+json), `alu4_build.pkl` (diff_engine fixture), `cpu4bands2.pkl`,
+`cpu4merge3.pkl`. Pre-flip dead geometry kept for forensics as
+`alu4*.preflip.pkl`.
 
-In a merge dump, `solid` / `wires` / `repeaters` / `rings` / `stitched` are
-**merge space**; `blocks` and `io` are **block space**. `finish_assembly`
-shrink-wraps by `(3 - min(OCC))` per axis, where **`OCC` is solid AND wires**:
+**Exported for the user** (verified by reading the written file back):
+- `…\FreesmLauncher\instances\26.3\minecraft\config\worldedit\schematics\build.schem`
+  — 35,082 blocks; their previous file preserved as `build.schem.bak-20261002-210028`.
+- `D:\redstone-mini\build_alu4.mcfunction` (2.28 MB)
+- `D:\redstone-mini\build_alu4.html` (4.0 MB, packed states, interactive)
 
-```
-block = merge + (3 - min_merge_x, 3 - min_merge_z)
-```
+Reproduce alu4 from scratch (~10 min cold, ~25 min with a cold band ladder):
 
-For `cpu4merge3.pkl` that is `merge + (2, 86)`. I used `(-2, -26)` and built
-two entire sessions of forensics on it. Comparing a band's `out`
-(finish_assembly'd on its own) against the merged `blocks` is a *second* frame
-error and manufactures a phantom "3388 cobble deleted" (really 17
-boundary-input levers, by design).
-
-**This is now fixed at the source:** the dump carries `"shift"`. Read it:
-
-```python
-d = pickle.load(open('scratch/cpu4merge3.pkl', 'rb'))
-dx, dz = d['shift']
-```
+    python scratch/hier_bands.py scratch/cand_alu4hier.txt scratch/alu4bandsNEW 150
+    python scratch/hier_stitch.py scratch/alu4bandsNEW.pkl scratch/cand_alu4hier.txt 480 scratch/alu4mergeNEW.pkl
+    python scratch/verify_par.py scratch/alu4mergeNEW.pkl scratch/cand_alu4hier.txt 16 2400 16 16
 
 ---
 
-## Files touched
+## What changed (16 commits, `ed4c2a7..7af4caa`)
 
-- `sim.py` — `_latch_hold_seed`, power-on pre-roll (`_solve`), `leveratt`
-  (12-tuple), two new oracles.
-- `compose.py` — `own=` guard, `_landed`, `_try`, `_ends_ok`, relay corner
-  guard, head boost, ring window fix, dump `shift`.
-- `scratch/hier_stitch.py` — pass the hold seed to the smoke vectors.
-- `scratch/verify_par.py` — same.
-- `scratch/compdiag.py`, `scratch/latchlamp.py`, `scratch/probe_repback.py` —
-  11-tuple → 12-tuple unpack fix.
-- `LOG.md`, `notes/MORNING-REPORT.md`, `notes/handoff.md`.
-- **Not touched:** `simvec.py` (other agent).
+**Glass/slab, the three rejected holds** — `bc446af`, `ed4c2a7`
+- simvec stopped declining: slab is a new side code 8 (powerable like cobble,
+  transparent unlike it); tri-engine probe green.
+- The search reuses hand glass/slab as supports and refuses to route *into*
+  them; `finish_assembly` now rejects duplicate cells.
+- Auto-stamping glass measured **zero** fires on cpu4 (0 of 4709 off-ground
+  pillars qualify) — deliberately not built; documented instead.
+- Slab halves checked against the wiki: full-cell is correct at integer
+  granularity.
+
+**Target block** — `fd0aaeb`, `2826ed6`, `baebddf`, `37b164c`
+- Opaque conductive cube; timed projectile emission at the **exact** 1..15 hit
+  level (4 redstone ticks ordinary, 10 for arrow/trident = the wiki's 8/20 game
+  ticks); dust redirection wired into both the sim's block-power term and
+  `wire_bid`. Stimulus is an argument (`target_hits=` / third `sim_pulse`
+  schedule item), never a block state — a bid with `power=5` is rejected.
+
+**alu4: two root-cause bugs** — `f825af0`, `8c9c510`, `629f262`
+1. A booster could push power into a tile torch that fed its own net back — a
+   6-node ring that latched the band-3 handoff (15 of 24 vectors hunting).
+   `_closes_loop`/`_loop_rep`/`_ends_ok` cannot see it: they reason about dust,
+   and this ring leaves the dust *through a torch*. Fixed in `compose._ends_ok`,
+   layout's booster loop, and loudly in `finish_assembly`.
+2. **Dust stacked on dust** — 24 cells held cobblestone *and* wire with a dust
+   cell above resting on what became a wire. The sim read both blocks and
+   called it supported; vanilla refuses dust on dust, so all 24 would have
+   popped on paste while every verdict stayed green. Causes: the duplicate
+   guard ran *before* wires were appended (blind to the whole wire class), and
+   compose's bridge/hop sites stamped supports without an occupancy check.
+   Found by the export round-trip, not by the sim.
+
+**Over-engineering audit** — `68dd094`, `a197c86`, `17adc59`, `d70ed89`, `5077f6d`
+- Cut the bit-parallel SWAR engine (simvec 1456 → 927 lines): measured 5.6%
+  *slower* than the table engine on alu4, default-off, enabled by nobody, and
+  unable to terminate on a hunting vector.
+- Cut `reuse=`/`ig=` params no caller ever passed, `_ig3`, and 70 lines of
+  `REDSTONE_XCHECK` reference predicates.
+- Consolidated three inline torch-attach dicts onto `core.TORCH_BACK`.
+- Dropped `lampat` (collected, never read) — parse tuple is now 14 fields.
+- Net **-591 lines**, zero behaviour change, alu1 geometry identical.
+
+**Concurrent agent's fix, adopted** — `9be02f8`, `7af4caa`
+- `export.py`: preview states packed as base64 nibble/bit rows indexed by
+  instance number (a 1024-vector preview was ~1.6GB of raw JSON). Their code was
+  correct; the red was sim.py's fixture missing the comparator field.
 
 ---
 
-## What to do next
+## What failed, and why it was wrong
 
-### 1. Diagnose `R0Q0` (the live wall)
+- **alu4's "64/64 green" was a ghost.** The verify json predated the
+  diode-facing flip (`29fc565`); re-verified under current physics that merge is
+  RED on all 16 chunks (`Y2`/`Y3` with `B2`/`B3` set). Band/merge caches are
+  build *inputs* and nothing enforces rebuilding them — only verify caches are
+  fingerprinted.
+- **Adding the dust-on-dust guard alone broke the build** (bands 0 and 1 went
+  NO GREEN RUNG). Measuring first is what made the second cause findable: the
+  guard proved the class was systematic, which pointed at the router.
+- **The stuck `dense3.log` process** (PID 16976) burned a core for hours with no
+  output after 4 sealed restarts. Killed. `hier_stitch` and `hier_bands` are
+  hard-bounded; ad-hoc loops are not.
+- **`_booster_out_cell` facing trap.** layout's booster helpers read `front` as
+  `cell + _VEC[facing]` while sim reads `cell - _VEC[facing]`; measured 2426 of
+  2426 repeaters disagree. Harmless only because those helpers are
+  direction-agnostic. Any new direction-aware check must use sim's rule.
+- **My error:** stashing/checking out another agent's `export.py`. See the
+  warning at the top.
 
-On a **no-write vector** (`REGW=0`, so both registers must hold their seeded 0)
-this net census holds:
+---
 
-| net | lit | should be |
+## Files I touched
+
+Tracked, this session (`git diff --stat ed4c2a7..HEAD`):
+
+| file | delta | what |
 |---|---|---|
-| `R0Q0` | **1068/1068** | 0 |
-| `R1Q0` | 0/811 | 0 |
-| `AL_X0` | 63/64 | 0 |
-| `AL_S2` | 31/32 | 0 |
-| `AL_X2` | 61/315 | 0 |
+| `sim.py` | +262/-… | target physics + `_target_shots`, dust-on-dust support gate, `TORCH_BACK`, `lampat` out, fixture field |
+| `layout.py` | +302/-… | `_torch_hosts`/`_inverter_ring_at`/`_booster_inverter_ring`, post-assembly one-cell check, dust-on-dust guard, audit cuts |
+| `compose.py` | +41 | `_ends_ok` ring filter, `_supports_free` on bridge/hop supports |
+| `simvec.py` | -675/+… | slab side code, SWAR engine removed, shard tuple slimmed |
+| `export.py` | +176/-… | target colour/props/mount; **the other agent's packed-state preview** |
+| `scratch/ref_sim.py`, `scratch/mkref.py` | re-frozen | reference engine + generator header |
+| `LOG.md`, `MORNING-REPORT.md`, `notes/handoff.md` | docs | trail, report, this file |
 
-`R0Q0` — a whole register-bank output, latch *and* stitch — reads lit when it
-must be dark, and the XOR tails inherit it. The counts are frame-independent
-(they come from `live` / `nets`, both block space), so this part is solid. My
-earlier *localisation* of it was wrong (read at the bad offset, so "the latch
-is absent" was an artefact).
-
-**The latch origin in merge space is `(652, 48)` → block `(654, 134)`.** Dump
-that neighbourhood using `cpu4merge3.pkl["shift"]` and find what drives it.
-Prime suspects: a foreign net leaking in (the stitch adjacency guards are
-torch-based, not dust-based), or a floor lever on a cell the merge still treats
-as free.
-
-Once `R0Q0` holds 0 correctly, re-run:
-
-```powershell
-$env:REDSTONE_ASTAR_CAP="20000"
-$env:REDSTONE_HIERDUMP2="scratch/cpu4merge3.pkl"
-python scratch/hier_stitch.py scratch/cpu4bands2.pkl scratch/cand_cpu4hier.txt 300
-```
-
-### 2. Promote, only after 128/128
-
-`recipes/cpu4.txt` is still the original unbanded recipe. Do **not** promote
-until the merge sims green on the full space:
-
-```powershell
-python scratch/verify_par.py scratch/cpu4merge3.pkl scratch/cand_cpu4hier.txt 16 400 2
-# repeat until 16/16 chunks cached, then:
-python scratch/verify_par.py scratch/cpu4merge3.pkl scratch/cand_cpu4hier.txt 16 10 1
-# -> VERIFY OK: 128 vectors
-Copy-Item scratch/cand_cpu4hier.txt recipes/cpu4.txt
-```
-
-Then re-gate the whole fleet and commit.
-
-### 3. Housekeeping worth doing
-
-- `scratch/` holds ~560 probe files. Most are single-purpose forensics whose
-  finding is already in a `ponytail:` comment next to the code. Pruning them
-  would make the next session's forensics far faster.
-- The glass feature (non-conductive support; `_parse_build` still rejects it)
-  is queued after cpu4 per your earlier call. It would delete most of the
-  lid / slope-coupling machinery this repo fights against.
+Untracked (gitignored) but load-bearing: `scratch/` holds 299 probe files /
+28,036 lines — the alu4 and cpu4 pipelines (`hier_bands`, `hier_stitch`,
+`verify_par`, `mkref`, `diff_engine`, `dense_status`) plus every forensic probe
+cited in LOG.md. **Do not prune it casually.**
 
 ---
 
-## Build notes (bites that cost time)
+## What we should do next
 
-- **Band caches must be built with `REDSTONE_ASTAR_CAP` unset.** At 6000, bands
-  5 and 6 lose their only green rung (`no ground for AL_n0_5`) — reproducible
-  in a single process.
-- `scratch/hier_bands.py` (rebuilds `cpu4bands2.pkl`, ~90 s parallel) picks the
-  **smallest** sim-green rung per band, and `check_hier_ports` on top. All 10
-  bands are green on it.
-- Every probe must be hard-bounded. `scratch/hier_stitch.py` and
-  `scratch/verify_par.py` already fork-and-kill; use them rather than
-  calling `compose_hier_parts` in-process for anything big.
+1. **Paste `build.schem` into the real client.** It is the first build exported
+   for actual use and the 24 popping cells were caught by a file round-trip, not
+   by the game. Nothing in this repo has ever been tested in Minecraft.
+2. **Fingerprint the band caches** (`alu4bands.pkl`, `cpu4bands2.pkl`). The
+   engine fingerprint voids verify caches only; a stale band cache cost a full
+   session on cpu4 and nearly cost one on alu4. Cheapest fix: store the same
+   `__fp__` in the band pkl and refuse on mismatch.
+3. **True 3D tile stacking** — the last architectural goal. Physics is proven;
+   the compiler migration is ~140 `y==1` assumptions across
+   `layout/compose/tiles/sim`. `tiles.new_ctx` says "migrate the maps or don't
+   start": key `solid`/`rings`/`pos` by level, or give each deck its own 2D
+   namespace. Do not thread a `y0` through the placers alone.
+4. **Decide on `scratch/` pruning** — ~290 of the 299 files are dead, but they
+   are also the evidence behind LOG.md's forensics. Keep the six live tools.
+5. **Coordination**: if two agents are active, agree file ownership out loud
+   before either starts. `simvec.py` was previously declared off-limits to me;
+   that is now stale (I own it again after the SWAR cut).
+
+## Build notes (still true, they cost time)
+
+- Band caches must be built with `REDSTONE_ASTAR_CAP` unset (6000 breaks them).
+- Every probe must be hard-bounded; an unguarded script reaching a spawn path
+  re-imports itself under spawn and becomes a fork bomb. `if __name__ == "__main__"`
+  everywhere, and `sim_verify`/`verify_par` refuse to fan out from a daemon.
+- `scratch/mkref.py` extracts the engine from **git HEAD**, so re-freeze
+  `ref_sim.py` *after* committing a physics change, and its header must import
+  whatever constant the frozen copy uses (`TORCH_BACK`, today).
