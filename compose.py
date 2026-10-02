@@ -2763,6 +2763,19 @@ def compose_hier_parts(built, gates, recipe):
                 return _pts
             if os.environ.get("REDSTONE_HIER_TRACE"):
                 print(f"hier bank {n} {drv}->{stub}", flush=True)
+            # _relay, not _legs. Its waypoints are placed at (x, drv[1]) and
+            # drv[1] IS the trunk row, so the east run splits at the streets
+            # AND gets a repeater station at each one. _legs gave the same
+            # shape with no stations, leaving a 1657-cell run to
+            # _plant_repeaters alone (measured: "no ground for OP1:
+            # (-4,-33) -> (1653,1)" on clear ground).
+            _bwp = sorted(x for x in _streets
+                          if min(drv[0], stub[0]) < x < max(drv[0], stub[0]))
+            if _bwp:
+                try:
+                    return _try(lambda: _relay(drv, stub, n, _bwp))
+                except RuntimeError as e:
+                    _err = e
             try:
                 return _try(lambda: _legs(_bank_pts(drv, stub), "bank"))
             except RuntimeError as e:

@@ -78,21 +78,33 @@ had no field to inspect.
 **cpu4 needs its bands rebuilt from scratch, not re-stitched.** Its band ladder
 has to run again on the current engine.
 
-## The next step, cheapest first (none of these are guesses; each is a measured failure)
+## The next step (each is a measured failure, not a guess)
 
-1. **Give `_relay` a row argument.** `compose.py:2490` hardcodes its waypoints
-   at `(x, drv[1])`. For a banked input the driver's z is the trunk row, which
-   is what we want — but the relay is currently only entered for spans over
-   `relay_min`, and the bank route bypasses it. Making the bank route *be* a
-   relay on the bank row would get repeater stations along the east run for
-   free, instead of relying on `_plant_repeaters` alone. **Most promising,
-   smallest diff.**
-2. **A street-crossing trunk.** `_HIER_GAP=160` leaves a 160-wide empty column
-   between every band pair. Run each row east along the north margin, then
-   hand off by dropping down the street immediately west of the band and
-   running east at the stub's latitude. Known blocker: `A3B3`'s stub is at
-   z=63, far inside band 4, so its latitude is not reachable from a street.
-3. **Trunk in the gap between y.** Stack rows at y=1,3,5,… over z rows 6
+**What is now known precisely:** the east run along the trunk row is solved —
+it splits at the streets, and `_relay` gives it repeater stations. The part
+that does not route is the **descent into the band at the stub's own
+latitude**. Every band's stub is at `minx - 1`, the westernmost cell of that
+band's margin, and the lever rows march east from it at 2 cells of z pitch, so
+a run at the stub's latitude walks straight into them.
+
+1. ~~Give `_relay` a row argument.~~ **TRIED, FAILED — do not repeat.**
+   `_relay`'s waypoints are already at `(x, drv[1])` and `drv[1]` already *is*
+   the trunk row, so I routed the bank through `_relay` directly instead of
+   `_legs`. Result: identical failure, `hier stitch OP1: band 5 stub
+   (1751,4)`. Its last leg is the suspect: `(1577,4) -> (1751,4)`, a 174-cell
+   run at z=4 — exactly the lever-bank latitude.
+2. **Drop down the street instead of down the stub's column.** `_HIER_GAP=160`
+   leaves a 160-wide empty column between every band pair, empty top to
+   bottom. East along the row to the street immediately west of the band, down
+   the street, then east at the stub's latitude. Same last-leg problem, but
+   from a guaranteed-clear column and with 160 cells of approach instead of
+   one. **Most promising.** Check `A3B3` first: its stub is at z=63, far
+   inside band 4, so its latitude may not be reachable from a street either.
+3. **Reach the stub from the north down its own column.** `_bank_pts` already
+   tries this; it keeps dying. Add the band's `minx` column as an explicit
+   waypoint *before* the latitude change, so the descent is split into
+   "down the column in the north margin" and "one cell east into the stub".
+4. **Trunk in the gap between y.** Stack rows at y=1,3,5,… over z rows 6
    apart. Needs a narrow exemption for the cell directly above a row, which
    bug 2's fix just made fatal.
 

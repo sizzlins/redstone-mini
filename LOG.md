@@ -1592,3 +1592,24 @@ Control after every one of these changes: `REDSTONE_INPUT_BANK=0` on
 `alu4bands.pkl` merges to 35082 blocks, byte identical to the shipped
 `alu4merge.pkl`, `io["levers"]` equal, 4/4 smoke OK. Re-verified after the last
 edit.
+### `_relay` for the bank route: TRIED, FAILED
+
+`_relay` puts its waypoints at `(x, drv[1])` and for a banked net `drv[1]` IS
+the trunk row, so the obvious next move was to route the bank through `_relay`
+(it splits the east run at the streets AND plants a repeater station at each
+one) instead of `_legs` (which did neither). Committed as an experiment and
+measured: **identical failure**, `hier stitch OP1: band 5 stub (1751,4): no
+ground for OP1: (-4,-33) -> (1653,1)`.
+
+So the east run was never the problem. The part that does not route is the
+descent into the band at the stub's own latitude: every band's stub is at
+`minx - 1`, the westernmost cell of its margin, and the lever rows march east
+from there at 2 cells of z pitch, so any run at that latitude meets them. The
+relay's own last leg is the clearest evidence -- `(1577,4) -> (1751,4)`, 174
+cells at z=4, which is exactly the lever-bank latitude.
+
+Next session: do not re-try `_relay`. Drop down the `_HIER_GAP` street
+immediately west of the band instead (empty top to bottom, 160 cells of
+approach), and check `A3B3` first -- its stub is at z=63, far inside band 4, so
+its latitude may not be reachable from a street either. Full list in
+MORNING-REPORT.md.
