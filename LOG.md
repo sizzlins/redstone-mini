@@ -1406,3 +1406,79 @@ Cost note: simvec's fixed tables model only the idle role; a build with
 timed hits raises NotImplementedError from `run_scalar` after validating
 the stimulus, and `verify_par` falls back to the serial authority. Zero
 behavior change for generated builds, which never stamp a target.
+
+---
+
+## 2026-10-03 night session: ONE INPUT BANK (single-cluster levers)
+
+**Goal (user):** the input levers must be in one cluster, so an input can be
+flipped from one place. Measured starting state: `alu4` shipped **21 levers**
+for 10 inputs over 1757 blocks of x (A0 x=15, A1 x=439, A2 x=834+1244,
+A3 x=1484+1760, B0 x=11, B1 x=435, B2 x=830+1236, B3 x=1476+1756,
+OP0 x=3/427/822/1748, OP1 x=7/431/826/1468/1752); `cpu4` **21 levers over
+3352 blocks**. Cause: every BAND composes alone and each stamps its own input
+bank (`compose.py:1055`), and the merge only deletes levers for boundary
+(`recipe["edge"]`) nets, so recipe inputs keep one lever per partition
+(`compose.py:1812`, `recipe.py:156`).
+
+**Assumption recorded (rule: do not ask, decide and log):** "one cluster" means
+one place in the world to flip any recipe input, not one lever per input
+necessarily co-located with each other at the same x. The implementation
+below is the stronger form (all inputs on one lever column) because the
+weaker form was measured and rejected: keeping each input's own westernmost
+lever makes **four** clusters (A0's at x=13, A1's at x=437, A2's at x=832,
+A3's at x=1482) because the westernmost copy of each input lives in a
+different band.
+
+### Two real engine bugs found on the way (both fixed, both narrow)
+
+1. **A 3D flight could put dust and cobblestone in one cell.**
+   `lwire`'s flight path collected `needs` from `_support()` and then stamped
+   the flight's own cells. For a ONE-CELL DESCENT the lower step IS the
+   support for the cell above it, so the same cell got both. The existing
+   self-lid test cannot see it: it asks `hi.y-1 in cobf`, and that cell is in
+   `needs` only because it is about to become dust too. Now refused loudly
+   (`support under own dust`); the next y band / strategy / rung retries.
+
+2. **`_support()` reports an already-recorded pillar as reusable.**
+   It returns `None` for a cell in `sup`, so a LATER leg of the same net lays
+   dust on a cell that already owes a cobblestone. `_support` is about
+   support, not occupancy, and nothing else checked. Measured: R1Q1's pillar
+   at (1852,2,25) with its own dust over it ->
+   `duplicate block at (1854,2,139): cobblestone vs redstone_wire`, which
+   kills the whole merge in `finish_assembly`. Now the flight refuses any
+   cell that is already a committed pillar (`dust over own pillar`); fatal for
+   every net including the pillar's own, because the block is committed.
+
+Both guards are in `lwire`'s flight branch only, and both are no-ops for any
+field that was already valid (a green build never had those cells). Verified:
+`REDSTONE_INPUT_BANK=0` on `alu4bands.pkl` merges to **35,082 blocks, byte
+identical** to the shipped `alu4merge.pkl` (sha `e5d1915191ba6191` over the
+block list, `io["levers"]` equal), 4/4 smoke vectors OK.
+
+### cpu4 is RED on the current engine, independent of this work
+
+`cpu4bands2.pkl` bands 5 and 6 each carry 3 cells that are in `sup` (y>=2)
+AND in `wires` -- the defect class of bug 1 above, baked into the cached
+partitions. `scratch/cpu4merge3.pkl` (the "green" cpu4 merge, fp
+`47fb2a6e0efb`) itself contains **8 conflicting duplicate cells**, e.g.
+(1854,1,108) cobblestone+wire: it predates the one-cell-one-block gate added
+2026-10-02, so its 16/16 was scored by a sim that read both blocks.
+`hier_stitch cpu4bands2.pkl` now dies with or without the bank:
+`duplicate block at (1854,2,87)`. **cpu4 needs its bands rebuilt, not
+re-stitched** -- see the morning report.
+
+### State of the bank itself
+
+`REDSTONE_INPUT_BANK=1` (default OFF until it verifies green) builds one lever
+column in the empty margin west of the merge, deletes every partition's input
+lever, and fans each input out to the stubs it used to drive directly. The
+bank strategy is tried FIRST and only for banked nets, because the generic
+ladder cannot express it: `_relay` puts its waypoints at the DRIVER's z (the
+lever latitude, which drags a run east through every band) and the
+stub->stub chain needs one leg to cross every intervening field.
+
+Measured progress on `alu4`: the column builds, all 21 levers collapse to 10,
+and legs reach bands 0-3. Still red on the far bands:
+`hier stitch A2: band 4/5 stub ... no ground`. That is the router's long-span
+weakness, not the bank geometry.

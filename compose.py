@@ -302,6 +302,19 @@ def lwire(ctx, sup, guard, a, b, net, avoid=frozenset()):
         fly = _fly
         needs = []
         try:
+            _fcells = set(fly)
+            # ponytail: a y>=2 `sup` entry is a COMMITTED pillar -- the
+            # block list already owes a cobblestone there (this path's
+            # own needs, _walk's hop/bridge supports, or layout's route).
+            # Dust on top of one is two blocks in one cell and
+            # finish_assembly rejects the WHOLE build (measured on the
+            # hier input fan-out: R1Q1's pillar at (1852,2,25) with its
+            # own dust over it -> "duplicate block"). _support reports
+            # such a cell as reusable (returns None), so the test has to
+            # be on the flight itself, not on `needs`. Fatal for every
+            # net including the pillar's own: the block is committed.
+            if any(c in sup for c in _fcells if c[1] >= 2):
+                raise RuntimeError("dust over own pillar")
             for cell in fly:
                 if cell[1] == 1:
                     continue
@@ -310,9 +323,18 @@ def lwire(ctx, sup, guard, a, b, net, avoid=frozenset()):
                 if r is False:
                     raise RuntimeError("support sealed")
                 if r is not None and r not in sup and r not in needs:
+                    # ponytail: a one-cell DESCENT makes the lower step
+                    # the support for the cell above it, so the flight
+                    # would put dust and cobble in one block. The
+                    # self-lid test below cannot see it -- it asks
+                    # hi.y-1 in cobf, and that cell is in `needs` only
+                    # because it is about to become dust too. Refuse the
+                    # flight; the next y band / strategy / rung retries.
+                    if r in _fcells:
+                        raise RuntimeError("support under own dust")
                     needs.append(r)
-            # ponytail: cobf = every cell that can act as a support, not
-            # just the ones this flight owns. _support returns None ("reuse")
+        # ponytail: cobf = every cell that can act as a support, not
+        # just the ones this flight owns. _support returns None ("reuse")
             # when the cell below is ALREADY cobble — a tile's own body — and
             # that cobble lives in ctx.solid, not in sup, so the old cobf
             # missed it and the self-lid test below rejected every descent
@@ -2089,6 +2111,74 @@ def compose_hier_parts(built, gates, recipe):
         maxx = max([x for (x, z) in solid] + [x for (x, _, z) in wires]
                    + [x for (x, _, z) in repeaters])
         cur = maxx + 1 + _HIER_GAP
+    # ---- one input bank ---------------------------------------------------
+    # Every band composed its own lever per recipe input, so a 10-input /
+    # 6-band build shipped 21 levers strung along x (measured on the merged
+    # caches: alu4 spanned 1757 blocks, cpu4 3352) and flipping an input meant
+    # walking to whichever band's copy was nearest. Worse, "keep the
+    # westernmost lever per input" is NOT one place either: each input's
+    # westernmost copy lives in a different band (alu4 put A0's at x=13,
+    # A1's at x=437, A2's at x=832, A3's at x=1482), so it made four clusters.
+    #
+    # So: build ONE lever column in the empty margin west of the whole merge,
+    # drop every partition's copy, and let the ordinary fan-out chain carry
+    # each input east to the stubs it used to drive directly. The chain
+    # (west-to-east, continuing from the previous stub) is the same mechanism
+    # that already carries a cross-band gate net past several fields, one
+    # street per leg, so this adds no new routing concept.
+    # REDSTONE_INPUT_BANK=0 restores the old per-partition levers.
+    _banknets = {}
+    if os.environ.get("REDSTONE_INPUT_BANK", "0") == "1":
+        _lev = {}
+        for (b, sub, out, pctx, sh) in built:
+            for (x, z), v in pctx.solid.items():
+                if v[0] == "lever" and v[1] in recipe["inputs"]:
+                    _lev.setdefault(v[1], []).append((x + offs[b], z, b))
+        if _lev:
+            _names = sorted(_lev)
+            # one column, 3 apart in z: a lever's own ring reaches one cell
+            # north/south, so 2 would put two nets in one ring cell.
+            _cz = max(z for L in _lev.values() for (_, z, _) in L)
+            _cx = min(x for (x, z) in solid) - 6
+            for _try in range(400):
+                _cells = [(_cx, _cz - 3 * i) for i in range(len(_names))]
+                if not any(c in solid or (c[0] + 1, c[1]) in solid
+                           or (c[0], 1, c[1]) in wires
+                           or (c[0] + 1, 1, c[1]) in wires
+                           or (c[0], 1, c[1]) in repeaters
+                           for c in _cells):
+                    break
+                _cx -= 4
+            else:
+                raise RuntimeError("hier bank: no free column west of the "
+                                   f"merge after 400 steps (tried x={_cx})")
+            _bb = min(b for L in _lev.values() for (_, _, b) in L)
+            for _i, _n in enumerate(_names):
+                lx, lz = _cx, _cz - 3 * _i
+                blocks.append((lx, 1, lz,
+                               "minecraft:lever[face=floor,facing=north,"
+                               "powered=false]"))
+                solid[(lx, lz)] = ("lever", _n)
+                for dx, dz in DIRS:
+                    rings.setdefault((lx + dx, lz + dz), set()).add(_n)
+                # the stub is the driver's own cell: the lever powers it (and
+                # only it) at 15, exactly as a partition bank did.
+                wires[(lx + 1, 1, lz)] = _n
+                drv_of[_n] = (lx + 1, lz)
+                prod[_n] = _bb
+                _banknets[_n] = (lx, lz)
+            for _n in _names:
+                for (lx, lz, b) in _lev[_n]:
+                    blocks[:] = [bb for bb in blocks
+                                 if not (bb[0] == lx and bb[1] == 1
+                                         and bb[2] == lz and "lever" in bb[3])]
+                    solid.pop((lx, lz), None)
+                    for ax, az in DIRS:
+                        s_ = rings.get((lx + ax, lz + az))
+                        if s_ is not None:
+                            s_.discard(_n)
+    _stitchnets = list(cross) + [n for n in sorted(_banknets)
+                                 if n not in cross]
     # merged pos holds the last band's cell per net name; stitch addressing
     # uses partition-local pos + offsets (exact), so collisions are harmless.
     # check_opens/finish_assembly only need each listed cell to be live.
@@ -2142,9 +2232,14 @@ def compose_hier_parts(built, gates, recipe):
     # + C2 dust). Span from producer driver to first consumer stub.
     def _span(n):
         d = drv_of[n]
+        # banked inputs have no producer band, so their "consumers" are the
+        # other bands' lever stubs -- the fan-out chain, longest leg first.
         stubs = [(pctx.pos[n][0] + offs[b], pctx.pos[n][1])
                  for (b, sub, out, pctx, sh) in built
-                 if n in sub["inputs"] and n not in recipe["inputs"]]
+                 if n in sub["inputs"]
+                 and (n not in recipe["inputs"] or n in _banknets)]
+        if not stubs:
+            return 0
         return -min(abs(d[0] - s[0]) + abs(d[1] - s[1]) for s in stubs)
     # ponytail: LONG jogs for stitches. Partitions used SHORT (their fields
     # are small); a stitch crosses a whole neighboring field, and the short
@@ -2528,7 +2623,7 @@ def compose_hier_parts(built, gates, recipe):
             _restore(_ssnap)
             raise
 
-    def _stitch(drv, stub, n, b):
+    def _stitch(drv, stub, n, b, relay_min=350):
         # direct first (proven for short spans); else spiral-start: the
         # producer port itself can sit pocketed by its own tile's input runs
         # (measured: C3 port walled on all 4 sides, every axis RED). A start
@@ -2603,8 +2698,39 @@ def compose_hier_parts(built, gates, recipe):
             except RuntimeError:
                 _restore(_s)
                 raise
+        # ponytail: the BANK strategy, tried FIRST and only for a banked
+        # input. Its driver is one lever column in the empty margin west of
+        # the whole merge, so the open-ground shape is exact: north to a
+        # per-net margin row (north of every band), east along it, then south
+        # down the stub's own column into the band. Every cell of that route
+        # is outside every band field.
+        #
+        # It has to come first because the generic ladder cannot express it:
+        # _relay puts its waypoints at the DRIVER's z, which for a bank means
+        # dragging a run east at the lever latitude, straight through every
+        # band (measured: A2 died "no ground for A2: (-4,2) -> (1123,1)"),
+        # and the stub->stub chain needs one leg to cross every intervening
+        # field (measured: OP1 band2->band4, 642 cells through band 3, "path
+        # re-enters (1341,1,2)"). Rows 4 apart, so no two bank nets touch.
+        if n in _banknets:
+            _bz = _minz0 - 12 - 4 * (1 + sorted(_banknets).index(n))
+            if os.environ.get("REDSTONE_HIER_TRACE"):
+                print(f"hier bank {n} {drv}->{stub} row {_bz}", flush=True)
+            try:
+                return _try(lambda: _legs([drv, (drv[0], _bz),
+                                           (stub[0], _bz), stub], "bank"))
+            except RuntimeError as e:
+                _err = e
         _spanlen = abs(stub[0] - drv[0]) + abs(stub[1] - drv[1])
-        if _spanlen > 350:
+        # ponytail: relay_min. The street-relay split is tried first and
+        # rolls back cleanly, so lowering it for a caller that knows its
+        # legs are hard is free. The banked input fan-out does: it crosses
+        # one street per leg but starts in the empty margin west of the
+        # merge, and the direct/hop-row strategies returned self-entering
+        # paths for its last two legs (measured: "path re-enters
+        # (1341,1,2)" band 4, "(1653,2,2)" band 5). Default unchanged so
+        # every gate net keeps the geometry it verified green with.
+        if _spanlen > relay_min:
             _wps = [x for x in _streets if min(drv[0], stub[0]) < x < max(drv[0], stub[0])]
             if _wps:
                 try:
@@ -2684,7 +2810,7 @@ def compose_hier_parts(built, gates, recipe):
             # Rows 4 apart never side-touch (different nets need adjacency to
             # short), so each stitch gets its own empty highway. Deterministic
             # (cross order), costs nothing.
-            _maxz = _maxz0 + 12 + 4 * cross.index(n)
+            _maxz = _maxz0 + 12 + 4 * _stitchnets.index(n)
             _sa = (drv[0], _maxz)
             _sb = (stub[0], _maxz)
             if os.environ.get("REDSTONE_HIER_TRACE"):
@@ -2697,7 +2823,7 @@ def compose_hier_parts(built, gates, recipe):
         # eastmost field edge). Staggered like the south margin. Measured
         # need: AL_X3's driver walled on west/south/north attempts.
         try:
-            _maxx = _maxx0 + 12 + 4 * cross.index(n)
+            _maxx = _maxx0 + 12 + 4 * _stitchnets.index(n)
             _ea = (_maxx, drv[1])
             _eb = (_maxx, stub[1])
             if os.environ.get("REDSTONE_HIER_TRACE"):
@@ -2710,7 +2836,7 @@ def compose_hier_parts(built, gates, recipe):
         # OF them). Same stagger, negative z is legal ground (lanes run
         # negative; astar clips at 0 but lwire corridors do not).
         try:
-            _minz = _minz0 - 12 - 4 * cross.index(n)
+            _minz = _minz0 - 12 - 4 * _stitchnets.index(n)
             _na = (drv[0], _minz)
             _nb = (stub[0], _minz)
             if os.environ.get("REDSTONE_HIER_TRACE"):
@@ -2768,7 +2894,7 @@ def compose_hier_parts(built, gates, recipe):
     # order decides who claims it. Env-gated experiment, default unchanged.
     _rev = os.environ.get("REDSTONE_HIER_ORDER") == "asc"
     _freshc = set()
-    for n in sorted(cross, key=_span, reverse=_rev):
+    for n in sorted(_stitchnets, key=_span, reverse=_rev):
         pb = prod[n]
         if os.environ.get("REDSTONE_HIER_TRACE"):
             print(f"hier stitch {n} drv={drv_of.get(n)} offs={offs}", flush=True)
@@ -2784,7 +2910,12 @@ def compose_hier_parts(built, gates, recipe):
         # is a short hop. Same net, so chaining is the same wire.
         _cons = []
         for (b, sub, out, pctx, sh) in built:
-            if n not in sub["inputs"] or n in recipe["inputs"]:
+            # banked inputs chain through every other band's stub (the bank
+            # band's own stub is the driver); everything else keeps the
+            # boundary-only rule.
+            if n not in sub["inputs"]:
+                continue
+            if n in recipe["inputs"] and n not in _banknets:
                 continue
             _cons.append((b, pctx.pos[n][0] + offs[b], pctx.pos[n][1]))
         _cons.sort(key=lambda t: t[1])
@@ -2802,11 +2933,21 @@ def compose_hier_parts(built, gates, recipe):
                     if bb[3].split("[")[0] == "minecraft:cobblestone"}
             _lp0 = _lr(wires, repeaters, _du0, _cb0)
             try:
-                full = _stitch(_cur, stub, n, b)
+                full = _stitch(_cur, stub, n, b,
+                                40 if n in _banknets else 350)
             except RuntimeError as e:
                 _fail.append(f"band {b} stub {stub}: {str(e)[:60]}")
                 continue
-            _cur = stub
+            # ponytail: a banked input does NOT chain stub->stub. Its driver
+            # sits in the empty margin west of the whole merge, so every
+            # band's stub is reachable from it through open ground: up to the
+            # north margin, east along it, down into the band. Chaining forced
+            # one leg to cross every intervening field (measured: OP1
+            # band2->band4, 642 cells straight through band 3, died on every
+            # strategy: "path re-enters (1341,1,2)"). Same net, so the legs
+            # share the corridor harmlessly. Gate nets keep the chain.
+            if n not in _banknets:
+                _cur = stub
             if not _planted[0]:
                 for u, v in zip(full, full[1:]):
                     d = (v[0] - u[0], v[2] - u[2])
@@ -3088,14 +3229,21 @@ def compose_hier_parts(built, gates, recipe):
             for _c in _full:
                 _seen.add((_c, _n))
 
-    for _n in cross:
+    for _n in _stitchnets:
         _pb = prod[_n]
         _drv = drv_of.get(_n)
         if _drv is None:
             continue
+        # ponytail: banked input nets seed EVERY consuming band, not just the
+        # driver. A partition lever sat INSIDE its band and powered every
+        # adjacent cell at 15, so a band's input net could have islands the
+        # stub never reached. With the lever gone those islands are orphaned
+        # (measured: check_opens OPEN on band 4's OP1 dust at (1467..1515,1,
+        # 65..67)), and this per-band flood + leg pass is what reconnects them.
         _seedlist = [(_pb, _drv)]
         for (b, sub, out, pctx, sh) in built:
-            if _n in sub["inputs"] and _n not in recipe["inputs"]:
+            if _n in sub["inputs"] and (_n not in recipe["inputs"]
+                                       or _n in _banknets):
                 _seedlist.append((b, (pctx.pos[_n][0] + offs[b],
                                       pctx.pos[_n][1])))
         for (_bb, _anchor) in _seedlist:
