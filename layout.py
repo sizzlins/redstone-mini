@@ -298,6 +298,59 @@ def _sidefed_repeaters(blocks, io):
     return out
 
 
+def _booster_inverter_ring(repeaters, wires, blocks):
+    """Boosters that close a ring through a foreign tile's output torch.
+
+    Found on alu4 (2026-10-02): a repeater's output dust rests on the cobble
+    that hosts the neighbouring tile's output torch, and the torch's own
+    neighbours carry the booster's net. That is a legal-looking handoff
+    (torch -> net is the intended direction) plus one extra wire (net ->
+    torch host), and the pair is a ring with exactly one inverter, so it hunts
+    forever instead of settling. Measured: nets OP1x_3/n1_3 at
+    (2044,1,35)->(2043,1,35) on (2043,1,34)->(2044,1,34), 18059 churn cells on
+    the all-ones vector, 15 of 24 sampled vectors hunting.
+
+    Existing guards miss it by construction: _closes_loop / _loop_rep flood
+    same-net DUST over blocks, and this ring leaves the dust through a torch,
+    which is a directed (inverting) edge they do not model. Loud here so the
+    stitch restart ladder retries instead of shipping a hunting build.
+    """
+    hosts = {}
+    for x, y, z, bid in blocks:
+        if base(bid) != "minecraft:redstone_wall_torch":
+            continue
+        f = bid.split("facing=")[1].rstrip("]") if "facing=" in bid else "east"
+        back = {"east": (-1, 0), "west": (1, 0), "south": (0, -1), "north": (0, 1)}[f]
+        hosts[(x + back[0], y, z + back[1])] = (x, y, z)
+    out = []
+    for (x, y, z), (_net, facing) in repeaters.items():
+        # ponytail: OUTPUT side is c - _VEC[facing], NOT c + _VEC[facing].
+        # sim negates the bid string (repeater facing points output->input
+        # toward the driver), and layout's own booster helpers are
+        # direction-agnostic -- they only need the two cells. Measured on
+        # alu4: 2426 of 2426 repeaters disagree between the two readings, so
+        # the naive one points at the INPUT and misses every real ring.
+        dx, dz = _VEC[facing]
+        outc = (x - dx, y, z - dz)
+        net = wires.get(outc)
+        if net is None:
+            continue
+        # The booster's output dust couples to the host block two ways: it can
+        # sit ON it, or point at it from a side cell. The alu4 ring is the
+        # second kind (dust (2043,1,35) beside the host (2043,1,34)), which is
+        # why a "rest block below" test finds nothing.
+        touched = [(outc[0] + ox, outc[1], outc[2] + oz) for ox, oz in DIRS]
+        touched.append((outc[0], outc[1] + 1, outc[2]))
+        for b in touched:
+            t = hosts.get(b)
+            if t is None:
+                continue
+            for ox, oz in DIRS:
+                if wires.get((t[0] + ox, t[1], t[2] + oz)) == net:
+                    out.append(((x, y, z), t, net))
+    return out
+
+
 def _straight3(a, b, c):
     """Three collinear cells at one level (booster/repeater sites). Ground and
     pillars alike: a repeater on a pillar is legal physics (the route already
@@ -823,6 +876,14 @@ def finish_assembly(blocks, solid, wires, rings, junctions, repeaters, pos):
     if _loop is not None:
         raise RuntimeError(f"repeater loop on {_loop[1]} at {_loop[0]}: front "
                            f"joins back (bistable; first transient latches it)")
+    # ponytail: booster -> torch-host ring (see _booster_inverter_ring). Loud,
+    # like every other topology fault here, so compose's restart ladder retries
+    # instead of pasting a build that hunts forever in vanilla.
+    _ring = _booster_inverter_ring(repeaters, wires, out)
+    if _ring:
+        _c, _t, _n = _ring[0]
+        raise RuntimeError(f"booster ring on {_n} at {_c}: its output dust drives "
+                           f"the tile torch {_t}, which drives {_n} back")
     for (x, y, z), net in wires.items():
         if (x, y, z) in repeaters:
             continue
