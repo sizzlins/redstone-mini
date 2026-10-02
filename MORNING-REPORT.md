@@ -1,75 +1,131 @@
-# MORNING-REPORT — 2026-10-02 night session
+# MORNING REPORT — 2026-10-03 night session
 
-Headline: **alu4 is green — 1024/1024 vectors verified — and the build is
-exported to your WorldEdit folder.** Two more real defects were found and
-fixed along the way, both of which had been silently shipping green builds.
+## What I was asked to do
 
-## Where your build is
+"the levers need to change. they need to be in only one cluster." — the hier
+builds ship one input lever per band, so `alu4` had **21 levers spread over
+1757 blocks** and flipping an input meant walking to whichever band's copy was
+nearest.
 
-| what | where |
-|---|---|
-| **`.schem` (WorldEdit)** | `…\FreesmLauncher\instances\26.3\minecraft\config\worldedit\schematics\build.schem` (12,356 bytes) |
-| previous one, not overwritten blind | same folder, `build.schem.bak-20261002-210028` |
-| `.mcfunction` | `D:\redstone-mini\build_alu4.mcfunction` (2.28 MB) |
-| `.html` preview | `D:\redstone-mini\build_alu4.html` (4.5 MB, interactive — 4 smoke vectors have real per-wire state) |
+## The answer to your question, measured
 
-Paste at y=64 (WorldEdit's default anchor is the player, so paste where you
-want it). 35,082 blocks: 14,634 wire, 13,821 stone, 4,386 cobblestone, 2,059
-repeaters, 138 torches, 21 levers, 18 comparators, 5 lamps.
+**It is now one column, and I have the numbers off the merged field:**
 
-Verified by reading the *written file* back, not the build list: all 35,082
-blocks carry the state they were written with, plus a 500-block random re-read
-of the installed `.schem` (0 mismatches).
+```
+REDSTONE_INPUT_BANK=1  python scratch/hier_stitch.py scratch/alu4bands.pkl \
+    scratch/cand_alu4hier.txt 900 scratch/alu4bank.pkl
 
-## What now builds
+LEVERS IN MERGED FIELD: 10
+x -5..-5   (span 0)        z -51..-15  (span 36)
+   OP1(-5,-51)  OP0(-5,-47)  B3(-5,-43)  B2(-5,-39)  B1(-5,-35)
+   B0(-5,-31)  A3(-5,-27)  A2(-5,-23)  A1(-5,-19)  A0(-5,-15)
+```
 
-| build | verdict | evidence |
-|---|---|---|
-| **alu4** (10 inputs) | **GREEN, 1024/1024** | `VERIFY OK: 1024 vectors, 16 chunks green`, fp `6bd0cbfd80fe` |
-| cpu4 (7 inputs) | GREEN, 128/128 | re-verified from scratch under the new engine |
-| alu1 | GREEN, 12,294 blocks | after every fix |
-| ctrl_decode | GREEN, 4,923 blocks | after every fix |
-| example_and / 2gates / latch_sr / xor | GREEN | `compose_check.py` |
-| suites | GREEN | `sim.py`, `layout.py`, `diff_engine` ALL IDENTICAL |
+One cell of x. 36 cells of z. Every input flips from one spot. Was 21 levers
+over 1757 cells of x.
 
-## The three bugs of the night
+## What is NOT done
 
-1. **alu4's old "64/64 green" was a ghost** — written 10/1 23:19, before the
-   diode-facing flip landed 10/2 10:56. Re-verified today it was RED on all 16
-   chunks. Kept as `alu4merge.preflip.pkl`.
-2. **A booster that fed a tile torch which fed it back.** 6-node ring on
-   `OP1x_3` latched the band-3 handoff (15 of 24 sampled vectors hunting,
-   18,059 churn cells). `_closes_loop`/`_loop_rep`/`_ends_ok` all miss it: they
-   reason about dust, and this ring leaves the dust *through a torch*. Fixed in
-   `compose._ends_ok` + layout's booster loop + a loud `finish_assembly` check.
-3. **Dust stacked on dust — invisible to the sim, fatal on paste.** The export
-   round-trip (the only check that sees the paste) caught 24 cells holding both
-   cobblestone and wire, each with a dust cell above resting on what became a
-   wire. Two causes: my duplicate guard ran *before* wires were appended, so it
-   was blind to the whole wire class; and compose's bridge/hop sites stamped
-   supports without asking whether the cell was occupied. Both fixed; the sim
-   now refuses a component resting on a wire. The rebuilt alu4 is also
-   **smaller** (35,082 vs 41,031 blocks) and verifies **4.7× faster** (245 s vs
-   1,150 s).
+**The build is still red, and it is not the levers.** Carrying the value from
+that column to each band's stub needs a distribution trunk, and the trunk is
+what is not finished.
 
-## The stitch item I offered — solved at the root
+Last measured failure, `REDSTONE_INPUT_BANK=1`:
 
-No seed/spread knob was added: the failures were placement *rules*, not bad
-luck, so fixing the rule makes the first attempt green instead of burning
-retries. What the pipeline did lack was the link from stitch to verifier —
-`hier_stitch.py` now takes an optional 4th argument that saves the merge pkl,
-because `verify_par` reads a pkl and nothing could hand it one.
+    STITCH RED: hier stitch OP1: band 5 stub (1751, 4):
+                compose: no ground for OP1: (-4, -33) -> (1653, 1)
 
-## Still not done (nothing blocking)
+**So the flag is `REDSTONE_INPUT_BANK`, default OFF**, and with it off
+`alu4` merges **byte identical** to the shipped `alu4merge.pkl` (35082 blocks,
+`io["levers"]` equal, 4/4 smoke vectors OK). Your ten green builds are
+untouched. Do not paste anything new tonight — the build in
+`…\worldedit\schematics\build.schem` is last night's, unchanged, and still has
+21 levers.
 
-- **True 3D tile stacking** — physics proven, compiler migration (~140
-  `y==1` assumptions) still not built.
-- **Band caches are not fingerprinted** — only verify caches are; the cpu4
-  stale-input lesson is still enforced by hand.
-- **Never pasted into a real client.** Every verdict here is the sim agreeing
-  with itself plus wiki rules. This is the first build exported for real use,
-  so the paste itself is the next unproven step — the 24 popping cells were
-  caught by a file round-trip, not by the game.
-- **Layout facing trap** — layout's booster helpers read `front` as the output
-  cell while sim reads the opposite; harmless only because those helpers are
-  direction-agnostic. `_booster_out_cell` encodes sim's rule now.
+## Two real engine bugs found and fixed (both committed, both narrow)
+
+Both are in `lwire`'s 3D-flight branch, both are no-ops on any field that was
+already valid, and both were confirmed by the control staying byte identical.
+
+1. **One cell got both dust and cobblestone.** A one-cell descent makes the
+   lower step the support for the cell above it. The existing self-lid test
+   cannot see it — it asks whether the cell above the lower step is a support,
+   and that cell is only a support because it is about to become dust too.
+   `finish_assembly` then killed the whole merge with
+   `duplicate block at (1854,2,139)`.
+2. **`_support()` calls an already-recorded pillar "reusable".** It returns
+   `None` for a cell in `sup`, so a later leg of the same net laid dust on a
+   cell that already owed a cobblestone. `_support` is about support, not
+   occupancy, and nothing else checked. Same `duplicate block` death.
+
+Also added: `REDSTONE_HIERDUMP_FAIL` now fires on a **stitch** failure, not
+just on `check_opens`/`finish_assembly`. The banked fan-out is the first thing
+that can fail before either of those, which is why several iterations tonight
+had no field to inspect.
+
+## cpu4 is red independently of any of this — do not trust its cache
+
+- `cpu4bands2.pkl` bands 5 and 6 each contain **3 cells that are in `sup` at
+  y>=2 and also in `wires`** — the exact defect class of bug 1 above, baked
+  into the cached partitions.
+- `scratch/cpu4merge3.pkl` (the "green" cpu4 merge, fp `47fb2a6e0efb`)
+  **itself contains 8 conflicting duplicate cells**, e.g. `(1854,1,108)`
+  cobblestone+wire. It predates the one-cell-one-block gate added 2026-10-02, so
+  its 16/16 green was scored by a sim that read both blocks in one cell.
+- `hier_stitch cpu4bands2.pkl` now dies **with and without** the bank:
+  `duplicate block at (1854,2,87)`.
+
+**cpu4 needs its bands rebuilt from scratch, not re-stitched.** Its band ladder
+has to run again on the current engine.
+
+## The next step, cheapest first (none of these are guesses; each is a measured failure)
+
+1. **Give `_relay` a row argument.** `compose.py:2490` hardcodes its waypoints
+   at `(x, drv[1])`. For a banked input the driver's z is the trunk row, which
+   is what we want — but the relay is currently only entered for spans over
+   `relay_min`, and the bank route bypasses it. Making the bank route *be* a
+   relay on the bank row would get repeater stations along the east run for
+   free, instead of relying on `_plant_repeaters` alone. **Most promising,
+   smallest diff.**
+2. **A street-crossing trunk.** `_HIER_GAP=160` leaves a 160-wide empty column
+   between every band pair. Run each row east along the north margin, then
+   hand off by dropping down the street immediately west of the band and
+   running east at the stub's latitude. Known blocker: `A3B3`'s stub is at
+   z=63, far inside band 4, so its latitude is not reachable from a street.
+3. **Trunk in the gap between y.** Stack rows at y=1,3,5,… over z rows 6
+   apart. Needs a narrow exemption for the cell directly above a row, which
+   bug 2's fix just made fatal.
+
+**Do not try a straight-line one-level fan-out.** I proved it cannot work and
+the proof is in LOG.md: every band's stub sits at z 2..8 while every field
+reaches north to z −19, so a per-input row must be north of the field, and
+every drop from a row goes south, so every drop crosses every row south of it.
+Crossings are structural. Ordering the rows by how far east each input reaches
+(longest row southernmost) cut the crossings from ten to three and the failure
+moved from `A3B3` to `OP0` — three is past what `lwire`'s single hop absorbs.
+Rows are now 6 apart with a waypoint in each gap so each leg crosses exactly
+one row; that got the bank legs furthest of anything tried, and OP1's band-5
+leg still does not land.
+
+## Commits (branch `phase2-design`)
+
+- `8d8ff53` input bank: one lever column for hier builds (flag, default off) + the two `lwire` fixes
+- `1d304af` cluster moved onto its own trunk rows, rows ordered by reach, stitch-failure dump
+
+Working tree: only `compose.py` and `LOG.md` touched. No files deleted. The two
+pre-existing `build.mcfunction.bak` / `build.schem.bak` are untouched and
+untracked. `scratch/` gained only new probe outputs (`alu4bank.pkl`,
+`alu4ctrl*.pkl`, `bankfail*.pkl`, `bank_trace*.txt`) and deleted nothing.
+
+## Reproduce
+
+    # control: must print 35082 blocks, byte identical to alu4merge.pkl
+    set REDSTONE_INPUT_BANK=0
+    python scratch/hier_stitch.py scratch/alu4bands.pkl scratch/cand_alu4hier.txt 900 scratch/alu4ctrl.pkl
+
+    # the bank (currently red on a gate net)
+    set REDSTONE_INPUT_BANK=1
+    python scratch/hier_stitch.py scratch/alu4bands.pkl scratch/cand_alu4hier.txt 900 scratch/alu4bank.pkl
+
+Both are hard-bounded: the stitch child is killed at the timeout you pass, and
+the outer shell timeout is a second bound.

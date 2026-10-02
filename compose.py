@@ -2153,8 +2153,15 @@ def compose_hier_parts(built, gates, recipe):
             # (1341,1)", whose only open margin is north of the bank).
             _reach = {n: max(offs[b] for (_, _, b) in _lev[n]) for n in _names}
             _rows = {}
+            # ponytail: rows 6 apart, not 4. The drop from a row to a band's
+            # stub crosses the rows south of it and lwire hops ONE foreign
+            # wire per walk, so the drop is split at the midpoint of every gap
+            # and each leg crosses exactly one row. A hop is a 5-cell
+            # staircase, so the gap has to hold it: 4 apart leaves 3 clear
+            # cells and the bridge support lands on the next row's wire
+            # (measured: "bridge support lands on wire at (8,1,-23)").
             for _i, _n in enumerate(sorted(_names, key=lambda n: -_reach[n])):
-                _rows[_n] = _bz0 - 16 - 4 * _i
+                _rows[_n] = _bz0 - 16 - 6 * _i
             for _try in range(400):
                 _cells = [(_cx, _rows[_n]) for _n in _names]
                 if not any(
@@ -2734,11 +2741,30 @@ def compose_hier_parts(built, gates, recipe):
         # field (measured: OP1 band2->band4, 642 cells through band 3, "path
         # re-enters (1341,1,2)"). Rows 4 apart, so no two bank nets touch.
         if n in _banknets:
+            # east along the row (open ground, north of every band), then down
+            # at the stub's own column, one gap at a time.
+            # ponytail: the east run is split at the street waypoints, the
+            # same split _relay uses. lwire will not route a span over ~350
+            # cells (measured: "no ground for OP1: (-4,-33) -> (1653,1)", a
+            # 1755-cell straight run on open ground), and every street is
+            # empty ground, so each leg is short and routable. Boosting is
+            # _try's job -- it hands _plant_repeaters the whole path.
+            def _bank_pts(d0, s0, _row=6):
+                _wx = [x for x in _streets
+                       if min(d0[0], s0[0]) < x < max(d0[0], s0[0])]
+                _pts = [d0] + [(x, d0[1]) for x in _wx]
+                if _pts[-1][0] != s0[0]:
+                    _pts.append((s0[0], d0[1]))
+                _z = d0[1]
+                while _z - _row > s0[1]:
+                    _pts.append((s0[0], _z - _row // 2))
+                    _z -= _row
+                _pts.append(s0)
+                return _pts
             if os.environ.get("REDSTONE_HIER_TRACE"):
                 print(f"hier bank {n} {drv}->{stub}", flush=True)
             try:
-                return _try(lambda: _legs([drv, (stub[0], drv[1]), stub],
-                                          "bank"))
+                return _try(lambda: _legs(_bank_pts(drv, stub), "bank"))
             except RuntimeError as e:
                 _err = e
         _spanlen = abs(stub[0] - drv[0]) + abs(stub[1] - drv[1])

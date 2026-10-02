@@ -1553,3 +1553,42 @@ it is the A/B for the trunk work.
 opens/finish dumps only cover everything downstream of a landed stitch, and the
 banked fan-out is the first thing that can fail before that -- which is why
 this session spent several iterations with no field to inspect.
+### Last iterations: what moved and what did not
+
+Ordered the trunk rows by reach (longest row southernmost) and spaced them 6
+apart with an explicit waypoint in each gap, so a drop crosses exactly one row
+per leg instead of three at once. Measured progression, same command each time:
+
+| change | failure |
+|---|---|
+| cluster at band-0 latitude, chain stub->stub | `hier stitch OP1: band 4 stub (1467,2): path re-enters (1341,1,2)`; band 5 `no ground (825,4)->(1653,1)` |
+| fan out from the cluster, no chain | `hier stitch A2: band 3 stub (1243,4): no ground for A2: (-4,2) -> (1123,1)` |
+| bank strategy first (north-margin route) | same, because the riser ran into the other nine stubs in the shared stub column |
+| one lever per trunk row, no risers | all ten input nets stitch; `hier stitch A3B3: band 4 stub (1566,63): no ground for A3B3: (1834,50) -> (1341,1)` |
+| rows ordered by reach | `hier stitch OP0: band 2 stub (821,2): bridge support lands on wire at (8,1,-23)` |
+| rows 6 apart, gapped drop waypoints | `hier stitch OP1: band 5 stub (1751,4): no ground for OP1: (-4,-33) -> (1653,1)` |
+| + street waypoints on the east run | unchanged -- `lwire` still will not route it |
+
+The trace for that last one is the useful artefact: OP1's bank route for band 4
+was `(-4,-33) -> (206,-33) -> (609,-33) -> (1005,-33) -> (1312,-33) ->
+(1467,-33) -> (1467,2)`. Every waypoint is on its own row or in a street, so
+the SHAPE is right and the failure is a routing-capacity problem, not a
+geometry one. OP1's row is the southernmost of the ten (it reaches furthest
+east), so its own drop crosses no rows at all, and that leg still does not
+land.
+
+**Two constraints worth not rediscovering:**
+- `lwire` will not route a span over ~350 cells even on empty ground (measured:
+  `no ground for OP1: (-4,-33) -> (1653,1)`, 1657 cells of clear north margin).
+  That is why `_relay` and `_streets` exist. The bank route splits at the
+  streets but gets NO repeater stations, because it goes through `_legs`, not
+  `_relay` -- and `_legs` leaves a 1657-cell east run to `_plant_repeaters`
+  alone. **Relaying the bank route instead of `_legs`-ing it is the next
+  change.**
+- `_bank_pts` must keep its waypoints ordered and gap-aligned; the drop leg
+  length is what decides whether a hop fits.
+
+Control after every one of these changes: `REDSTONE_INPUT_BANK=0` on
+`alu4bands.pkl` merges to 35082 blocks, byte identical to the shipped
+`alu4merge.pkl`, `io["levers"]` equal, 4/4 smoke OK. Re-verified after the last
+edit.
