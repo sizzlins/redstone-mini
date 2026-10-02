@@ -17,20 +17,28 @@ from recipe import expand_gates
 _ASTAR_CAP = int(_os.environ.get("REDSTONE_ASTAR_CAP", "100000"))
 
 # ponytail: 3D wires Attempt 1 (tiles stay flat). y=1 ground, y=2 ramp,
-# y=3 flyover, and NEGATIVE y for trenches. Level-change moves cost
-# _STEPCOST vs flat 1 (priced, ground preferred; seals pay for height).
+# y=3..4 flyover (tall bridge peaks at 4), and NEGATIVE y for trenches.
+# Level-change moves cost _STEPCOST vs flat 1 (priced, ground preferred;
+# seals pay for height).
 #
 # The build may use as much vertical room as it likes in BOTH directions:
 # a route can leave a lever at y=1, climb, fly over the tile band and come
 # back down to a torch host — or trench below the surface when the ground
-# above is saturated. Bounds are per astar call (ymin/ymax); these
-# defaults are the maze's verified y=1..3 band, and compose passes a wider
-# one (see compose._ASTAR_YMIN/_ASTAR_YMAX). A search needs *some* bound
-# to terminate, so "unbounded" is a wide default rather than a wall.
-# Raise REDSTONE_YMIN/REDSTONE_YMAX (or the COMPOSE_ variants) if a dense
-# build ever names a sealer needing a deeper/wider deck.
+# above is saturated. Bounds are per astar call (ymin/ymax); the maze
+# default is y=1..4 (widened upward once the tall hop and the sim support
+# gate were proven: tall live-fire sim-green, full layout suite green).
+# The floor stays at 1: downward search in the FIRST attempt poisons
+# candidate selection (ground cobble roofs trench slopes, so every
+# candidate self-lids and the proven y<=3 path is never returned —
+# measured: gate-fed D-latch nD died '3D: self-lid' at ymin=0).
+# Trenches stay available one step later: compose's wide fallback band
+# (-4..6) and explicit REDSTONE_YMIN=0, both validated by the trench e2e
+# proof. A search needs *some* bound to terminate, so "unbounded" is a
+# wide default rather than a wall. Raise REDSTONE_YMIN/REDSTONE_YMAX (or
+# the COMPOSE_ variants) if a dense build ever names a sealer needing a
+# deeper/wider deck.
 _YMIN = int(_os.environ.get("REDSTONE_YMIN", "1"))
-_H = int(_os.environ.get("REDSTONE_YMAX", "3"))
+_H = int(_os.environ.get("REDSTONE_YMAX", "4"))
 _STEPCOST = 4
 # ponytail: 2 = ground-first passes (a net may only fly after every net has had
 # its flat attempt). 1 = fly as soon as a net is stuck. Env-switched because the

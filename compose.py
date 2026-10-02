@@ -278,8 +278,11 @@ def lwire(ctx, sup, guard, a, b, net, avoid=frozenset()):
     # with layout._support (torch-hug guard) and stamped here, never during
     # search, so a flyover cannot lid its own later slope. Self-lid and
     # support refusals fall through to the original loud error.
-    # The proven y=1..3 band runs first; the full vertical envelope
+    # The proven y=1..4 band runs first; the full vertical envelope
     # (trenches + high decks) only runs if narrow finds nothing.
+    # (Narrow starts at 1, not 0: ground cobble roofs trench slopes, so a
+    # downward first attempt self-lids its own candidates — layout.py
+    # documents the measured case. Trenches come via the wide band.)
     # ponytail: REDSTONE_NO3D=1 skips astar overflights entirely (flat
     # corridors + flat astar + _walk hops only). Hier stitches fly y=2/3
     # highways over whole partition fields and slope-short against partition
@@ -288,7 +291,7 @@ def lwire(ctx, sup, guard, a, b, net, avoid=frozenset()):
     # _walk's 5-cell hops stay (single columns, lidded); only the long
     # blind flights go. Env-gated; greens never set it.
     _bands3d = [] if os.environ.get("REDSTONE_NO3D") else (
-        (1, 3), (_WIDE_YMIN, _WIDE_YMAX))
+        (1, 4), (_WIDE_YMIN, _WIDE_YMAX))
     for _ymin, _ymax in _bands3d:
         _fly = _astar_wrap(ctx, sup, guard, a, b, net, avoid, flat=False,
                            ymin=_ymin, ymax=_ymax)
