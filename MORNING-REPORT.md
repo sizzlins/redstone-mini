@@ -45,6 +45,31 @@ passes power down. `export.py` emits explicit `type=bottom` for hand slabs, so
 half-height never has to be modelled — the only slab states we accept are the
 transparent single ones; `type=double` is an opaque full block by design.
 
+## Target block: modelled with its features (fd0aaeb, 2826ed6)
+
+Read minecraft.wiki/w/Target first, then implemented every feature it
+states: opaque conductive cube (joins `cob`, so slope support / lid cutting /
+loop flood / strong-power conduction come free), timed emission at the exact
+1..15 hit level (4 redstone ticks for ordinary projectiles, 10 for arrows and
+tridents, from the wiki's 8/20 game ticks), and redirection — a target is a
+dust connection endpoint even while idle, wired into both the sim's
+block-power term and `wire_bid`, so the baked wire state matches.
+
+Hits are a stimulus, never a block state: `_run_vec(..., target_hits=)` plus a
+third `sim_pulse` schedule element, with cross-phase pulses preserved through
+absolute expiry. A bid carrying `power=5` is rejected (a file cannot say when
+the hit happened), an unknown projectile raises, and `run_scalar` validates
+the stimulus then declines so `verify_par` falls back to the serial
+authority. Green: new target oracle in sim.py (levels, both clocks, expiry,
+comparator read, lid cut, redirection, cross-phase pulse, bad-stimulus
+guards), a target-endpoint test in layout.py, `diff_engine` ALL IDENTICAL,
+alu1 12,294 blocks and ctrl_decode unchanged.
+
+Two bugs found on the way, both pre-existing: the duplicate-block guard added
+last session was too strict (it rejected the router's own duplicate cobble
+pillar at (24,2,11) — the gate-fed D-latch test never reached it before), and
+`finish_assembly` had never been given a target-aware wire shape.
+
 ## cpu4: DONE, 128/128 — root cause was stale diodes, not the router
 
 R0Q0's wall is gone. Forensics (9 bounded probes, all offline against

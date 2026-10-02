@@ -1151,3 +1151,39 @@ panes/stained/wood slabs (still loud).
    no code for zero fires. Honest boundary: auto-glass has no routing
    payoff in clean fields (coupling avoidance, not stamping, is what
    shortens routes); its value is hand-designed insulation, which verifies.
+
+## Target block: full wiki physics (2026-10-02, fd0aaeb)
+
+Wiki Target page read before modelling (minecraft.wiki/w/Target). Features
+and where each one landed:
+
+- **Opaque, full cube, conductive** (1.19+ `22w13a`): `minecraft:target`
+  joins `cob` (so slope-support, lid-cutting, loop-flood and strong-power
+  conduction all come from the one set that already encodes them) and joins
+  `_src3` / `_sup3` / `_flood3` in the checkers.
+- **Emits 1..15 for a clock**: ordinary projectiles 8 game ticks, arrows and
+  tridents 20, i.e. 4 and 10 redstone ticks (`_TARGET_TICKS`). The projectile
+  list is a frozenset from the wiki page and an unknown one raises. `tg`
+  carries the EXACT level, so dust on top, dust beside and a comparator
+  behind all read the hit accuracy instead of a generic 15; `tx` holds the
+  deactivation tick so a second hit renews the clock and a stale event
+  clears nothing (`F`/`G` events, `wake` on both edges).
+- **Stimulus is an argument, never the block**: `_run_vec(..., target_hits=)`
+  and a third `sim_pulse` schedule element. A bid carrying `power=5` is
+  rejected, because a file cannot say when the hit happened.
+- **Cross-phase pulses**: `sim_pulse` tracks absolute expiry and passes
+  `("hold", level, remaining)` per phase, so a 4-tick snowball hit can span
+  a short phase and expire in the next one (asserted).
+- **Redirection**: `dust_points(cell, dust, targets=)` treats a target as a
+  connection endpoint even while idle, which is the wiki's "redirects
+  adjacent dust toward itself". Wired into the sim's block-power term and
+  `wire_bid`, so the baked .schem/.mcfunction wire state matches. Empty by
+  default: bit-identical on every target-free build (diff_engine ALL
+  IDENTICAL, alu1/ctrl_decode green).
+- Not modelled: the observer (bedrock does not see target updates, and the
+  repo has no observer at all).
+
+Cost note: simvec's fixed tables model only the idle role; a build with
+timed hits raises NotImplementedError from `run_scalar` after validating
+the stimulus, and `verify_par` falls back to the serial authority. Zero
+behavior change for generated builds, which never stamp a target.
