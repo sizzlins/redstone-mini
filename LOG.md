@@ -1010,3 +1010,80 @@ so any probe script WITHOUT `if __name__ == '__main__':` re-runs top-level in
 every child = fork bomb that eats the timeout. All probes here are main-
 guarded; REDSTONE_SERIES_VERIFY=1 forces the serial engine for quick probes.
 Same class the daemon guard already covers — repo rule: no unguarded probe.
+
+## Finish session 2026-10-02: cpu4 root-caused, 128/128, bands widened
+
+### cpu4 R0Q0: stale pre-flip diodes, not a router bug (no code fix needed)
+
+Handoff's live wall (R0Q0 lit-when-dark on a no-write vector; 1068/1068 lit).
+Forensics, each step bounded and offline against cpu4merge3.pkl:
+
+1. Latch neighbourhood (merge (652,48)): intact tile, S/R rows present.
+2. Same-y foreign adjacency to R0Q0/S/R: 0. Slope-coupled foreign: 0.
+   Torch/lever beside: 0. Foreign repeater front/back onto R0Q0: 0.
+   Junction mixing: none. Flat AND slope-closed front~back rings: none.
+3. Per-vector sweep (128 serial _run_vec): 16 mismatches, ALL dark-when-lit
+   (R0Q0 on odd-low vectors, Y1 on high vectors), ticks=0 throughout.
+4. Bisection: live REGW=0 everywhere incl. driver cell while eval says True;
+   C_rterm/C_lterm dark; C_l1 AND starved with C_n2/C_n1/C_n0 lit only 9
+   cells each at the source end.
+5. Band-0 ctx (cpu4bands2.pkl) is HEALTHY: 122 C_n2 dust + 16 diodes, trunk
+   fully wired. (A mid-hunt scare about "diodes on air" was my own frame
+   error — io/nets are block space, repeaters merge space; the handoff
+   warned twice and I still mixed them. Row re-check in one frame: trunk
+   intact.)
+6. The 9-lit-cells pattern reproduces in BAND 0 STANDALONE (sub has no
+   outputs, so the partition sim gate never checked it — "bands green" was
+   vacuous for band 0).
+7. Root cause: band-0 C_n2 diodes face EAST on an eastward run. Post-flip
+   convention (29fc565, vanilla output->input) says WEST. cpu4bands2.pkl was
+   built 10/1 6:16PM, the flip committed 10/2 10:56AM. Every pre-flip diode
+   reads backwards under the current sim (rep_on takes the downstream cell
+   as its back) and never fires. Trunk dies at cell 9; C_l1 starves; REGW
+   never lights; registers never write.
+
+Fix (artifacts, not code): `hier_bands.py scratch/cand_cpu4hier.txt
+scratch/cpu4bandsNEW.pkl` → 10/10 green in 69s, diodes face WEST.
+`hier_stitch.py` → MERGE 74473 blocks, SMOKE 0000000/1111111/0101010/
+1010101 ALL OK (0101010 was the Y1 red). `verify_par.py` ×8 calls →
+**VERIFY OK: 128 vectors, 16 chunks green.** Canonical caches replaced
+(cpu4bands2.pkl, cpu4merge3.pkl + its verify.json now hold current-engine
+greens). recipes/cpu4.txt already identical to cand (no copy needed).
+Lesson: the engine fingerprint voids VERIFY caches, but band/merge PKLs are
+build INPUTS — a physics-meaning change must rebuild them; nothing enforces
+that today (future work: fingerprint the band cache too).
+
+### try_bridge for/else (pre-existing crash, mine to trip)
+
+Dense alu4's maze fallback hit `UnboundLocalError: _sup` in try_bridge:
+when every candidate refuses, execution falls out of the axis loop into
+`cond.update(_sup)` unbound. `git show` proves the shape predates the tall
+bridge (same structure, 3-tuple keys) — it just never fired before. Fix:
+`break` after a stamp + `for...else: continue` (first-stamp-wins was already
+de facto: success returns True, unwound failure returns False). Suites
+green, compose_check bit-identical.
+
+### Default bands widened upward, with a measured NO downward
+
+- Maze `_H` 3→4, compose narrow (1,3)→(1,4). Full suites green,
+  compose_check bit-identical, alu1 recomposed under final defaults:
+  12294 blocks (identical count/trajectory), VERIFY GREEN.
+- Negative result, kept: `_YMIN` 1→0 breaks gate-fed D-latch seed (nD
+  3D-self-lid). Mechanism: ground cobble roofs trench slopes, so the wider
+  band returns only self-lidding candidates and the proven path is never
+  returned (the exact failure astar's comment predicted). Trenches stay in
+  the wide fallback band + REDSTONE_YMIN=0 (both proven by the trench e2e).
+  sim.py is the tripwire that caught it — that check earned its keep.
+
+### Vertical stacking verdict (TODO with teeth, not a half-migration)
+
+- Proven: hand-placed NOT at y=2 on a pillar platform sim-greens (ticks 1).
+  Elevated physics works; sim/export/finish are y-generic.
+- Blocked: ~140 sites across layout/compose/tiles/sim hardcode y==1 or 2D
+  (x,z) keys (solid/rings/junctions/pos/netspec/route endpoints/seal).
+  Measured by pattern count, not estimate.
+- Decision: no y0-threading through placers alone — stamping works on an
+  empty field but routing/checks still assume y==1, so it pastes unroutable
+  tiles. End-to-end stacking needs the 2D→3D map migration (or
+  deck-segregated 2D maps per level). Anchor comment at tiles.new_ctx.
+  Compiler project, correctly sized, not an overnight task.

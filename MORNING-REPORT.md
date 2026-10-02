@@ -1,3 +1,55 @@
+# MORNING-REPORT — finish session 2026-10-02 (all three deferred items closed)
+
+## cpu4: DONE, 128/128 — root cause was stale diodes, not the router
+
+R0Q0's wall is gone. Forensics (9 bounded probes, all offline against
+cpu4merge3.pkl): coupling clean at every level (same-y/slope/torch/lever/
+repeater/junction/ring — all zero), per-vector sweep found 16 dark-when-lit
+mismatches, bisection led to REGW dark everywhere incl. its driver cell,
+then to C_n2's trunk lit only 9 cells. Band 0's own ctx is healthy (122 dust
++ 16 diodes). Root cause: cpu4bands2.pkl was built 10/1 6:16PM, commit
+29fc565 flipped diode facing to vanilla 10/2 10:56AM — every pre-flip diode
+reads backwards under the current sim and never fires. Fix = rebuild
+artifacts, zero code: hier_bands → 10/10 green, hier_stitch → 74473 blocks,
+smokes 0000000/1111111/0101010/1010101 OK, verify_par → 128/128 chunks green.
+Canonical caches (cpu4bands2.pkl, cpu4merge3.pkl + verify.json) replaced.
+Lesson: the engine fingerprint voids verify caches, but band/merge PKLs are
+build INPUTS — nothing forces their rebuild after a physics-meaning change.
+
+## Default bands widened upward: maze 1..4, compose narrow (1,4)
+
+Suites green, compose_check bit-identical, alu1 recomposed under final
+defaults with identical geometry (12294 blocks) and VERIFY GREEN. Measured
+NO downward: ymin=0 as a first-attempt default breaks gate-fed D-latch
+(nD 3D-self-lid — ground cobble roofs trench slopes, candidates all
+self-lid). Trenches stay in the wide fallback + REDSTONE_YMIN=0. Two commits:
+try_bridge for/else (pre-existing UnboundLocalError when every candidate
+refuses — proven pre-tall-bridge via git show, it just never fired before)
+and the band change.
+
+## Vertical stacking: physics proven, compiler migration scoped as TODO
+
+Hand-placed NOT at y=2 on pillars sim-greens. End-to-end needs the 2D→3D map
+migration (~140 y==1/2D-key sites measured across 4 files) — a compiler
+project, not an overnight task. Anchor comment at tiles.new_ctx says exactly
+where to start and what not to do (no lone y0-threading: it pastes
+unroutable tiles). Full analysis in LOG.md.
+
+## Fleet (this engine, verify=True throughout)
+
+- micro1 OK (2925), alu1 OK (12294, green), ctrl_decode OK (4923), cpu4 OK
+  (128/128) — all green.
+- alu4: fresh compose still grinding at handoff (long rung, CPU-busy, no
+  crash — the UnboundLocalError on its exact path is fixed). Its old merge
+  pkl is pre-flip (backwards diodes) so re-verifying it would false-red;
+  the honest re-gate is the running fresh compose. Resume: dense_status.py
+  recipes/alu4.txt — or rebuild its bands like cpu4 if compose stays loud.
+- Probe rule (bit twice now): main-guard every probe or set
+  REDSTONE_SERIES_VERIFY=1 — unguarded + spawn Pool = fork bomb. An outside
+  agent correctly diagnosed my leftover trench_e2e.py; tree killed.
+
+---
+
 # MORNING-REPORT — overnight 2026-10-02: vertical envelope DONE
 
 ## What now builds (was red, now green)

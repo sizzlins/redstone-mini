@@ -6,6 +6,16 @@ from core import DIRS
 
 
 def new_ctx(blocks, solid, rings, wires, junctions, repeaters, pos, recs, sup):
+    # ponytail: 2D maps are the reason tiles cannot stack (see LOG 2026-10-02
+    # "vertical stacking verdict"). solid/rings/junctions/pos are keyed
+    # (x,z); ~140 sites across layout/compose/tiles/sim assume y==1 at every
+    # layer boundary (placement, netspec, route endpoints, seal, checks).
+    # Elevated tile PHYSICS is proven (hand-placed NOT at y=2 sim-greens);
+    # end-to-end stacking needs these maps keyed 3D (or deck-segregated 2D
+    # maps per level), which is a compiler migration, not a tile edit.
+    # Do not thread a y0 parameter through the placers alone: stamping works
+    # on an empty field but routing/checks still assume y==1, so a half
+    # migration pastes unroutable tiles. Migrate the maps or don't start.
     return SimpleNamespace(blocks=blocks, solid=solid, rings=rings, wires=wires,
                            junctions=junctions, repeaters=repeaters, pos=pos,
                            recs=recs, sup=sup, tile_adj={}, ports=set())
