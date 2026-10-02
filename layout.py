@@ -77,6 +77,14 @@ def _src3(blocks):
             or _slab_double(bid)}
 
 
+def _ig3(blocks):
+    """Hand glass/slab cells (3D). Router-blind support/insulation the search
+    may reuse (never stamp: stamping into one is a two-blocks-one-cell
+    paste collision, caught loud by finish_assembly's duplicate check)."""
+    return {(x, y, z) for x, y, z, bid in blocks
+            if base(bid) == "minecraft:glass" or base(bid) in _SLAB_BIDS}
+
+
 def _sup3(blocks):
     return {(x, y, z) for x, y, z, bid in blocks
             if base(bid) in ("minecraft:cobblestone", "minecraft:stone",
@@ -142,7 +150,7 @@ def wire_bid(cell, dust):
         f"{_DIRNAME[d]}={'side' if d in pts else 'none'}" for d in DIRS) + ",power=0]"
 
 
-def _support(cell, net, solid, wires, sup, reps, guard):
+def _support(cell, net, solid, wires, sup, reps, guard, reuse=frozenset()):
     """Support under an off-ground (y>=2 or y<=0) wire cell: None=reuse,
     (x,y,z)=stamp once, False=infeasible. Never share foreign pillars (no
     refcounting), never reuse torch-attached cobble (dust powers it, flips
@@ -152,6 +160,11 @@ def _support(cell, net, solid, wires, sup, reps, guard):
     y==1 is the surface: it rests on the world, so no support. Above and
     below it alike, a wire needs a real block under it — which is what lets
     a route trench downward when the ground above is saturated.
+
+    reuse: hand glass/slab cells (ownerless insulation). Reusing one stamps
+    nothing, so a route can slope onto hand glass without burying it.
+    Ownerless is what makes sharing safe (foreign cobble can be powered;
+    glass never can). Empty by default: identical behavior.
     """
     x, y, z = cell
     if y == 1:
@@ -170,6 +183,8 @@ def _support(cell, net, solid, wires, sup, reps, guard):
     w = wires.get((b[0], b[1] + 1, b[2]))
     if w is not None and w != net:
         return False
+    if b in reuse:
+        return None
     return b
 
 
@@ -379,13 +394,16 @@ def _has_support(cell, sup, solid):
     return solid.get((b[0], b[2]), (None,))[0] == "cobble"
 
 
-def astar(starts, goal, net, W, D, solid, rings, wires, junctions, margin=None, blocked=None, congest=None, guard=None, sup=None, reps=None, cob3=None, flat_only=False, aircells=frozenset(), ymin=None, ymax=None):
+def astar(starts, goal, net, W, D, solid, rings, wires, junctions, margin=None, blocked=None, congest=None, guard=None, sup=None, reps=None, cob3=None, flat_only=False, aircells=frozenset(), ymin=None, ymax=None, reuse=frozenset(), ig=frozenset()):
     """6-dir maze route for one wire (multi-source: fanout taps nearest own wire).
     None if blocked (loud fail, never silent wrong). Cells are (x, y, z),
     y in 1.._H; starts/goal are y=1 tile ports. Guards are per-level: y=1
     keeps solid/ring/torch-hug rules, y>=2 ignores tile columns (overflight)
     and couples only via true slope links (support + no lid, sim's rule).
-    Supports are feasibility-checked here, stamped once by route()."""
+    Supports are feasibility-checked here, stamped once by route().
+    reuse/ig: hand glass/slab cells — reusable as supports (ownerless, never
+    stamped), never occupiable (a wire inside one is a paste collision).
+    Empty by default: identical behavior."""
     if sup is None:
         sup = {}
     # per-call vertical envelope: the maze keeps its verified y=1.._H band
@@ -474,6 +492,9 @@ def astar(starts, goal, net, W, D, solid, rings, wires, junctions, margin=None, 
             return False
         if cell == goal:
             return True
+        if cell in ig:
+            return False  # hand glass/slab: reusable as support, never
+                          # occupiable (two blocks, one cell, corrupt paste).
         if wg2(cell) not in (None, net):
             return False
         if y == 1:
@@ -585,12 +606,12 @@ def astar(starts, goal, net, W, D, solid, rings, wires, junctions, margin=None, 
                     # level change: support under the upper endpoint (stamped
                     # once by route(), never during search) + lid over the
                     # lower endpoint clear, else the slope never conducts.
-                    if my != 1 and _support(m, net, solid, wires, sup, reps, guard) is False:
+                    if my != 1 and _support(m, net, solid, wires, sup, reps, guard, reuse) is False:
                         continue
                     lo = cell if my > y else m
                     if lid((lo[0], lo[1] + 1, lo[2])):
                         continue
-                elif my != 1 and _support(m, net, solid, wires, sup, reps, guard) is False:
+                elif my != 1 and _support(m, net, solid, wires, sup, reps, guard, reuse) is False:
                     continue
                 if m == goal and (m[0], m[2]) in junctions and net in junctions[(m[0], m[2])]:
                     pass  # OR junction: wired-OR is the gate
@@ -766,6 +787,15 @@ def finish_assembly(blocks, solid, wires, rings, junctions, repeaters, pos):
     repeaters = {(x - minx, y, z - minz): v for (x, y, z), v in repeaters.items()}
     W, D = maxx - minx + 1, maxz - minz + 1
     out = list(blocks)
+    # ponytail: one coordinate, one block. A wire stamped into a glass/slab
+    # cell (or any double-stamp the guards missed) pastes as one block while
+    # the sim sees two — silent wrongness. Loud here instead. O(N).
+    _seenxy = {}
+    for _b in out:
+        _k = (_b[0], _b[1], _b[2])
+        if _k in _seenxy:
+            raise RuntimeError(f"duplicate block at {_k}: {_seenxy[_k]} vs {_b[3]}")
+        _seenxy[_k] = _b[3]
     # ponytail: one component per cell; a repeater wins over dust. The router
     # can re-stamp a wire label onto a tile repeater cell (tile dels it, route
     # re-adds it), which modelled dust+repeater at once -- a phantom loop that

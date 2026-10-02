@@ -141,14 +141,12 @@ def _tables_from(P, inp):
     """
     dust, torch, lampat, rep, rblk, cob, repdelay, lever, lampnet, \
         attach_rev, comp, leveratt, glass, slab = P
-    # ponytail: glass/slab builds decline the fast engines (same precedent as
-    # the latch hold-seed: refuse rather than guess). The tables below mirror
-    # sim's cobble-only rules bit-for-bit; extending them to three support
-    # classes is optimisation work, and _serial_shard already falls back to
-    # sim._run_vec on NotImplementedError. Serial stays the authority.
-    if glass or slab:
-        raise NotImplementedError(
-            "simvec: no glass/slab tables; use sim._run_vec")
+    # ponytail: transparent power sets (glass/slab feature, mirrors sim):
+    # pwr holds power (cobble/stone + slabs; glass never), sup is any solid
+    # rest (pwr + glass). Lid tests stay opaque-cobble. Identical tables when
+    # glass/slab are absent, so the bit-identity gate cannot tell.
+    pwr = cob | slab
+    sup = pwr | glass
 
     def back(c, t):
         """Does the repeater/comparator at `c` feed `t`?"""
@@ -170,7 +168,7 @@ def _tables_from(P, inp):
     d_below, d_dirs = {}, {}
     for c in dust:
         x, y, z = c
-        d_below[c] = ((x, y - 1, z) in torch, (x, y - 1, z) in cob)
+        d_below[c] = ((x, y - 1, z) in torch, (x, y - 1, z) in pwr)
         dirs = []
         for dx, dz in DIRS:
             m = (x + dx, y, z + dz)
@@ -183,6 +181,10 @@ def _tables_from(P, inp):
                 code = 3
             elif m in cob:
                 code = 4
+            elif m in slab:
+                code = 8  # powerable like 4, but transparent: never an
+                          # opaque source (cup) and never a lid (cdn test
+                          # passes it, exactly like sim's `not in cob`).
             elif m in dust:
                 code = 5
             elif m in rep:
@@ -196,13 +198,15 @@ def _tables_from(P, inp):
                          and (x, y + 1, z) not in cob) else None
             dn = (x + dx, y - 1, z + dz)
             cdn = dn if (dn in dust and code != 4
-                         and (x, y - 1, z) in cob) else None
+                         and (x, y - 1, z) in sup) else None
             dirs.append((m, code, payload, cup, cdn))
         d_dirs[c] = dirs
 
     # ---- cobble: weak power, strong power ------------------------------
+    # ponytail: loop runs over pwr (cobble/stone + slabs); glass never holds
+    # power so it needs no row. Empty delta when slabs are absent.
     c_dust, c_rep, c_torch, c_lev, c_rblk, c_up = {}, {}, {}, {}, {}, {}
-    for c in cob:
+    for c in pwr:
         x, y, z = c
         dd, rr, tt, ll = [], [], [], []
         rblk_side = False
@@ -231,7 +235,7 @@ def _tables_from(P, inp):
         b = (c[0] - d[0], c[1], c[2] - d[1])
         if b in dust:
             r_src[c] = ("d", b)
-        elif b in cob:
+        elif b in pwr:
             r_src[c] = ("c", b)
         elif b in lever:
             r_src[c] = ("l", lever[b])
@@ -256,7 +260,7 @@ def _tables_from(P, inp):
             return ("k", cell) if back(cell, t) else None
         if cell in dust:
             return ("d", cell)
-        if cell in cob:
+        if cell in pwr:
             return ("c", cell)
         return None
 
@@ -290,15 +294,17 @@ def _tables_from(P, inp):
         t_dead[c] = a in rblk   # on a redstone block: permanently off
 
     # ---- wake map: every cell -> the cells its change re-evaluates -----
+    # ponytail: slab vertices included (slab power changes must propagate);
+    # glass excluded (never changes). Edges join pwr.
     wake = {}
-    for c in set(dust) | set(cob) | set(rep) | set(comp) | set(torch):
+    for c in set(dust) | set(pwr) | set(rep) | set(comp) | set(torch):
         x, y, z = c
         out = []
         for d in DIRS:
             m = (x + d[0], y, z + d[1])
             if m in dust:
                 out.append(("d", m))
-            elif m in cob:
+            elif m in pwr:
                 out.append(("c", m))
             elif m in rep:
                 # ponytail: the REAR test, not back(). A repeater must be
@@ -318,7 +324,7 @@ def _tables_from(P, inp):
             m = (x, y + vy, z)
             if m in dust:
                 out.append(("d", m))
-            elif m in cob:
+            elif m in pwr:
                 out.append(("c", m))
         for d in DIRS:
             for vy in (1, -1):
@@ -339,7 +345,7 @@ def _tables_from(P, inp):
                    for e in DIRS if e != d):
                 arms.append((x + d[0], y, z + d[1]))
         l_arm[cell] = arms
-        l_cob[cell] = [m for m in _orth(cell) if m in cob]
+        l_cob[cell] = [m for m in _orth(cell) if m in pwr]
         l_torch[cell] = [m for m in _orth(cell)
                          if m in torch and torch[m] != cell]
         l_lev[cell] = [lever[m] for m in _orth(cell) if m in lever]
@@ -348,7 +354,7 @@ def _tables_from(P, inp):
         l_up[cell] = up if up in dust else None
 
     return {"dust": dust, "torch": torch, "rep": rep, "comp": comp,
-            "cob": cob, "repdelay": repdelay, "inp": inp,
+            "cob": cob, "pwr": pwr, "repdelay": repdelay, "inp": inp,
             "d_below": d_below, "d_dirs": d_dirs,
             "c_dust": c_dust, "c_rep": c_rep, "c_torch": c_torch,
             "c_lev": c_lev, "c_rblk": c_rblk, "c_up": c_up,
@@ -357,7 +363,7 @@ def _tables_from(P, inp):
             "wake": wake, "l_arm": l_arm, "l_cob": l_cob, "l_torch": l_torch,
             "l_lev": l_lev, "l_rblk": l_rblk, "l_up": l_up,
             "lampnet": lampnet,
-            "ncells": len(dust) + len(cob) + len(rep) + len(comp) + len(torch)}
+            "ncells": len(dust) + len(pwr) + len(rep) + len(comp) + len(torch)}
 
 
 def _dust_lvl(c, st, pw, pbs, tl, ron, con, inp, O):
@@ -392,7 +398,7 @@ def _dust_lvl(c, st, pw, pbs, tl, ron, con, inp, O):
             h = live & inp[payload]
         elif code == 3:
             h = live
-        elif code == 4:
+        elif code == 4 or code == 8:
             h = live & pbs.get(m, 0)
         elif code == 6:
             h = live & ron.get(m, 0)
@@ -536,6 +542,7 @@ def run(ins, blocks, io, combos, tick_cap, step_cap, stall, state_out=None):
         inp[name] = m
     st = _pre(blocks, io, inp)
     dust, cob, rep, comp = st["dust"], st["cob"], st["rep"], st["comp"]
+    pwr = st["pwr"]
     torch = st["torch"]
     pw, pb, pbs, tl, ron, con = {}, {}, {}, {}, {}, {}
     nz, wake, repdelay = O.nz, st["wake"], st["repdelay"]
@@ -546,7 +553,7 @@ def run(ins, blocks, io, combos, tick_cap, step_cap, stall, state_out=None):
     b0 = buckets[0]
     for c in dust:
         b0.append(("d", c))
-    for c in cob:
+    for c in pwr:
         b0.append(("c", c))
     for c in torch:
         b0.append(("t", c))
@@ -799,7 +806,7 @@ def _dust_lvl_s(c, st, pw, pbs, tl, ron, con, vec):
                 return 15
         elif code == 3:
             return 15
-        elif code == 4:
+        elif code == 4 or code == 8:
             if pbs.get(m, False):
                 return 15
         elif code == 5:
@@ -939,6 +946,7 @@ def run_scalar(vec, ctx, init=None, until=None, tick_cap=None, step_cap=None,
             "run_scalar: no latch pre-solve; use sim._run_vec when init is given")
     dust, torch, lampat, rep, rblk, cob, repdelay, lever, lampnet, \
         attach_rev, comp, leveratt, glass, slab = ctx
+    pwr = cob | slab
     st = _tables(ctx)
     pw, pb, pbs = {}, {}, {}
     tl = {c: False for c in torch}
@@ -953,7 +961,7 @@ def run_scalar(vec, ctx, init=None, until=None, tick_cap=None, step_cap=None,
     b0 = buckets[0]
     for c in dust:
         b0.append(("d", c))
-    for c in cob:
+    for c in pwr:
         b0.append(("c", c))
     for c in torch:
         b0.append(("t", c))
