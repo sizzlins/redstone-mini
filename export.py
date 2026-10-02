@@ -1,5 +1,6 @@
 """Export: mcfunction, schem, textured HTML preview."""
 
+import base64
 import json
 
 from core import base
@@ -109,6 +110,55 @@ def export_mcfunction(blocks, path, oy=64):
 
 
 
+def _pack_states(st, data):
+    """Pack STATES["vectors"] into base64 rows the page indexes by input key.
+
+    1024 vectors x 14634 dust cells as JSON is ~1.6GB of page. One nibble of
+    power per dust cell (4 bits), one bit per repeater/torch/comparator, one
+    byte of lamp bits per vector: ~10MB, exact. Row order matches the page's
+    InstancedMesh build order (wireBs/repBs/torchHeads/cmpBs), so the page
+    indexes by instance number and never builds a coordinate map.
+    """
+    v = st["vectors"]
+    keys = sorted(v)
+    order = {tag: ["%d,%d,%d" % tuple(d["p"]) for d in data if d["b"] == bid]
+             for tag, bid in (("w", "minecraft:redstone_wire"),
+                              ("r", "minecraft:repeater"),
+                              ("t", "minecraft:redstone_wall_torch"),
+                              ("c", "minecraft:comparator"))}
+    order["l"] = list(st["lamps"])
+
+    def nibbles(ps, src):
+        """One 4-bit power level per dust cell, two cells to a byte."""
+        nb = (len(ps) + 1) // 2
+        out = bytearray()
+        for r in src:
+            b = bytearray(nb)
+            for i, p in enumerate(ps):
+                b[i >> 1] |= r.get(p, 0) << ((i & 1) * 4)
+            out += b
+        return nb, base64.b64encode(bytes(out)).decode()
+
+    def bits(ps, src):
+        """One flag per cell, eight cells to a byte."""
+        nb = (len(ps) + 7) // 8
+        out = bytearray()
+        for r in src:
+            b = bytearray(nb)
+            for i, p in enumerate(ps):
+                if r.get(p):
+                    b[i >> 3] |= 1 << (i & 7)
+            out += b
+        return nb, base64.b64encode(bytes(out)).decode()
+
+    pk = {"keys": keys}
+    for tag, field in (("w", "w"), ("r", "r"), ("t", "t"), ("c", "o"), ("l", "lamps")):
+        nb, blob = (nibbles if tag == "w" else bits)(order[tag],
+                                                      [v[k][field] for k in keys])
+        pk[tag + "s"], pk[tag] = nb, blob
+    return pk
+
+
 def export_html(blocks, size, path, label="build", extra=None):
     W, D = size
     # ponytail: floor renders as one plane, not W*D cubes. Keeps big previews fast.
@@ -210,12 +260,12 @@ for(const k in groups){const arr=groups[k];const b0=arr[0];
 const wireBs=B.filter(b=>b.b==='minecraft:redstone_wire');
 let dotI=null,armEIM=null,armNIM=null;const armE=[],armN=[];
 if(wireBs.length){dotI=new T.InstancedMesh(dotG,redM,wireBs.length);
-wireBs.forEach((b,idx)=>{dummy.position.set(b.p[0],b.p[1]-0.41,b.p[2]);dummy.updateMatrix();dotI.setMatrixAt(idx,dummy.matrix);if(b.a&1)armE.push([b,1,0]);if(b.a&2)armE.push([b,-1,0]);if(b.a&4)armN.push([b,0,1]);if(b.a&8)armN.push([b,0,-1]);});
+ wireBs.forEach((b,idx)=>{dummy.position.set(b.p[0],b.p[1]-0.41,b.p[2]);dummy.updateMatrix();dotI.setMatrixAt(idx,dummy.matrix);if(b.a&1)armE.push([b,1,0,idx]);if(b.a&2)armE.push([b,-1,0,idx]);if(b.a&4)armN.push([b,0,1,idx]);if(b.a&8)armN.push([b,0,-1,idx]);});
 s.add(dotI);
 for(const [lst,geo,isE] of [[armE,armEG,true],[armN,armNG,false]]){if(!lst.length)continue;const im=new T.InstancedMesh(geo,redM,lst.length);lst.forEach(([b,dx,dz],idx)=>{dummy.position.set(b.p[0]+dx*0.31,b.p[1]-0.41,b.p[2]+dz*0.31);dummy.updateMatrix();im.setMatrixAt(idx,dummy.matrix);});s.add(im);if(isE)armEIM=im;else armNIM=im;}
 }
 // ponytail: levers/torches are 2 boxes each (base+stick, stick+head), not cubes.
-const leverMeshes={},torchHeads={};
+const leverMeshes={},torchHeads={};let torchN=0;
 for(const b of B){
  if(b.b==='minecraft:lever'){
   const m1=new T.Mesh(leverBaseG,brownM);m1.position.set(b.p[0],b.p[1]-0.35,b.p[2]);s.add(m1);
@@ -229,7 +279,7 @@ for(const b of B){
    if(wall){m1.rotation.z=-f[0]*0.2;m1.rotation.x=f[1]*0.2;}s.add(m1);
    const hm=new T.MeshLambertMaterial({color:0xff2a1a});
    const m2=new T.Mesh(torchHeadG,hm);m2.position.set(px+(wall?f[0]*0.08:0),b.p[1]+0.22,pz+(wall?f[1]*0.08:0));s.add(m2);
-   torchHeads[b.p[0]+','+b.p[1]+','+b.p[2]]=m2;
+   torchHeads[b.p[0]+','+b.p[1]+','+b.p[2]]=[m2,torchN++];
  }
 }
 const repBs=B.filter(b=>b.b==='minecraft:repeater');
@@ -269,34 +319,44 @@ const STATES=STATESJSON,INPUTS=INPUTJSON,LEVERNET=LEVERJSON,LAMPNET=LAMPJSON;
 function makeLabel(text){const cv=document.createElement('canvas');cv.width=256;cv.height=64;const g=cv.getContext('2d');g.fillStyle='rgba(10,10,12,0.78)';g.fillRect(0,0,256,64);g.font='bold 34px Consolas,monospace';g.textAlign='center';g.textBaseline='middle';g.fillStyle='#ffd75e';g.fillText(text,128,34);const tx=new T.CanvasTexture(cv);tx.colorSpace=T.SRGBColorSpace;const sp=new T.Sprite(new T.SpriteMaterial({map:tx,depthTest:false}));sp.scale.set(1.7,0.42,1);return sp;}
 for(const b of B){if(b.b==='minecraft:lever'){const lb=makeLabel('in '+(LEVERNET[b.p[0]+','+b.p[1]+','+b.p[2]]||'?'));lb.position.set(b.p[0],b.p[1]+0.85,b.p[2]);s.add(lb);}else if(b.b==='minecraft:redstone_lamp'){const lb=makeLabel('out '+(LAMPNET[b.p[0]+','+b.p[1]+','+b.p[2]]||'?'));lb.position.set(b.p[0],b.p[1]+0.95,b.p[2]);s.add(lb);}}
 const ioDiv=document.getElementById('io');
-function renderIO(extra){let h='IN ';for(const n of INPUTS)h+=`<button data-n="${n}" style="margin:0 2px;font:inherit;background:${leverState[n]?'#7a2a12':'#333'};color:#fff;border:1px solid #666;border-radius:4px;cursor:pointer">${n}=${leverState[n]?'1':'0'}</button>`;h+=' OUT ';for(const [c,n] of Object.entries(LAMPNET))h+=`<span style="margin:0 4px;padding:1px 6px;background:#222;border:1px solid #666;border-radius:4px">${n}=${extra&&extra.lamps&&extra.lamps[c]?'1':'0'}</span>`;ioDiv.innerHTML=h;ioDiv.querySelectorAll('button').forEach(x=>x.onclick=()=>flip(x.dataset.n));}
+// ponytail: 1024 vectors x 14634 dust cells as JSON is ~1.6GB of page, so
+// Python hands over base64 rows (nibble per dust cell, bit per torch/rep/cmp)
+// and this unpacks one row per click. No physics here, just table lookup.
+const PK=STATES&&STATES.vectors&&STATES.vectors.keys?STATES.vectors:{keys:[]};
+const _u8=s=>Uint8Array.from(atob(s),c=>c.charCodeAt(0));
+const WB=PK.w?_u8(PK.w):null,RB=PK.r?_u8(PK.r):null,TB=PK.t?_u8(PK.t):null,OB=PK.c?_u8(PK.c):null,LB=PK.l?_u8(PK.l):null;
+const ridx={};PK.keys.forEach((k,i)=>ridx[k]=i);
+const lampIdx={};Object.keys(LAMPNET).forEach((k,i)=>lampIdx[k]=i);
+let lampOn=[];
+function renderIO(){let h='IN ';for(const n of INPUTS)h+=`<button data-n="${n}" style="margin:0 2px;font:inherit;background:${leverState[n]?'#7a2a12':'#333'};color:#fff;border:1px solid #666;border-radius:4px;cursor:pointer">${n}=${leverState[n]?'1':'0'}</button>`;h+=' OUT ';Object.keys(LAMPNET).forEach((k,i)=>h+=`<span style="margin:0 4px;padding:1px 6px;background:#222;border:1px solid #666;border-radius:4px">${LAMPNET[k]}=${lampOn[i]?'1':'0'}</span>`);ioDiv.innerHTML=h;ioDiv.querySelectorAll('button').forEach(x=>x.onclick=()=>flip(x.dataset.n));}
 function flip(n){leverState[n]^=1;click(leverState[n]);applyState(INPUTS.map(x=>leverState[x]?'1':'0').join(''));}
-const dotIdx={},armEIdx={},armNIdx={};
+const dotIdx={};
 wireBs.forEach((b,idx)=>{dotIdx[b.p[0]+','+b.p[1]+','+b.p[2]]=idx;});
-let _ai=0;for(const [b,dx,dz] of armE){armEIdx[b.p[0]+','+b.p[1]+','+b.p[2]+','+dx+','+dz]=_ai++;}
-_ai=0;for(const [b,dx,dz] of armN){armNIdx[b.p[0]+','+b.p[1]+','+b.p[2]+','+dx+','+dz]=_ai++;}
 const wireCol=l=>new T.Color().setHSL(0.0,0.85,0.06+0.5*l/15);
 const leverState={};for(const k in LEVERNET)leverState[LEVERNET[k]]=0;
-function readout(extra){
+function readout(){
  const ins=INPUTS.map(n=>n+'='+(leverState[n]?'1':'0')).join(' ');
- const outs=Object.entries(LAMPNET).map(([c,n])=>n+'='+(extra&&extra.lamps&&extra.lamps[c]?'1':'0')).join(' ');
+ const outs=Object.keys(LAMPNET).map((k,i)=>LAMPNET[k]+'='+(lampOn[i]?'1':'0')).join(' ');
  document.getElementById('t').textContent='click a lever! '+ins+(outs?' -> '+outs:'');
 }
 function applyState(key){
- const v=STATES?STATES.vectors[key]:null;
- const grey=v?null:new T.Color(0x555555);
- const paint=(mesh,idx,lvl)=>{mesh.setColorAt(idx,grey||wireCol(lvl));mesh.instanceColor.needsUpdate=true;};
- for(const k in dotIdx){const lvl=v&&v.w[k]?v.w[k]:0;paint(dotI,dotIdx[k],lvl);}
- armE.forEach(([b,dx,dz],i)=>{const k=b.p[0]+','+b.p[1]+','+b.p[2];const lvl=v&&v.w[k]?v.w[k]:0;paint(armEIM,i,lvl);});
- armN.forEach(([b,dx,dz],i)=>{const k=b.p[0]+','+b.p[1]+','+b.p[2];const lvl=v&&v.w[k]?v.w[k]:0;paint(armNIM,i,lvl);});
-  for(const k in torchHeads){torchHeads[k].material.color.set(v&&v.t[k]?0xff2a1a:0x4a1408);}
-   if(dotFIM){repOrder.forEach((k,i)=>{const on=v&&v.r&&v.r[k]?1:0;const col=on?new T.Color(0xff2a1a):new T.Color(0x4a1408);dotFIM.setColorAt(i,col);dotBIM.setColorAt(i,col);});dotFIM.instanceColor.needsUpdate=true;dotBIM.instanceColor.needsUpdate=true;}
-   if(window.__cmp){cmpOrder.forEach((k,i)=>{const on=v&&v.o&&v.o[k]?1:0;const col=on?new T.Color(0xff2a1a):new T.Color(0x4a1408);window.__cmp.df.setColorAt(i,col);window.__cmp.db.setColorAt(i*2,col);window.__cmp.db.setColorAt(i*2+1,col);});window.__cmp.df.instanceColor.needsUpdate=true;window.__cmp.db.instanceColor.needsUpdate=true;}
- if(lampMesh.mesh){const arr=lampMesh.order;arr.forEach((k,i)=>{lampMesh.mesh.setColorAt(i,new T.Color(v&&v.lamps&&v.lamps[k]?0xffffff:0x353535));});lampMesh.mesh.instanceColor.needsUpdate=true;}
- for(const k in leverMeshes){const n=LEVERNET[k];leverMeshes[k].stick.rotation.x=leverState[n]?-0.5:0.25;}
-  readout(v);
-  renderIO(v);
-  if(!v)document.getElementById('t').textContent+=' — no data here (memory holds previous state; not simulated from power-on)';
+ const n=PK.keys.length&&ridx[key]!==undefined?ridx[key]:-1;
+ const grey=n<0?new T.Color(0x555555):null;
+ const lvl=i=>n<0?0:(WB[n*PK.ws+(i>>1)]>>((i&1)*4))&15;
+ const bit=(buf,rs,i)=>n<0?0:(buf[n*rs+(i>>3)]>>(i&7))&1;
+ const paint=(mesh,idx,l)=>{mesh.setColorAt(idx,grey||wireCol(l));mesh.instanceColor.needsUpdate=true;};
+ for(const k in dotIdx){const i=dotIdx[k];paint(dotI,i,lvl(i));}
+ armE.forEach((a,i)=>paint(armEIM,i,lvl(a[3])));
+ armN.forEach((a,i)=>paint(armNIM,i,lvl(a[3])));
+  for(const k in torchHeads){const[hh,i]=torchHeads[k];hh.material.color.set(bit(TB,PK.ts,i)?0xff2a1a:0x4a1408);}
+   if(dotFIM){repOrder.forEach((k,i)=>{const col=bit(RB,PK.rs,i)?new T.Color(0xff2a1a):new T.Color(0x4a1408);dotFIM.setColorAt(i,col);dotBIM.setColorAt(i,col);});dotFIM.instanceColor.needsUpdate=true;dotBIM.instanceColor.needsUpdate=true;}
+   if(window.__cmp){cmpOrder.forEach((k,i)=>{const col=bit(OB,PK.cs,i)?new T.Color(0xff2a1a):new T.Color(0x4a1408);window.__cmp.df.setColorAt(i,col);window.__cmp.db.setColorAt(i*2,col);window.__cmp.db.setColorAt(i*2+1,col);});window.__cmp.df.instanceColor.needsUpdate=true;window.__cmp.db.instanceColor.needsUpdate=true;}
+ lampOn=Object.keys(LAMPNET).map((k,i)=>!!bit(LB,PK.ls,i));
+ if(lampMesh.mesh){lampMesh.order.forEach((k,i)=>lampMesh.mesh.setColorAt(i,new T.Color(lampOn[lampIdx[k]]?0xffffff:0x353535)));lampMesh.mesh.instanceColor.needsUpdate=true;}
+ for(const k in leverMeshes){const nm=LEVERNET[k];leverMeshes[k].stick.rotation.x=leverState[nm]?-0.5:0.25;}
+  readout();
+  renderIO();
+  if(n<0)document.getElementById('t').textContent+=' — no data here (this input combo was not collected)';
 }
 const _ray=new T.Raycaster(),_ptr=new T.Vector2();let _down=null;
 let AC=null;function click(on){try{AC=AC||new (window.AudioContext||window.webkitAudioContext)();const o=AC.createOscillator(),g=AC.createGain();o.type='square';o.frequency.value=on?2200:1400;g.gain.setValueAtTime(0.08,AC.currentTime);g.gain.exponentialRampToValueAtTime(0.001,AC.currentTime+0.06);o.connect(g);g.connect(AC.destination);o.start();o.stop(AC.currentTime+0.07);}catch(e){}}
@@ -312,13 +372,62 @@ r.domElement.addEventListener('pointerup',e=>{
 applyState(INPUTS.map(n=>'0').join(''));
 (function a(){requestAnimationFrame(a);c.update();r.render(s,cam);})();</script></body></html>"""
     st = extra or None
-    html = (html.replace("STATESJSON", json.dumps(st))
-            .replace("INPUTJSON", json.dumps(st["inputs"] if st else []))
-            .replace("LEVERJSON", json.dumps(st["levers"] if st else {}))
-            .replace("LAMPJSON", json.dumps(st["lamps"] if st else {}))
-            .replace("DATA", json.dumps(data)).replace("CX", str(W / 2)).replace("CZ", str(D / 2))
+    # the page reads STATES.vectors as packed rows, not per-vector dicts
+    packed = dict(st, vectors=_pack_states(st, data)) if st and st.get("vectors") else st
+    # ponytail: template text FIRST, JSON payloads LAST. str.replace is global,
+    # so an all-caps placeholder (DATA, STAMP, FW...) injected early gets
+    # spell-checked against every base64 row afterwards -- it really happened,
+    # 5910 bytes of silently mangled state. The JSON payloads are safe to go
+    # last: base64 has no lowercase, and the block URLs are lowercase "data/".
+    html = (html.replace("CX", str(W / 2)).replace("CZ", str(D / 2))
             .replace("TEXSTONE", json.dumps(TEXBASE + "stone.png"))
             .replace("STAMP", build_stamp(label, len(blocks)))
-            .replace("MAXD", str(max(W, D))).replace("FW", str(W)).replace("FD", str(D)))
-    open(path, "w").write(html)
+            .replace("MAXD", str(max(W, D))).replace("FW", str(W)).replace("FD", str(D))
+            .replace("DATA", json.dumps(data))
+            .replace("STATESJSON", json.dumps(packed))
+            .replace("INPUTJSON", json.dumps(st["inputs"] if st else []))
+            .replace("LEVERJSON", json.dumps(st["levers"] if st else {}))
+            .replace("LAMPJSON", json.dumps(st["lamps"] if st else {})))
+    # utf-8 explicitly: the page declares <meta charset=utf-8> and the hint
+    # string carries an em dash, which the locale codec used to mangle.
+    open(path, "w", encoding="utf-8").write(html)
+
+
+if __name__ == "__main__":
+    # The page unpacks with 3 lines of bit math; this is the same contract in
+    # Python, so a layout slip fails here instead of as a dark cell in the page.
+    _d = [{"p": [x, 1, 0], "b": "minecraft:redstone_wire"} for x in range(5)]
+    _d += [{"p": [x, 1, 1], "b": "minecraft:repeater"} for x in range(3)]
+    _d += [{"p": [x, 1, 2], "b": "minecraft:redstone_wall_torch"} for x in range(2)]
+    _d += [{"p": [x, 1, 3], "b": "minecraft:comparator"} for x in range(2)]
+    _d += [{"p": [x, 1, 4], "b": "minecraft:redstone_lamp"} for x in range(2)]
+    _st = {"lamps": {"0,1,4": "y0", "1,1,4": "y1"},
+           "vectors": {"000": {"w": {"0,1,0": 15, "1,1,0": 9, "4,1,0": 1},
+                               "r": {"0,1,1": 1, "2,1,1": 1}, "t": {"1,1,2": 1},
+                               "o": {"0,1,3": 1},
+                               "lamps": {"0,1,4": 1, "1,1,4": 0}},
+                       "111": {"w": {"2,1,0": 3}, "r": {"1,1,1": 1},
+                               "t": {"0,1,2": 1}, "o": {"1,1,3": 1},
+                               "lamps": {"0,1,4": 0, "1,1,4": 1}}}}
+    _pk = _pack_states(_st, _d)
+    _u = {t: base64.b64decode(_pk[t]) for t in "wrtcl"}
+
+    def _lvl(n, i):
+        return (_u["w"][n * _pk["ws"] + (i >> 1)] >> ((i & 1) * 4)) & 15
+
+    def _bit(t, n, i):
+        return (_u[t][n * _pk[t + "s"] + (i >> 3)] >> (i & 7)) & 1
+
+    assert _pk["keys"] == ["000", "111"] and _pk["ws"] == 3, _pk["keys"]
+    assert [_lvl(0, i) for i in range(5)] == [15, 9, 0, 0, 1]
+    assert [_lvl(1, i) for i in range(5)] == [0, 0, 3, 0, 0]
+    assert [_bit("r", 0, i) for i in range(3)] == [1, 0, 1]
+    assert [_bit("r", 1, i) for i in range(3)] == [0, 1, 0]
+    assert [_bit("t", 0, i) for i in range(2)] == [0, 1]
+    assert [_bit("t", 1, i) for i in range(2)] == [1, 0]
+    assert [_bit("c", 0, i) for i in range(2)] == [1, 0]
+    assert [_bit("c", 1, i) for i in range(2)] == [0, 1]
+    assert [_bit("l", 0, i) for i in range(2)] == [1, 0]
+    assert [_bit("l", 1, i) for i in range(2)] == [0, 1]
+    print("export ok: packed states round-trip through the page's bit math")
 

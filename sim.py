@@ -1176,7 +1176,7 @@ if __name__ == "__main__":
     _io = {"levers": {(0, 0): "a"}, "lamps": {(4, 0): "y"}, "nets": {}}
     _st = {"inputs": ["a"], "levers": {"0,1,0": "a"}, "lamps": {"4,1,0": "y"},
            "vectors": {"0": {"w": {}, "t": {"3,1,0": 0}, "lamps": {"4,1,0": 0},
-                             "ticks": 0, "r": {"1,1,0": 0}}}}
+                             "ticks": 0, "r": {"1,1,0": 0}, "o": {}}}}
     export_html(_blocks, (6, 1), r"C:\Users\LOQ\AppData\Local\Temp\opencode\stages.html",
                 "s", _st)
     import json as _json
