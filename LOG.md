@@ -1190,6 +1190,31 @@ Result: bands rebuilt under the new router, stitch MERGE 41031 blocks, and
 **SMOKE 0000000000 / 1111111111 / 0101010101 / 1010101010 ALL OK** — the
 all-ones vector that hunted now settles.
 
+**VERIFY OK: 1024 vectors, 16 chunks green.** alu4 is done. Reproduce:
+
+    python scratch/hier_bands.py scratch/cand_alu4hier.txt scratch/alu4bandsNEW3 150
+    python scratch/hier_stitch.py scratch/alu4bandsNEW3.pkl scratch/cand_alu4hier.txt 480 scratch/alu4mergeNEW4.pkl
+    python scratch/verify_par.py scratch/alu4mergeNEW4.pkl scratch/cand_alu4hier.txt 16 2400 16 16
+
+(~1150 s wall for the full 1024 on 16 workers; the cache is keyed by an
+engine fingerprint, so any future engine edit re-verifies from zero.)
+Canonical caches replaced: `alu4bands.pkl`, `alu4merge.pkl` + its
+`verify.json` (16/16 green, fp 327ee4a52f1b), and `alu4_build.pkl` (the
+diff_engine fixture). The pre-flip dead geometry is kept beside them as
+`alu4bands.preflip.pkl` / `alu4merge.preflip.pkl` for forensics.
+
+Full regression after the fix: cpu4 re-verified from scratch under the new
+engine (**128 vectors, 16 chunks green**), `diff_engine` ALL IDENTICAL on the
+NEW alu4 build, sim.py / layout.py / compose_check.py suites green, alu1
+12294 blocks and ctrl_decode 4923 green.
+
+Assumption recorded (no one to ask): the stitch retry knob I offered is NOT
+needed. The root cause was a placement rule, not bad luck, so fixing the rule
+produces a green stitch on the first attempt instead of burning retries on a
+seed ladder. `hier_stitch.py` did gain an optional 4th argument that saves
+the merge pkl — the pipeline could not otherwise hand a stitched build to
+`verify_par` at all.
+
 ### Facing trap, now asserted in a comment
 
 `layout`'s booster helpers treat `front = cell + _VEC[facing]`, but sim

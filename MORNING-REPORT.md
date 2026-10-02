@@ -1,234 +1,88 @@
-# MORNING-REPORT — finish session 2026-10-02 (all three deferred items closed)
+# MORNING-REPORT — 2026-10-02 night session
 
-## Glass + slab: transparent vertical physics, modeled and gated
+Headline: **alu4 is green — 1024/1024 vectors verified.** The last open item
+from the previous session (alu4) plus the stitch item I offered are both
+closed. Nothing is blocked. Full trail in LOG.md, section "alu4 root cause".
 
-Glass (`minecraft:glass`) and stone-family slabs are first-class sim citizens:
-dust climbs onto glass, glass stays dark and never feeds down, slabs carry
-power/feed dust on top, transparent lids never cut slopes. Hand-placed
-shafts/floors/lids verify instead of hard-rejecting. 4 sim oracles lock the
-physics; suites green, compose_check bit-identical, diff reference re-frozen
-(was stale 6 commits), ctrl_decode green. Full account in LOG.md.
+## What now builds
 
-### The three conservative holds — all worked, none declined (bc446af)
+| build | verdict | evidence |
+|---|---|---|
+| **alu4** (10 inputs, 1024 vectors) | **GREEN, all 1024** | `VERIFY OK: 1024 vectors, 16 chunks green`, cache fp `327ee4a52f1b` |
+| cpu4 (7 inputs) | GREEN, 128/128 | re-verified from scratch under the new engine |
+| alu1 | GREEN, 12,294 blocks | `alu1_regress` after the fix |
+| ctrl_decode | GREEN, 4,923 blocks | same run |
+| example_and / 2gates / latch_sr / xor | GREEN | `compose_check.py` |
+| suites | GREEN | `sim.py`, `layout.py`, `diff_engine` ALL IDENTICAL |
 
-1. simvec no longer refuses: new side code 8 = slab, power terms take 4 and
-   8, cup/cdn stay cobble-only (slab is powerable but transparent), wake
-   vertices/edges + r_src + side() + l_cob + ncells + both scheduler loops
-   extended. Tri-engine probe: serial == scalar == SWAR on a glass tower;
-   diff_engine ALL IDENTICAL (the delta is empty on glass-free builds, so the
-   bit-identity gate alone could never have caught a mistake here).
-2. The search knows glass/slab: `_support(..., reuse=)` returns None (stamp
-   nothing) over ownerless hand glass/slab, and `astar(..., reuse=, ig=)`
-   slopes onto them while refusing to route *into* them at any height.
-   finish_assembly now rejects duplicate coordinates, so the whole
-   two-blocks-one-cell paste class is loud. `route()` threading deliberately
-   skipped: both builders start from empty fields, so the set is provably
-   always empty — direct astar callers pass it explicitly.
-3. Router auto-glass: measured, not built. The provably-safe rule (glass iff
-   all four diagonal-below cells are immutably occupied) fires 0 times on
-   cpu4merge3 — 0 of 4709 off-ground pillars qualify, because corridors are
-   open by construction. Zero-fire code is YAGNI, so the honest answer is the
-   measurement plus the search-awareness above: glass pays off as hand-placed
-   insulation, and the router's glass payoff is *avoiding* couplings, not
-   stamping pillars.
+## What was actually wrong with alu4
 
-### Slab halves: checked against the wiki, full-cell is the correct model
+Two independent things, found in this order.
 
-minecraft.wiki/w/Redstone_Dust: dust is placed on "conductive blocks ...
-upside-down slabs, glass, upside-down stairs"; the block *between* two dust
-must be air or non-conductive; downfeed needs the higher dust "on a
-conductive block one level higher", and "the signal can never go down from
-slabs". At integer-block granularity all three hold for a full-cell slab: the
-slab owns its own cell so anything resting on it is necessarily the cell
-above (both halves), the slab is transparent for connections, and it never
-passes power down. `export.py` emits explicit `type=bottom` for hand slabs, so
-half-height never has to be modelled — the only slab states we accept are the
-transparent single ones; `type=double` is an opaque full block by design.
+1. **The old artifact was a ghost.** `scratch/alu4merge.pkl.verify.json`
+   said 64/64 green, but it was written 10/1 23:19 and the diode-facing flip
+   (`29fc565`) landed 10/2 10:56. Re-verified today, that merge is RED on all
+   16 chunks — every failure `Y2`/`Y3` with `B2`/`B3` set. Nothing to salvage;
+   a rebuild was mandatory. Kept as `alu4merge.preflip.pkl`.
 
-## Target block: modelled with its features (fd0aaeb, 2826ed6)
+2. **The rebuild hunted.** 6/6 bands green, MERGE 41,031 blocks, all-zero
+   settled, but **15 of 24 sampled vectors never settled** (0 logic
+   mismatches — a pure ring). The churn dump + the repo's own cycle finder
+   (extended with repeater/lever/rblk/comparator edges) gave the shortest
+   ring: 6 nodes on net `OP1x_3` —
+   `torch (2044,1,34) → dust (2045,1,34) → dust (2045,1,35) → repeater
+   (2044,1,35) → dust (2043,1,35) → cobble (2043,1,34) → torch`. One inverter
+   plus one wire latches the band-3 handoff; twin at `(2060,1,33)` on
+   `OP0x_3`.
 
-Read minecraft.wiki/w/Target first, then implemented every feature it
-states: opaque conductive cube (joins `cob`, so slope support / lid cutting /
-loop flood / strong-power conduction come free), timed emission at the exact
-1..15 hit level (4 redstone ticks for ordinary projectiles, 10 for arrows and
-tridents, from the wiki's 8/20 game ticks), and redirection — a target is a
-dust connection endpoint even while idle, wired into both the sim's
-block-power term and `wire_bid`, so the baked wire state matches.
+**Fix (commits `f825af0`, `8c9c510`)**: a booster may not push power into a
+tile torch that has its own net beside it. Applied in `compose._ends_ok` (the
+planter's predicate, with the torch-host map cached on ctx) and in layout's
+booster loop (unwind and try the next triple, like the existing loop check).
+`finish_assembly` keeps a loud all-scan version so nothing hunted can ship.
+Then: bands rebuilt under the new router → MERGE 41,031 → **all four smokes
+OK** → **1024/1024 green** on the first attempt.
 
-Hits are a stimulus, never a block state: `_run_vec(..., target_hits=)` plus a
-third `sim_pulse` schedule element, with cross-phase pulses preserved through
-absolute expiry. A bid carrying `power=5` is rejected (a file cannot say when
-the hit happened), an unknown projectile raises, and `run_scalar` validates
-the stimulus then declines so `verify_par` falls back to the serial
-authority. Green: new target oracle in sim.py (levels, both clocks, expiry,
-comparator read, lid cut, redirection, cross-phase pulse, bad-stimulus
-guards), a target-endpoint test in layout.py, `diff_engine` ALL IDENTICAL,
-alu1 12,294 blocks and ctrl_decode unchanged.
+## The bug behind the bug (worth knowing)
 
-Two bugs found on the way, both pre-existing: the duplicate-block guard added
-last session was too strict (it rejected the router's own duplicate cobble
-pillar at (24,2,11) — the gate-fed D-latch test never reached it before), and
-`finish_assembly` had never been given a target-aware wire shape.
+`_closes_loop` / `_loop_rep` flood same-net **dust over blocks**, and
+`_ends_ok` only checks that a booster's front/back cells carry its own net.
+A ring that leaves the dust **through a torch** — a directed, inverting edge —
+is invisible to both. That is the whole class, and it is now guarded at
+placement *and* at assembly.
 
-## cpu4: DONE, 128/128 — root cause was stale diodes, not the router
+Related trap, now written down: layout's booster helpers use
+`front = cell + _VEC[facing]`, but sim treats `facing` as pointing
+output→input, so the real output cell is `cell - _VEC[facing]`. Measured on
+this merge: **2426 of 2426 repeaters disagree** between the two readings.
+Harmless so far only because those helpers are direction-agnostic.
+`_booster_out_cell` is the single place that encodes sim's rule.
 
-R0Q0's wall is gone. Forensics (9 bounded probes, all offline against
-cpu4merge3.pkl): coupling clean at every level (same-y/slope/torch/lever/
-repeater/junction/ring — all zero), per-vector sweep found 16 dark-when-lit
-mismatches, bisection led to REGW dark everywhere incl. its driver cell,
-then to C_n2's trunk lit only 9 cells. Band 0's own ctx is healthy (122 dust
-+ 16 diodes). Root cause: cpu4bands2.pkl was built 10/1 6:16PM, commit
-29fc565 flipped diode facing to vanilla 10/2 10:56AM — every pre-flip diode
-reads backwards under the current sim and never fires. Fix = rebuild
-artifacts, zero code: hier_bands → 10/10 green, hier_stitch → 74473 blocks,
-smokes 0000000/1111111/0101010/1010101 OK, verify_par → 128/128 chunks green.
-Canonical caches (cpu4bands2.pkl, cpu4merge3.pkl + verify.json) replaced.
-Lesson: the engine fingerprint voids verify caches, but band/merge PKLs are
-build INPUTS — nothing forces their rebuild after a physics-meaning change.
+## The stitch item I offered — solved at the root instead
 
-## Default bands widened upward: maze 1..4, compose narrow (1,4)
+I proposed a seed/spread knob so the stitch could retry until it found a
+legal geometry. Not needed and not added: the failure was a placement *rule*,
+not bad luck, so fixing the rule makes the first attempt green instead of
+burning retries on a ladder. What the pipeline did need was the missing link
+in the chain — `hier_stitch.py` gained an optional 4th argument that saves the
+merged build to a pkl, because `verify_par` reads a pkl and nothing could
+hand it one.
 
-Suites green, compose_check bit-identical, alu1 recomposed under final
-defaults with identical geometry (12294 blocks) and VERIFY GREEN. Measured
-NO downward: ymin=0 as a first-attempt default breaks gate-fed D-latch
-(nD 3D-self-lid — ground cobble roofs trench slopes, candidates all
-self-lid). Trenches stay in the wide fallback + REDSTONE_YMIN=0. Two commits:
-try_bridge for/else (pre-existing UnboundLocalError when every candidate
-refuses — proven pre-tall-bridge via git show, it just never fired before)
-and the band change.
+## Still failing / not done (nothing blocking)
 
-## Vertical stacking: physics proven, compiler migration scoped as TODO
+- **True 3D tile stacking.** Unchanged from before: physics is proven, the
+  compiler migration (~140 `y==1` assumptions) is still not built.
+  `tiles.new_ctx` says "migrate the maps or don't start".
+- **`alu4` build time.** The bands are cached, but a cold `hier_bands` +
+  `hier_stitch` + full verify is ~25 min of wall clock. Not a defect.
+- **In-game paste.** Never tested on a real Minecraft client. Every verdict
+  in this repo is the sim agreeing with itself plus wiki rules.
+- **Band caches are not fingerprinted.** Only verify caches are. The lesson
+  from cpu4 (stale band inputs) is still enforced by hand — flagged in LOG
+  as future work.
 
-Hand-placed NOT at y=2 on pillars sim-greens. End-to-end needs the 2D→3D map
-migration (~140 y==1/2D-key sites measured across 4 files) — a compiler
-project, not an overnight task. Anchor comment at tiles.new_ctx says exactly
-where to start and what not to do (no lone y0-threading: it pastes
-unroutable tiles). Full analysis in LOG.md.
+## Needs you
 
-## Fleet (this engine, verify=True throughout)
-
-- micro1 OK (2925), alu1 OK (12294, green), ctrl_decode OK (4923), cpu4 OK
-  (128/128) — all green.
-- alu4: fresh compose still grinding at handoff (long rung, CPU-busy, no
-  crash — the UnboundLocalError on its exact path is fixed). Its old merge
-  pkl is pre-flip (backwards diodes) so re-verifying it would false-red;
-  the honest re-gate is the running fresh compose. Resume: dense_status.py
-  recipes/alu4.txt — or rebuild its bands like cpu4 if compose stays loud.
-- Probe rule (bit twice now): main-guard every probe or set
-  REDSTONE_SERIES_VERIFY=1 — unguarded + spawn Pool = fork bomb. An outside
-  agent correctly diagnosed my leftover trench_e2e.py; tree killed.
-
----
-
-# MORNING-REPORT — overnight 2026-10-02: vertical envelope DONE
-
-## What now builds (was red, now green)
-
-- **alu1 COMPOSES and VERIFIES.** Was loud `no ground for CIN` on every rung;
-  now 12,294 blocks, sim green on the full vector set (maxticks 86). The
-  y-histogram shows `{0:5455, 1:5463, 2:744, 3:624, 4:8}` — the new y=4 tall
-  hop fired in a real build, and the support gate proves it pastes correctly.
-- **Underground wires work.** astar descends through a sealed y=1 wall
-  (proven with ymin=-1), every y<=0 cell resolves a pillar, finish_assembly
-  emits the cobble, sim greens through a hand trench circuit.
-- **Unchanged greens, all re-gated:** recipe.py, sim.py, layout.py full
-  __main__ suites; compose_check bit-identical 144/322/224/214.
-
-## What changed (2 commits on phase2-design)
-
-1. `5d93e1d` trench support: router stamps y-1 pillars for y<=0
-   (astar legality, layout route(), compose lwire, _has_support,
-   _plant_repeaters), finish_assembly emits the missing cubes (loud on
-   stacked columns), sim fails loud on floating dust/repeater/comparator
-   at y!=1 (y==1 rides the world). Same gate duplicated at the top of
-   simvec.verify_par so direct callers can't bypass it.
-2. `7e98176` tall bridge: 7-cell y=4 staircase, tried only after the y=3
-   shape seals (maze try_bridge + compose _walk). Greens bit-identical by
-   construction. Defaults unchanged: narrow band 1..3, wide -4..6 via
-   REDSTONE_COMPOSE_YMIN/MAX (now trustworthy), y=4 via bridge shape.
-   True 3D tile stacking still out of scope (different compiler).
-
-## What still fails / needs you
-
-- **cpu4 R0Q0** (handoff diagnosis) untouched — separate lane, still the live
-  wall. alu4/ctrl_decode/micro1 dense re-gates not re-run overnight (engine
-  fingerprint in verify_par voids their caches automatically; expect re-verify
-  on next run, should be green by the bit-identity argument, but not measured).
-- **Your ceiling question, answered:** wires can now use y=-4..6 (astar wide
-  band) + y=4 bridge apex. Below base 120 and above 123 both paste with
-  supports. Nothing structural caps it lower/higher except the validated
-  envelope — widen REDSTONE_*_YMIN/YMAX if you want more, sim rules are
-  y-generic.
-- Probe hygiene: every probe script must be main-guarded or set
-  REDSTONE_SERIES_VERIFY=1 — an unguarded script + spawn Pool = fork bomb
-  (ate two of my timeouts before I saw it). Details in LOG.md.
-
----
-
-
-## DONE: cpu4 is green
-
-`recipes/cpu4.txt` now holds the 11-band hierarchical recipe. It composes
-end to end and sim-verifies on the full input space:
-
-- `compose(recipes/cpu4.txt)` → **98,827 blocks, ALL OK** (layout_retry,
-  verify=True, ~1200 s single run)
-- the cached merge `scratch/cpu4merge3.pkl` (72,055 blocks) → **VERIFY OK:
-  128 vectors, 32 chunks green**, zero failures
-- `scratch/alu4merge.pkl` → **VERIFY OK: 1024 vectors, 64 chunks green**
-
-## The wall was the simulator, not the router
-
-Two sessions of forensics chased a routing fault that never existed. `sim.py`'s
-power-on pre-roll computed a **half-powered tick-0 state**: it iterated dust /
-blocks / torches to a fixpoint but **froze every repeater OFF**, on the theory
-that a booster's delay is a real transient. A frozen booster makes every cell
-beyond it read dark. Measured: `OPC1` read 96/903 at tick 0 instead of 903/903,
-so `NOT OPC1` fired a phantom 1, and `C_n2 AND C_n1` produced a ~40-tick `REGW`
-glitch at T~28 that reached `R0_S1` at T~120 and latched `R0Q1`/`R0Q3` to 1 on a
-no-write vector. A booster's *settled* value is a function of its input, so it
-belongs in the fixpoint. Commit `2bbf873`.
-
-Two things fell out, both real:
-- The fixpoint is **ambiguous** (more than one self-consistent state). A
-  whole-field sweep converged to `AL_C2` stuck lit; the same fixpoint as a
-  **worklist** converges correctly *and* went 170 s → 6 s. My first version was
-  both wrong and slow.
-- `sim_verify` had become a **fork bomb** (routes through `simvec.verify_par`
-  → `Pool`; a pool worker is daemonic, so unguarded callers re-imported
-  themselves under spawn forever). Fixed with one check in `sim_verify`;
-  `simvec.py` untouched (agent 2's file).
-
-## Dead ends (do not re-run)
-
-- Repeater rings in the merge: `_loop_rep` returned 4, then 1, then 0 as the
-  cobble set varied. Both the router's view and the sim's own view say **None**.
-  My first two hits were artefacts of a cobble set neither caller uses.
-- Repeater backed by a `finish_assembly` stone pad: **zero** in 4245.
-- Ring closed through a chip-layer y±1 link: **zero** (sim's own sets + rule).
-
-## Tooling fixed (scratch/, gitignored)
-
-`verify_par.py`: cache key ignored the worker count (silently green-marked
-untested vectors); only printed per chunk (~700 s silence, killed twice for
-looking hung); chunk size was tied to worker count. Now: key is
-`nchunks:index:recipe+build+ENGINE`, child streams per vector, nchunks is its
-own argument. Plus two of my own bugs caught in the same pass (unregistering a
-live worker on progress → BrokenPipeError; `poll()` raising on a closing pipe).
-
-## Still open / needs from you: nothing
-
-Regression gate (`micro1`, `alu1`, `alu4`, `ctrl_decode` via dense_status) was
-still running at handoff: `micro1` passed, `alu1 OK 13300 blocks`, alu4 in its
-band ladder. Re-run `python scratch/dense_status.py` for the final numbers if
-you want them in one place.
-
-## Trail
-
-- `LOG.md` session 3 entry: full root-cause chain, measurements, dead ends.
-- Commits: `2bbf873` (sim fixpoint + fork-bomb guard), `efd01de` (promote banded
-  cpu4 recipe).
-- Probes worth keeping: `scratch/netdiff.py` (which nets disagree with
-  eval_net), `scratch/whylit.py` (power backtrace from sim state),
-  `scratch/leak.py`, `scratch/chipring.py` (both negative, both instant).
-- Untouched per protocol: `simvec.py` (agent 2).
+Nothing. No password, payment or secret was required. The only judgement call
+I made without asking was the assumption recorded in LOG.md: skip the retry
+knob because the root-cause fix subsumes it.
