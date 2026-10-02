@@ -15,18 +15,66 @@ BOUT_N = 8
 BOUT_GRACE = 60
 BOUT = {}
 
+_TARGET_TICKS = {'arrow': 10, 'trident': 10}
+_TARGET_OTHER_TICKS = 4
+_TARGET_PROJECTILES = frozenset({
+    'arrow', "bottle o' enchanting", 'dragon fireball', 'egg',
+    'ender pearl', 'fireball', 'firework rocket', 'fishing bobber',
+    'lingering potion', 'llama spit', 'shulker bullet', 'snowball',
+    'small fireball', 'splash potion', 'trident', 'wind charge',
+    'wither skull'})
+
+
+def _target_shots(target_hits, target):
+    """Normalize projectile hits to {cell: (level, duration, at)}.
+
+    A hit is (projectile, level[, at]); the projectile chooses the wiki
+    clock and the caller chooses the hit accuracy as 1..15. ("hold", level,
+    remaining) is the sim_pulse carry form for a pulse that survives a phase
+    boundary, not a second vanilla event. Loud on unknown targets, unknown
+    projectiles, bad levels, or bad clocks: a guessed target source is a
+    guessed build.
+    """
+    shots = {}
+    for c, spec in (target_hits or {}).items():
+        if c not in target:
+            raise ValueError(f"target hit at {c} has no target block")
+        if not isinstance(spec, (tuple, list)) or len(spec) not in (2, 3):
+            raise ValueError(f"bad target hit {spec!r} at {c} (want (projectile, level[, at]))")
+        kind = str(spec[0]).lower()
+        level = spec[1]
+        if isinstance(level, bool) or not isinstance(level, int) or not 1 <= level <= 15:
+            raise ValueError(f"bad target level {level!r} at {c} (want 1..15)")
+        if kind == "hold":
+            if len(spec) != 3:
+                raise ValueError(f"bad target hold {spec!r} at {c} (want ('hold', level, remaining))")
+            duration, at = spec[2], 0
+        else:
+            if kind not in _TARGET_PROJECTILES:
+                raise ValueError(f"unknown target projectile {spec[0]!r} at {c}")
+            duration = _TARGET_TICKS.get(kind, _TARGET_OTHER_TICKS)
+            at = spec[2] if len(spec) == 3 else 0
+        if isinstance(duration, bool) or not isinstance(duration, int) or duration < 1:
+            raise ValueError(f"bad target duration {duration!r} at {c} (want >= 1)")
+        if isinstance(at, bool) or not isinstance(at, int) or at < 0:
+            raise ValueError(f"bad target hit tick {at!r} at {c} (want >= 0)")
+        shots[c] = (level, duration, at)
+    return shots
+
+
+
 
 def _parse_build(blocks, io):
     """Placed blocks/io -> physics structures shared by sim_verify/sequence.
 
-    Returns a 14-tuple (glass + slab joined at the end; every unpack site
-    names all fourteen).
+    Returns a 15-tuple (glass + slab + target joined at the end; every unpack
+    site names all fifteen).
     """
     dust, torch, lampat, rep, rblk, cob = set(), {}, set(), {}, set(), set()
     comp = {}
     repdelay = {}
     leveratt = {}
-    glass, slab = set(), set()
+    glass, slab, target = set(), set(), set()
     for x, y, z, bid in blocks:
         b, c = base(bid), (x, y, z)
         if b == "minecraft:redstone_wire":
@@ -103,6 +151,19 @@ def _parse_build(blocks, io):
                 cob.add(c)
             else:
                 slab.add(c)
+        elif b == "minecraft:target":
+            # ponytail: opaque conductive power source (wiki Target). The block
+            # conducts and redirects dust like other conductive blocks, but it
+            # only emits after a projectile hit: an explicit nonzero power=
+            # state is rejected because a file cannot say when the hit
+            # happened. Emissions enter through target_hits, never the bid.
+            _power = "0"
+            if "power=" in bid:
+                _power = bid.split("power=")[1].split(",")[0].rstrip("]")
+            if _power != "0":
+                raise ValueError(f"sim: target at {c} has power={_power}; pass a projectile hit instead")
+            cob.add(c)
+            target.add(c)
         elif b == "minecraft:lever":
             # ponytail: levers are electrical identity, not geometry: which
             # net a lever drives comes from io["levers"], never from its
@@ -143,16 +204,17 @@ def _parse_build(blocks, io):
     for t, a in torch.items():
         attach_rev.setdefault(a, []).append(t)
     return (dust, torch, lampat, rep, rblk, cob, repdelay, lever, lampnet,
-            attach_rev, comp, leveratt, glass, slab)
+            attach_rev, comp, leveratt, glass, slab, target)
 
 
 
-def _run_vec(vec, init, ctx, until=None):
+def _run_vec(vec, init, ctx, until=None, target_hits=None):
     """Tick-settled physics for one input vector (shared by verify/sequence).
     init carries live/torch/repeater state across phases (memory!); None
     starts blank. until caps the run at a tick (for sim_pulse timelines).
-    Returns (lamps, live, torches, ticks, repeaters)."""
-    dust, torch, lampat, rep, rblk, cob, repdelay, lever, lampnet, attach_rev, comp, leveratt, glass, slab = ctx
+    target_hits maps target cells to (projectile, level[, at]) and fires timed
+    Target-block emissions (wiki Target). Returns (lamps, live, torches, ticks, repeaters)."""
+    dust, torch, lampat, rep, rblk, cob, repdelay, lever, lampnet, attach_rev, comp, leveratt, glass, slab, target = ctx
     # ponytail: transparent power sets (glass/slab feature). pwr = blocks
     # that can hold power (cobble/stone + slabs; glass never). sup3 = blocks
     # a slope may legally rest on (pwr + glass). Lids still cut only when
@@ -180,7 +242,12 @@ def _run_vec(vec, init, ctx, until=None):
             con[c] = v
     pending, tsched, rsched, ksched, seq, ticks, steps = [], set(), set(), set(), [0], [0], [0]
     last_change, max_gap = [0], [0]
-
+    # ponytail: live Target-block emissions (wiki Target). A target is opaque
+    # conductive even when idle, but only a projectile hit makes it emit; tg
+    # carries that exact 1..15 level because downstream dust/comparators read
+    # the hit accuracy, not merely on/off. tx is the deactivation tick.
+    tg, tx = {}, {}
+    shots = _target_shots(target_hits, target)
     def mark():
         g = steps[0] - last_change[0]
         if g > max_gap[0]:
@@ -222,6 +289,15 @@ def _run_vec(vec, init, ctx, until=None):
         for t in attach_rev.get(c, []):
             sched(now, "t", t)
 
+    def fire(now, c, level, duration):
+        # A second hit renews the clock; an older deactivation event whose
+        # tick no longer matches tx is stale and clears nothing.
+        tg[c] = level
+        tx[c] = now + duration
+        mark()
+        wake(now, c)
+        sched(now + duration, "G", c)
+
     def dust_lvl(c):
         lv = 0
         # ponytail: dust directly ABOVE a lit torch reads 15 (wiki; the code
@@ -236,7 +312,10 @@ def _run_vec(vec, init, ctx, until=None):
         # strong power covers dust on top and beneath, not just beside).
         # Same class as the torch-below term: support power the old model
         # could see (cob_state) but dust never read. Slabs join (powered
-        # slabs feed dust on top); glass never holds pbs, so no term.
+        # slabs feed dust on top); glass never holds pbs, so no term. A hit
+        # target feeds its exact emitted level rather than a generic 15.
+        if _below in target and tg.get(_below, 0) >= 1:
+            return tg[_below]
         if _below in pwr and pbs.get(_below, False):
             return 15
         for dx, dz in DIRS:
@@ -247,6 +326,8 @@ def _run_vec(vec, init, ctx, until=None):
                 return 15
             if m in rblk:
                 return 15
+            if m in target and tg.get(m, 0) >= 1:
+                return tg[m]
             if m in pwr and pbs.get(m, False):
                 return 15
             if m in dust:
@@ -282,6 +363,11 @@ def _run_vec(vec, init, ctx, until=None):
 
     def cob_state(c):
         pwrd, strong = False, False
+        # A live target powers its own conductive block at the emitted level;
+        # pb/pbs stay boolean for ordinary conduction, while dust/comparator
+        # terms read tg directly for the exact hit level.
+        if c in target and tg.get(c, 0) >= 1:
+            return True, True
         for dx, dz in DIRS:
             m = (c[0] + dx, c[1], c[2] + dz)
             # ponytail: dust powers a side block only when POINTING at it
@@ -289,7 +375,7 @@ def _run_vec(vec, init, ctx, until=None):
             # does not. Dust on top still counts (below), no shape condition.
             # Direction is dust->block (negated neighbour offset); the old
             # sign mirrored corner/T sensing (symmetric shapes can't tell).
-            if m in dust and pw.get(m, 0) >= 1 and (-dx, -dz) in dust_points(m, dust):
+            if m in dust and pw.get(m, 0) >= 1 and (-dx, -dz) in dust_points(m, dust, target):
                 pwrd = True
             if m in rblk:
                 pwrd, strong = True, True
@@ -352,6 +438,8 @@ def _run_vec(vec, init, ctx, until=None):
         rear = (c[0] + rx, c[1], c[2] + rz)
         if rear in dust:
             rl = pw.get(rear, 0)
+        elif rear in target:
+            rl = tg.get(rear, 0)
         elif rear in lever and vec.get(lever[rear], False):
             rl = 15
         elif rear in rblk:
@@ -383,6 +471,8 @@ def _run_vec(vec, init, ctx, until=None):
                     sl = max(sl, con.get(s, 0))
             elif s in dust and pw.get(s, 0) >= 1:
                 sl = max(sl, pw.get(s, 0))
+            elif s in target:
+                sl = max(sl, tg.get(s, 0))
             elif s in pwr and pbs.get(s, False):
                 sl = max(sl, 15)
         return rl, sl
@@ -393,9 +483,14 @@ def _run_vec(vec, init, ctx, until=None):
             return max(rl - sl, 0)
         return rl if sl <= rl else 0
 
+    for c, (level, duration, at) in shots.items():
+        if at == 0:
+            fire(0, c, level, duration)
+        else:
+            sched(at, "F", c)
+
     if init and init.get("_solve"):
-        # ponytail: glitch-free power-on. Every gate output torch starts OFF,
-        # so at tick 1 each fires once before its inputs arrive â€” a 1-2 tick
+        # ponytail: glitch-free power-on. Every gate output torch starts OFF,        # so at tick 1 each fires once before its inputs arrive â€” a 1-2 tick
         # pulse on EVERY combinational output. Harmless for DAG logic (it
         # settles), but a boosted S/R run delivers that pulse to an idle
         # latch at T~9 (measured: R1_S1 spikes to 10, the seeded hold-0
@@ -659,6 +754,14 @@ def _run_vec(vec, init, ctx, until=None):
             v = comp_out(c)
             if con.get(c, 0) != v:
                 con[c] = v
+                mark(); wake(now, c)
+        elif kind == "F":
+            level, duration, _at = shots[c]
+            fire(now, c, level, duration)
+        elif kind == "G":
+            if tx.get(c) == now:
+                tg.pop(c, None)
+                tx.pop(c, None)
                 mark(); wake(now, c)
     def _lit(cell):
         # ponytail: lamps need pointing-at dust (vanilla arms). End-of-line
