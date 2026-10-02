@@ -1482,3 +1482,74 @@ Measured progress on `alu4`: the column builds, all 21 levers collapse to 10,
 and legs reach bands 0-3. Still red on the far bands:
 `hier stitch A2: band 4/5 stub ... no ground`. That is the router's long-span
 weakness, not the bank geometry.
+### Bank ON: the cluster is achieved; the distribution trunk is not
+
+`REDSTONE_INPUT_BANK=1`, `scratch/alu4bands.pkl`, measured on the
+stitch-failure field dump:
+
+    LEVERS IN MERGED FIELD: 10
+    x -5..-5 (span 0)   z -51..-15 (span 36)
+       OP1(-5,-51) OP0(-5,-47) B3(-5,-43) B2(-5,-39) B1(-5,-35)
+       B0(-5,-31) A3(-5,-27) A2(-5,-23) A1(-5,-19) A0(-5,-15)
+
+**One column, one cell of x, 36 cells of z. Every input flips from one spot.**
+That is the requested geometry and it is measured, not argued. The old build
+had 21 levers over 1757 cells of x.
+
+All ten input nets now stitch their fan-out to every consuming band's stub.
+
+**Still red, and it is not the levers.** The value has to be carried east
+along a trunk row per input, and the trunk obstructs the field's own gate-net
+routing:
+
+- `hier stitch A3B3: band 4 stub (1566,63): no ground for A3B3:
+  (1834,50) -> (1341,1)`. A3B3's only open margin is north of the build --
+  where the ten trunk rows now are -- and its north-around drops at the stub's
+  column, crossing them.
+- Ordering the trunk rows by how far east each input reaches (longest row
+  southernmost) cut the crossings from ten to three and moved the failure:
+  `hier stitch OP0: band 2 stub (821,2): bridge support lands on wire at
+  (8,1,-23)`. The drop can cross a trunk row or two; three is past what
+  `lwire`'s single hop absorbs.
+
+**Why no straight-line fix exists.** A planar one-level fan-out cannot work
+here, and this is worth writing down so the next session does not re-derive it:
+every band's stub sits at the same latitude (z 2..8) while every band's field
+reaches further north (min z -19). A row per input must therefore be north of
+the field, and every drop from a row goes south, so every drop crosses every
+row south of it. Crossings are structural, not a bug in the placement.
+
+Three ways out, cheapest first, none built:
+
+1. **A street-crossing trunk.** `_HIER_GAP=160` leaves a 160-wide empty column
+   between every band pair. Run each trunk row east along the north margin,
+   then hand the band off by dropping down the street immediately west of it
+   and running east at the stub's latitude. The street descent is empty top to
+   bottom, so the only crossings left are at the stub's latitude, in that one
+   band's own north margin. Cost: one extra horizontal per band, and it needs
+   the stub latitude to be reachable -- which for A3B3's stub (z=63) it is not.
+2. **Trunk in the gap between y.** Stack the ten rows at y=1,3,5,... over
+   z rows 4 apart, so a drop crosses a row at a different y and only the
+   pillar under it conflicts. Needs a `dust over own pillar` exemption for the
+   cell directly above a row, which bug 2 above just made fatal.
+3. **A real constant-source tile.** A lever per input at the bank, feeding a
+   **repeateral-free** chain of the existing `_relay` stations, which already
+   re-drives 15 across a street. Needs `_relay` to run its waypoints on the
+   bank row rather than at the driver's z (`compose.py:2490` hardcodes
+   `(x, drv[1])`). That is a two-line change to `_relay` plus a row argument,
+   and it is the most promising of the three.
+
+### `REDSTONE_INPUT_BANK` default
+
+Default **OFF**. With it off, `alu4` merges byte identical to the shipped
+`alu4merge.pkl` (35082 blocks, `io["levers"]` equal, 4/4 smoke OK), so the ten
+green builds are untouched. Flipping it on does not yet produce a green build,
+so it must not be the default until the trunk lands. Do not delete the flag:
+it is the A/B for the trunk work.
+
+### New: dump on a stitch failure
+
+`REDSTONE_HIERDUMP_FAIL` now also fires when a stitch never lands. The
+opens/finish dumps only cover everything downstream of a landed stitch, and the
+banked fan-out is the first thing that can fail before that -- which is why
+this session spent several iterations with no field to inspect.

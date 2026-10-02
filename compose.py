@@ -2115,19 +2115,21 @@ def compose_hier_parts(built, gates, recipe):
     # Every band composed its own lever per recipe input, so a 10-input /
     # 6-band build shipped 21 levers strung along x (measured on the merged
     # caches: alu4 spanned 1757 blocks, cpu4 3352) and flipping an input meant
-    # walking to whichever band's copy was nearest. Worse, "keep the
-    # westernmost lever per input" is NOT one place either: each input's
-    # westernmost copy lives in a different band (alu4 put A0's at x=13,
-    # A1's at x=437, A2's at x=832, A3's at x=1482), so it made four clusters.
+    # walking to whichever band's copy was nearest. Worse, "keep the westernmost
+    # lever per input" is NOT one place either: each input's westernmost copy
+    # lives in a different band (alu4 put A0's at x=13, A1's at x=437, A2's at
+    # x=832, A3's at x=1482), so that made FOUR clusters.
     #
-    # So: build ONE lever column in the empty margin west of the whole merge,
-    # drop every partition's copy, and let the ordinary fan-out chain carry
-    # each input east to the stubs it used to drive directly. The chain
-    # (west-to-east, continuing from the previous stub) is the same mechanism
-    # that already carries a cross-band gate net past several fields, one
-    # street per leg, so this adds no new routing concept.
+    # So: one lever COLUMN north of the entire merge, one row per input, and
+    # the ordinary stitch fans each row out to the stubs it used to drive
+    # directly. Rows north of everything means the east run is open ground for
+    # the whole width, and the lever needs no riser -- its stub IS the west end
+    # of its row. That matters: a column of levers sharing one stub column
+    # walls each riser with the other nine stubs (measured: A2's riser ran
+    # into A3's and B3's).
     # REDSTONE_INPUT_BANK=0 restores the old per-partition levers.
     _banknets = {}
+    _bankrow = {}
     if os.environ.get("REDSTONE_INPUT_BANK", "0") == "1":
         _lev = {}
         for (b, sub, out, pctx, sh) in built:
@@ -2136,25 +2138,43 @@ def compose_hier_parts(built, gates, recipe):
                     _lev.setdefault(v[1], []).append((x + offs[b], z, b))
         if _lev:
             _names = sorted(_lev)
-            # one column, 3 apart in z: a lever's own ring reaches one cell
-            # north/south, so 2 would put two nets in one ring cell.
-            _cz = max(z for L in _lev.values() for (_, z, _) in L)
+            _bz0 = min([z for (x, z) in solid]
+                       + [z for (x, _, z) in wires]
+                       + [z for (x, _, z) in repeaters])
             _cx = min(x for (x, z) in solid) - 6
+            # ponytail: ROW ORDER = how far east each input reaches, longest
+            # first, so the longest row is the SOUTHERNMOST. A band's stub is
+            # reached by dropping south from its row at the stub's own column,
+            # and that drop crosses exactly the rows south of it -- which, in
+            # this order, are only the rows that reach FURTHER east than the
+            # drop. Without it every drop crossed all ten rows and the gate
+            # nets lost their north-around descent (measured: "hier stitch
+            # A3B3: band 4 stub (1566,63): no ground for A3B3: (1834,50) ->
+            # (1341,1)", whose only open margin is north of the bank).
+            _reach = {n: max(offs[b] for (_, _, b) in _lev[n]) for n in _names}
+            _rows = {}
+            for _i, _n in enumerate(sorted(_names, key=lambda n: -_reach[n])):
+                _rows[_n] = _bz0 - 16 - 4 * _i
             for _try in range(400):
-                _cells = [(_cx, _cz - 3 * i) for i in range(len(_names))]
-                if not any(c in solid or (c[0] + 1, c[1]) in solid
-                           or (c[0], 1, c[1]) in wires
-                           or (c[0] + 1, 1, c[1]) in wires
-                           or (c[0], 1, c[1]) in repeaters
-                           for c in _cells):
+                _cells = [(_cx, _rows[_n]) for _n in _names]
+                if not any(
+                        c in solid or (c[0] + 1, c[1]) in solid
+                        or (c[0], 1, c[1]) in wires
+                        or (c[0] + 1, 1, c[1]) in wires
+                        or (c[0], 1, c[1]) in repeaters
+                        or (c[0] + 1, 1, c[1]) in repeaters
+                        or (c[0] - 1, c[1]) in solid
+                        or (c[0] - 1, 1, c[1]) in wires
+                        or (c[0] - 1, 1, c[1]) in repeaters
+                        for c in _cells):
                     break
                 _cx -= 4
             else:
-                raise RuntimeError("hier bank: no free column west of the "
-                                   f"merge after 400 steps (tried x={_cx})")
+                raise RuntimeError("hier bank: no free column north-west of "
+                                   f"the merge after 400 steps (x={_cx})")
             _bb = min(b for L in _lev.values() for (_, _, b) in L)
-            for _i, _n in enumerate(_names):
-                lx, lz = _cx, _cz - 3 * _i
+            for _n in _names:
+                lx, lz = _cx, _rows[_n]
                 blocks.append((lx, 1, lz,
                                "minecraft:lever[face=floor,facing=north,"
                                "powered=false]"))
@@ -2167,6 +2187,7 @@ def compose_hier_parts(built, gates, recipe):
                 drv_of[_n] = (lx + 1, lz)
                 prod[_n] = _bb
                 _banknets[_n] = (lx, lz)
+                _bankrow[_n] = lz
             for _n in _names:
                 for (lx, lz, b) in _lev[_n]:
                     blocks[:] = [bb for bb in blocks
@@ -2713,12 +2734,11 @@ def compose_hier_parts(built, gates, recipe):
         # field (measured: OP1 band2->band4, 642 cells through band 3, "path
         # re-enters (1341,1,2)"). Rows 4 apart, so no two bank nets touch.
         if n in _banknets:
-            _bz = _minz0 - 12 - 4 * (1 + sorted(_banknets).index(n))
             if os.environ.get("REDSTONE_HIER_TRACE"):
-                print(f"hier bank {n} {drv}->{stub} row {_bz}", flush=True)
+                print(f"hier bank {n} {drv}->{stub}", flush=True)
             try:
-                return _try(lambda: _legs([drv, (drv[0], _bz),
-                                           (stub[0], _bz), stub], "bank"))
+                return _try(lambda: _legs([drv, (stub[0], drv[1]), stub],
+                                          "bank"))
             except RuntimeError as e:
                 _err = e
         _spanlen = abs(stub[0] - drv[0]) + abs(stub[1] - drv[1])
@@ -2987,6 +3007,22 @@ def compose_hier_parts(built, gates, recipe):
                               "repeaters": repeaters, "pos": pos,
                               "sup": sup}, _f)
         if _fail:
+            # ponytail: dump on a STITCH failure too. The opens/finish dumps
+            # cover everything downstream of a landed stitch, but a stitch that
+            # never lands has no dump at all -- and a banked input's fan-out is
+            # the first thing that can fail there (measured: "hier stitch A3B3:
+            # band 4 stub (1566,63): no ground for A3B3: (1834,50) ->
+            # (1341,1)" with no field to inspect). Same env gate as the others.
+            _df = os.environ.get("REDSTONE_HIERDUMP_FAIL")
+            if _df:
+                import pickle as _p5
+                with open(_df, "wb") as _f:
+                    _p5.dump({"blocks": blocks, "solid": solid,
+                              "rings": rings, "wires": wires,
+                              "junctions": junctions,
+                              "repeaters": repeaters, "pos": pos, "sup": sup,
+                              "stitched": stitched}, _f)
+                print(f"hier dump-fail {_df}", flush=True)
             raise RuntimeError(f"hier stitch {n}: " + " | ".join(_fail))
     # ponytail: merge-wide slope-link lids. Partitions route (and 3D-fly)
     # assuming open surroundings; after the merge a foreign y=1 run can sit
