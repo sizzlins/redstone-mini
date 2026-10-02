@@ -675,7 +675,8 @@ def bridge_stamp(blocks, solid, wires, rings, placed, net, fx, fz, axis):
     return feet
 
 
-def finish_assembly(blocks, solid, wires, rings, junctions, repeaters, pos):
+def finish_assembly(blocks, solid, wires, rings, junctions, repeaters, pos,
+                    extra_lamps=None):
     # ponytail: shrink-wrap grid to content (+3 margin). A 13x4 gate on a
     # 30x38 pad photographs as sprawl even when every wire is minimal.
     OCC = [(x, 1, z) for (x, z) in solid] + list(wires)
@@ -721,6 +722,9 @@ def finish_assembly(blocks, solid, wires, rings, junctions, repeaters, pos):
     io = {"levers": {c: n for c, (k, n) in solid.items() if k == "lever"},
           "lamps": {c: n for c, (k, n) in solid.items() if k == "lamp"},
           "nets": dict(wires)}
+    if extra_lamps:
+        # ponytail: elevated IO panel lamps ride as 3D keys (2D keys pin y=1).
+        io["lamps"].update({(x - minx, y, z - minz): n for (x, y, z), n in extra_lamps.items()})
     return sorted(out), (W, D), io
 
 
@@ -1730,7 +1734,7 @@ if __name__ == "__main__":
     _r = parse_recipe("IN a\nOUT n\nn = NOT a\n")
     _nb, _, _io, _ = layout_retry(_r, verify=True)
     _lamps = [c for c, v in _io["lamps"].items() if v == "n"]
-    assert len(_lamps) == 1, _io["lamps"]
+    assert len(_lamps) >= 1, _io["lamps"]
     _lx, _lz = _lamps[0]
     _nets = _io["nets"]
     assert _nets.get((_lx - 2, 1, _lz)) == "n", "NOT out drifted"
@@ -1742,7 +1746,7 @@ if __name__ == "__main__":
     _r = parse_recipe("IN a, b\nOUT t\nt = a AND b\n")
     _bb, _, _io, _ = layout_retry(_r, verify=True)
     _lamps = [c for c, v in _io["lamps"].items() if v == "t"]
-    assert len(_lamps) == 1, _io["lamps"]
+    assert len(_lamps) >= 1, _io["lamps"]
     _lx, _lz = _lamps[0]
     _nets = _io["nets"]
     assert _nets.get((_lx - 2, 1, _lz)) == "t", "AND out drifted"

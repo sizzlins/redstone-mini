@@ -41,6 +41,12 @@ _BOUT_N = int(_os.environ.get("REDSTONE_BURNOUT", "8"))
 _BOUT = {}
 
 
+def _ck(c):
+    # ponytail: io coord key. 2D keys pin y=1 (levers, ground taps); the IO
+    # panel's elevated lamps ride as 3D keys.
+    return f"{c[0]},{c[1] if len(c) > 2 else 1},{c[-1]}"
+
+
 def layout_retry(recipe, tries=12, verify=False, grows=3):
     """Randomized-restart maze routing: reshuffle net order until the field fits.
     Returns the FIRST verified build. ponytail: this used to sweep all `tries`
@@ -488,7 +494,12 @@ def _run_vec(vec, init, ctx, until=None):
             if m in lever and vec.get(lever[m], False):
                 return True
         return False
-    return ({net: _lit(cell) for cell, net in lampnet.items()},
+    # ponytail: a net with mirrored lamps (IO panel) is good iff EVERY lamp
+    # agrees — dict comprehension would let the last cell mask a dark twin.
+    _litby = {}
+    for _cell, _net in lampnet.items():
+        _litby.setdefault(_net, []).append(_lit(_cell))
+    return ({_net: all(_v) for _net, _v in _litby.items()},
             {c: v for c, v in pw.items() if v},
             {c: 1 if tl.get(c, False) else 0 for c in torch},
             ticks[0],
@@ -585,8 +596,8 @@ def sim_verify(recipe, blocks, io, seed=7, quiet=False, collect=False):
     states = None
     if collect and len(combos) <= 16:
         states = {"inputs": list(ins),
-                  "levers": {f"{x},1,{z}": n for (x, z), n in io["levers"].items()},
-                  "lamps": {f"{x},1,{z}": n for (x, z), n in io["lamps"].items()},
+                  "levers": {_ck(k): n for k, n in io["levers"].items()},
+                  "lamps": {_ck(k): n for k, n in io["lamps"].items()},
                   "vectors": {}}
     for vec in combos:
         exp = eval_net(recipe, vec)
@@ -604,8 +615,8 @@ def sim_verify(recipe, blocks, io, seed=7, quiet=False, collect=False):
             states["vectors"][vkey] = {
                 "w": {f"{x},{y},{z}": v for (x, y, z), v in live.items()},
                 "t": {f"{x},{y},{z}": v for (x, y, z), v in tlive.items()},
-                "lamps": {f"{x},1,{z}": 1 if got.get(net, False) else 0
-                          for (x, z), net in io["lamps"].items()},
+                "lamps": {_ck(k): 1 if got.get(net, False) else 0
+                          for k, net in io["lamps"].items()},
                 "ticks": nticks,
                 "r": {f"{x},{y},{z}": v for (x, y, z), v in rlive.items()},
                 "o": {f"{x},{y},{z}": v for (x, y, z), v in _conc.items()}}

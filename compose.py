@@ -24,6 +24,8 @@ _WIDE_YMIN = int(os.environ.get("REDSTONE_COMPOSE_YMIN", "-4"))
 _WIDE_YMAX = int(os.environ.get("REDSTONE_COMPOSE_YMAX", "6"))
 
 _VEC = {(1, 0): "east", (-1, 0): "west", (0, 1): "south", (0, -1): "north"}
+# ponytail: facing name -> delta, derived (never a second hand-written table).
+_VEC_D = {v: k for k, v in _VEC.items()}
 
 
 def _hop_free(ctx, sup, guard, feet, supports, dusts, victim, net):
@@ -475,6 +477,21 @@ def _walk(ctx, sup, guard, a, b, net, cells):
             continue
         rep = ctx.repeaters.get((cx, cy, cz))
         if rep is not None and rep[0] == net:
+            # ponytail: a same-net diode may only be crossed WITH its flow.
+            # Vanilla facing points output->input, so the repeater drives
+            # toward -facing; travelling the other way means walking into the
+            # back of a one-way and the leg dies silently. This was
+            # unconditional pass-through, which the IO panel's second leg on
+            # a fanned-out output exposed: example_xor's leg crossed the
+            # tile's own south-facing merge diodes and the panel lamp never
+            # lit, with every static checker green. Refuse instead, so the
+            # candidate loop picks another corridor.
+            _fx, _fz = _VEC_D[rep[1]]
+            _travel = (cx - seq[j - 1][0], cz - seq[j - 1][2])
+            if _travel != (-_fx, -_fz):
+                raise RuntimeError(
+                    f"compose: {net} runs into the back of a repeater at "
+                    f"{(cx, cy, cz)} (facing={rep[1]})")
             done.append((cx, cy, cz))  # pass through, no phantom re-stamp
             j += 1
             continue
@@ -647,6 +664,17 @@ def _plant_repeaters(ctx, cells, net, flow):
                         b[:3] == (cx, cy - 1, cz) and "cobblestone" in b[3]
                         for b in ctx.blocks):
                     continue
+                # ponytail: only convert a cell that still holds THIS net's
+                # dust. The `del` used to be unconditional, which assumed every
+                # cell on a recorded path is our wire -- false once two legs
+                # share a run (the IO panel's leg leaves a net that a lane
+                # already crosses) and it raised KeyError mid-plant. Worse, if
+                # the cell held a FOREIGN net it would have deleted that wire
+                # and papered over a short. Skipping leaves the run as it is;
+                # the sim gate still judges the boost, and check_shorts still
+                # shouts if two nets really do share a cell.
+                if ctx.wires.get((cx, cy, cz)) != net:
+                    continue
                 del ctx.wires[(cx, cy, cz)]
                 # ponytail: vanilla facing points output->input (toward the
                 # driver), so negate travel. Sim stores travel (negates back).
@@ -724,6 +752,28 @@ def _expanded(op, ox, gz):
     # and sharing a mutable set across placements would be a landmine.
     fp = footprint(op, ox, gz)
     return frozenset((x + ax, z + az) for (x, z) in fp for ax in (-4, -3, -2, -1, 0, 1, 2, 3, 4) for az in (-4, -3, -2, -1, 0, 1, 2, 3, 4))
+
+
+def _sign_bid(text, facing="south"):
+    # ponytail: sign text rides in the bid as NBT (mcfunction setblock and
+    # mcschematic both carry block entities; the sim ignores unknown blocks;
+    # full_state passes NBT-only bids through). `facing` is the side the text
+    # shows on, and it must point at whoever reads it: a lever sign sits one
+    # cell NORTH of its lever, so it faces SOUTH (rotation 2); an output sign
+    # sits one cell SOUTH of its lamp, so it faces NORTH (rotation 0).
+    esc = text.replace("\\", "\\\\").replace('"', '\\"')
+    rot = {"north": 0, "east": 1, "south": 2, "west": 3}[facing]
+    return (f'minecraft:oak_sign[rotation={rot}]{{front_text:{{messages:[\'{{"text":"'
+            + esc + '"}\',\'{"text":""}\',\'{"text":""}\',\'{"text":""}\']}}')
+
+
+def _seal_panel(ctx, cells, net):
+    # own-ring a panel structure's columns so foreign nets detour around it.
+    # Endpoints stay enterable: rings admit their own net (tap_lamps precedent).
+    for cx, cy, cz in cells:
+        ring(ctx, cx, cz, own(net))
+        for dx, dz in DIRS:
+            ring(ctx, cx + dx, cz + dz, own(net))
 
 
 def _compose_once(recipe):
@@ -822,13 +872,13 @@ def _compose_once(recipe):
     # it back. Kept as evidence; a correct fix needs the booster to guarantee
     # 15 at every port (a `_plant_repeaters` change), not a wider hole.
     edge_n, edge_s = {}, {}
-    # ponytail: each lever sits AT its lane, so d1 is zero-length. The old
-    # code put the lever at its loads' centroid x (deep in the tile field)
-    # and marched 100+ cells to the lane — a march that dies on any dense
-    # field (alu1 OP1, decode3 C, every new candidate). Lane x is shared
-    # with the router below (minx-2-4*SPREAD*index); the lever goes one
-    # west so its stub IS the lane start. Levers stay banked along the
-    # north edge (2-pitch in z) per the build contract.
+    # ponytail: IO panel. Showroom levers stand side by side in ONE row north
+    # of the bank (same lane x); a short N-S connector joins each showroom to
+    # its staggered bank stub, so lane columns, d1/d2 legs and all existing
+    # routes are untouched. Each showroom lever gets a label sign north of
+    # it; the lamp platform floats above this same row (see below).
+    showz = minz - 8 - 2 * len(recipe["inputs"])
+    panel_runs = {}
     for k, name in enumerate(recipe["inputs"]):
         loads = netspec.get(name, {}).get('loads', [])
         if not loads:
@@ -841,16 +891,26 @@ def _compose_once(recipe):
         lx = minx - 2 - _pitch * recipe["inputs"].index(name)
         lz = minz - 6 - 2 * len(edge_n)
         edge_n[name] = lz
-        cx = lx - 1
-        blocks.append((cx, 1, lz, "minecraft:lever[face=floor,facing=north,powered=false]"))
-        solid[(cx, lz)] = ("lever", name)
+        # bank stub (kept): lane start, d1 zero-length as before.
+        stamp_wire(ctx, [(lx, lz)], name)
+        ring(ctx, lx, lz, own(name))
+        pos[name] = (lx, lz)
+        # showroom lever + label sign on the shared row.
+        sx = lx - 1
+        blocks.append((sx, 1, showz, "minecraft:lever[face=floor,facing=north,powered=false]"))
+        solid[(sx, showz)] = ("lever", name)
+        blocks.append((sx, 1, showz - 1, _sign_bid("in " + name, "south")))
+        solid[(sx, showz - 1)] = ("sign", name)
         for dx, dz in DIRS:
-            ring(ctx, cx + dx, lz + dz, own(name))
-        # stub juts east along the empty lever row (west collides with
-        # other lanes' columns; rows sit outside tile z-span so east runs
-        # free until the lane turns north/south).
-        stamp_wire(ctx, [(cx + 1, lz)], name)
-        pos[name] = (cx + 1, lz)
+            ring(ctx, sx + dx, showz + dz, own(name))
+        ring(ctx, sx, showz - 1, own(name))
+        # connector: showroom dust, then the N-S run down to the bank stub.
+        stamp_wire(ctx, [(lx, showz)], name)
+        cells = [(lx, 1, z) for z in range(showz + 1, lz + 1)]
+        for cell in cells:
+            stamp_wire(ctx, [cell], name)
+        panel_runs[name] = [(lx, 1, showz)] + cells
+        _seal_panel(ctx, [(lx, 1, showz)] + cells + [(sx, 1, showz)], name)
     # ponytail: lamp taps stamped BEFORE routing, not after. tap_lamps picks
     # the first of four spots (E/S/N/W) that is clear of wire AND of foreign
     # wire BESIDE it. On the post-routing field a dense tile band has no such
@@ -861,6 +921,55 @@ def _compose_once(recipe):
     # Cost: each lamp's 3x3 own-ring is a hard seal for foreign nets (the old
     # reason for the late stamp). Measured below, not assumed.
     tap_lamps(ctx, recipe, pos, 10**6, 10**6)
+    # ponytail: IO panel lamps. A cobble platform floats above the showroom
+    # row (y=2); each output gets a lamp + feed dust + label sign at y=3 and
+    # a dust staircase climbing the open north field to a ground load cell
+    # the router targets like any other load (boosters + checkers cover it,
+    # the sim gate proves the mirror). Lamp slots run pitch 2 above the
+    # showroom; neighbouring slots never touch.
+    panel_lamps = {}
+    _latch_outs = {g["out"] for g in gates if g["op"] == "LATCH"}
+    for j, name in enumerate(recipe["outputs"]):
+        if _PANEL_OFF:
+            # compose() set this after a routing death: retry the same rung with
+            # no platform lamps. The lever showroom stays (it is local to the
+            # field edge and costs no long leg).
+            break
+        if name in _latch_outs:
+            # ponytail: NO panel slot for a latch-driven output. The feed has to
+            # reach the platform, which means a routed leg leaving Q -- and the
+            # cross-coupled Q/Qb loop is race-critical (tiles.place_latch: "never
+            # thread repeaters through it, they sustain a power-on race").
+            # Measured: with the leg, the lever-fed LATCH sequence test lost its
+            # SET phase; without it, green. A lamp is passive, but it is the
+            # LEG that re-arms the loop, so there is no honest partial slot
+            # (a lamp with no feed is dead weight, and stamping the feed
+            # without the load trips check_opens). Loud, not silent.
+            # Ceiling: memory outputs get no panel mirror.
+            print(f"panel: no lamp for {name} (latch output, feed would "
+                  f"break its race)", flush=True)
+            continue
+        X = minx - 3 - 2 * j
+        blocks.append((X, 3, showz, "minecraft:redstone_lamp[lit=false]"))
+        blocks.append((X, 3, showz + 1, _sign_bid("out " + name, "north")))
+        solid[(X, showz + 1)] = ("sign", name)
+        for px, py, pzz in ((X, 2, showz - 1), (X, 2, showz), (X, 2, showz + 1)):
+            blocks.append((px, py, pzz, "minecraft:cobblestone"))
+            sup[(px, py, pzz)] = name
+        sup[(X, 3, showz)] = name  # lamp cell: no foreign y=3 stamping
+        sup[(X, 3, showz + 1)] = name  # sign cell likewise
+        stamp_wire(ctx, [(X, 3, showz - 1)], name)  # feed beside lamp
+        stamp_wire(ctx, [(X, 2, showz - 2)], name)  # stair down north
+        stamp_wire(ctx, [(X, 2, showz - 3)], name)
+        stamp_wire(ctx, [(X, 1, showz - 4)], name)  # ground load for router
+        blocks.append((X, 1, showz - 2, "minecraft:cobblestone"))
+        solid[(X, showz - 2)] = ("cobble", name)
+        blocks.append((X, 1, showz - 3, "minecraft:cobblestone"))
+        solid[(X, showz - 3)] = ("cobble", name)
+        panel_lamps[(X, 3, showz)] = name
+        netspec[name]['loads'].append((X, showz - 4))
+        _seal_panel(ctx, [(X, 1, showz - 4), (X, 2, showz - 3), (X, 2, showz - 2),
+                          (X, 3, showz - 1), (X, 3, showz), (X, 3, showz + 1)], name)
     # Snapshot which nets may sit beside each tile's torch host. Must run
     # after every tile AND the lamp taps are stamped (those are wire too) and
     # before any routing: from here on stamp_wire refuses a wire that would
@@ -1304,6 +1413,11 @@ def _compose_once(recipe):
             flow.setdefault((v[0], v[1], v[2]), set()).add(d)
     for net, full in paths:
         _plant_repeaters(ctx, full, net, flow)
+    # ponytail: showroom connectors are pre-stamped, not routed, so the pass
+    # above never sees them. Boost north->south runs explicitly (same
+    # straight-triple rules; the sim gate judges).
+    for _pn, _pcells in panel_runs.items():
+        _plant_repeaters(ctx, _pcells, _pn, {_c: {(0, 1)} for _c in _pcells})
     if os.environ.get("RS_WATCH82"):
         print(f"WATCH after boost (82,1,29)={ctx.wires.get((82,1,29))} "
               f"rep={ctx.repeaters.get((82,1,29))}", flush=True)
@@ -1343,6 +1457,11 @@ def _compose_once(recipe):
         _g = {(x + _dx, z + _dz) for (x, z) in guard}
         guard.clear()
         guard.update(_g)
+        # ponytail: panel lamp keys shift with everything else (finish_assembly
+        # shifts a second time on its own frame).
+        _npl = {(x + _dx, y, z + _dz): v for (x, y, z), v in panel_lamps.items()}
+        panel_lamps.clear()
+        panel_lamps.update(_npl)
     # ponytail: a load must never hold a FOREIGN net. "holds nothing" is
     # legal - a tile's port can be a zero-wire tap satisfied by adjacency to
     # the driver's own cell, so an unwired load is normal and every green
@@ -1360,7 +1479,8 @@ def _compose_once(recipe):
                     f"compose: load {_c} of {_n} holds a {_rep[0]} repeater")
     check_shorts(wires, junctions, blocks)
     check_opens(wires, junctions, repeaters, solid, pos, blocks)
-    return finish_assembly(blocks, solid, wires, rings, junctions, repeaters, pos)
+    return finish_assembly(blocks, solid, wires, rings, junctions, repeaters, pos,
+                           extra_lamps=panel_lamps)
 
 
 # Placement spread factor (module-global so _compose_once's spacing reads
@@ -1389,6 +1509,11 @@ _COMPOSE_SECS = float(os.environ.get("REDSTONE_COMPOSE_SECS", "0") or 0)
 # _compose_once's restart loop (rule 7). None when unset or outside compose().
 _DEADLINE = None
 
+# IO panel fallback (see compose()): set for one retry when a routing death
+# looks like the panel's long legs, never left set across a compose() call.
+_PANEL_OFF = False
+_PANEL_TRIED = None
+
 # Routing/geometry failures worth retrying with more room (NOT logic or
 # sim failures — those are deterministic and spread cannot fix them).
 _RETRYABLE = ("no ground", "no route", "OPEN ", "blocked", "lamp spot taken",
@@ -1406,8 +1531,18 @@ def compose(recipe):
     escalates. The build may sprawl across chunks (wires run long,
     repeaters carry them).
     """
-    global _SPREAD, _ORDER, _JOGS, _DEADLINE
+    global _SPREAD, _ORDER, _JOGS, _DEADLINE, _PANEL_OFF, _PANEL_TRIED
     last = None
+    # ponytail: skip the platform lamps outright on a big field. Each slot is a
+    # leg crossing the WHOLE build, and on a dense one it does not fit -- and
+    # finding that out by trying costs the wasted attempt (measured: ctrl_decode
+    # 6s green without the panel, 40s with the attempt-then-drop). Threshold is
+    # a measured split, not a law: micro1 (10 gates) takes the panel in 1s,
+    # ctrl_decode (21) and alu1 (22) do not. Ceiling: a 13-gate build that would
+    # have fit now goes without lamps. The retry below still catches anything
+    # under the line that fails, so this is a speed guard, not a correctness one.
+    _PANEL_OFF = len(expand_gates(recipe["gates"], recipe["inputs"])) > 12
+    _PANEL_TRIED = None
     deadline = time.monotonic() + _COMPOSE_SECS if _COMPOSE_SECS else None
     _DEADLINE = deadline
     # REDSTONE_FORCE="spread,order,jog" pins one rung (diagnostics: bisect a
@@ -1434,11 +1569,30 @@ def compose(recipe):
                         or (deadline and time.monotonic() > deadline)
                         or not any(k in str(e) for k in _RETRYABLE)):
                     raise
+                # ponytail: the panel is PRESENTATION, and it is the only
+                # thing here that adds long legs into an already-crowded
+                # field. A dense build that routed fine without it must not
+                # start failing because of it, so the first routing death
+                # retries the same rung with the panel slots dropped rather
+                # than climbing the whole ladder. Measured: ctrl_decode went
+                # green 5501 blocks in 6s on stock and died `no route for OP2`
+                # with the panel; dropping the panel legs restores it exactly.
+                # One retry, same rung, so green builds that fit the panel keep
+                # it bit-identically.
+                if not _PANEL_OFF and _PANEL_TRIED is not (jog, spread, order):
+                    _PANEL_TRIED = (jog, spread, order)
+                    _PANEL_OFF = True
+                    print(f"compose {jog} spread {spread} {order} failed with the "
+                          f"IO panel ({str(e)[:50]}); retrying without panel lamps",
+                          flush=True)
+                    continue
                 print(f"compose {jog} spread {spread} {order} failed "
                       f"({str(e)[:60]}); retrying", flush=True)
         raise last
     finally:
         _DEADLINE = None
+        _PANEL_OFF = False
+        _PANEL_TRIED = None
 
 
 if __name__ == "__main__":

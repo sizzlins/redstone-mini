@@ -9,7 +9,7 @@ COLORS = {"minecraft:stone": 0x8a8a8a, "minecraft:redstone_wire": 0xe02020,
           "minecraft:cobblestone": 0x7a7a7a, "minecraft:redstone_wall_torch": 0xd83a00,
           "minecraft:lever": 0x7a5a2e, "minecraft:redstone_lamp": 0xffa726,
           "minecraft:redstone_block": 0xb01010, "minecraft:repeater": 0xc7a17a,
-          "minecraft:comparator": 0x9a8a7a}
+          "minecraft:comparator": 0x9a8a7a, "minecraft:oak_sign": 0xc9a86a}
 # ponytail: textures stream from the upstream asset pack at runtime, no PNGs in this repo.
 
 
@@ -54,15 +54,18 @@ _DEFAULT_PROPS = {
 
 def full_state(bid):
     """Complete a partial blockstate with vanilla defaults (see above)."""
-    base_, sep, rest = bid.partition("[")
+    # ponytail: sign text rides as NBT after the blockstate; parse around it.
+    state, _, tail = bid.partition("]{")
+    nbt = ("]{" + tail) if tail else ""
+    base_, sep, rest = state.partition("[")
     if not sep:
-        extra = _DEFAULT_PROPS.get(bid)
-        return f"{bid}[{','.join(f'{k}={v}' for k, v in extra)}]" if extra else bid
+        extra = _DEFAULT_PROPS.get(state)
+        return f"{state}[{','.join(f'{k}={v}' for k, v in extra)}]{nbt}" if extra else bid
     have = {p.split("=", 1)[0] for p in rest.rstrip("]").split(",") if "=" in p}
     missing = [f"{k}={v}" for k, v in _DEFAULT_PROPS.get(base_, ()) if k not in have]
     if not missing:
         return bid
-    return f"{bid.rstrip(']')},{','.join(missing)}]"
+    return f"{state.rstrip(']')},{','.join(missing)}]{nbt}"
 
 
 def export_schem(blocks, path, oy=64):
