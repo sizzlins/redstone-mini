@@ -53,7 +53,7 @@ def _tables_from(P, inp):
     neighbours and ask what each one is" into "walk a short list of cells
     already known to matter".
     """
-    dust, torch, lampat, rep, rblk, cob, repdelay, lever, lampnet, \
+    dust, torch, rep, rblk, cob, repdelay, lever, lampnet, \
         attach_rev, comp, leveratt, glass, slab, target = P
     # ponytail: transparent power sets (glass/slab feature, mirrors sim):
     # pwr holds power (cobble/stone + slabs; glass never), sup is any solid
@@ -481,7 +481,7 @@ def run_scalar(vec, ctx, init=None, until=None, tick_cap=None, step_cap=None,
     if init:
         raise NotImplementedError(
             "run_scalar: no latch pre-solve; use sim._run_vec when init is given")
-    dust, torch, lampat, rep, rblk, cob, repdelay, lever, lampnet, \
+    dust, torch, rep, rblk, cob, repdelay, lever, lampnet, \
         attach_rev, comp, leveratt, glass, slab, target = ctx
     if target_hits:
         # A projectile hit is time-dependent; the fixed tables only model the

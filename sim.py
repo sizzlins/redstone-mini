@@ -201,7 +201,7 @@ def _run_vec(vec, init, ctx, until=None, target_hits=None):
     starts blank. until caps the run at a tick (for sim_pulse timelines).
     target_hits maps target cells to (projectile, level[, at]) and fires timed
     Target-block emissions (wiki Target). Returns (lamps, live, torches, ticks, repeaters)."""
-    dust, torch, lampat, rep, rblk, cob, repdelay, lever, lampnet, attach_rev, comp, leveratt, glass, slab, target = ctx
+    dust, torch, rep, rblk, cob, repdelay, lever, lampnet, attach_rev, comp, leveratt, glass, slab, target = ctx
     # ponytail: transparent power sets (glass/slab feature). pwr = blocks
     # that can hold power (cobble/stone + slabs; glass never). sup3 = blocks
     # a slope may legally rest on (pwr + glass). Lids still cut only when
@@ -789,7 +789,7 @@ def _parse_build(blocks, io):
     Returns a 15-tuple (glass + slab + target joined at the end; every unpack
     site names all fifteen).
     """
-    dust, torch, lampat, rep, rblk, cob = set(), {}, set(), {}, set(), set()
+    dust, torch, rep, rblk, cob = set(), {}, {}, set(), set()
     comp = {}
     repdelay = {}
     leveratt = {}
@@ -821,7 +821,11 @@ def _parse_build(blocks, io):
             # neighbour to dust_lvl's torch term, gated on a canary.
             torch[c] = (c[0], c[1] - 1, c[2])
         elif b == "minecraft:redstone_lamp":
-            lampat.add(c)
+            # ponytail: lamps are electrical identity, not geometry: which net
+            # a lamp shows comes from io["lamps"], never from its block. A
+            # `lampat` cell set used to be collected here and never read by
+            # anything -- every unpack site just named it -- so it is gone.
+            pass
         elif b == "minecraft:repeater":
             face = bid.split("facing=")[1].split(",")[0] if "facing=" in bid else "east"
             # ponytail: vanilla facing points output->input (toward the
@@ -921,7 +925,7 @@ def _parse_build(blocks, io):
     attach_rev = {}
     for t, a in torch.items():
         attach_rev.setdefault(a, []).append(t)
-    return (dust, torch, lampat, rep, rblk, cob, repdelay, lever, lampnet,
+    return (dust, torch, rep, rblk, cob, repdelay, lever, lampnet,
             attach_rev, comp, leveratt, glass, slab, target)
 
 
@@ -972,7 +976,7 @@ def _check_supports(P):
     modeled power but never support. Zero behavior change for green builds
     (their y>=2 cells already ride stamped pillars).
     """
-    dust, torch, lampat, rep, rblk, cob, repdelay, lever, lampnet, attach_rev, comp, leveratt, glass, slab, target = P
+    dust, torch, rep, rblk, cob, repdelay, lever, lampnet, attach_rev, comp, leveratt, glass, slab, target = P
     solid = cob | rblk | glass | slab
     for c in list(dust) + list(rep) + list(comp):
         if c[1] == 1:
