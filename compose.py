@@ -612,7 +612,8 @@ def _plant_repeaters(ctx, cells, net, flow):
     # every 8 from the load end (tail freshness — the latch S-row needs
     # level 9 at its port). Hop dusts break straight triples, so one
     # direction alone strands the other side; over-boosting is cheap
-    # (block count is reported, never scored). Facing always along travel.
+    # (block count is reported, never scored). Vanilla facing points
+    # output->input (toward the driver), so emission negates travel.
     # Safe on shared prefixes: composer runs are driver->load L-paths, so a
     # shared cell flows away from the driver for every run using it.
     # ponytail: same-net repeaters passed through by later runs are assumed
@@ -647,7 +648,9 @@ def _plant_repeaters(ctx, cells, net, flow):
                         for b in ctx.blocks):
                     continue
                 del ctx.wires[(cx, cy, cz)]
-                ctx.repeaters[(cx, cy, cz)] = (net, _VEC[(dx, dz)])
+                # ponytail: vanilla facing points output->input (toward the
+                # driver), so negate travel. Sim stores travel (negates back).
+                ctx.repeaters[(cx, cy, cz)] = (net, _VEC[(-dx, -dz)])
                 dist = 0
 
 

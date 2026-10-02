@@ -220,8 +220,10 @@ def place_or(ctx, place, g, ox, gz, pos, W, D):
                     if r in ctx.solid or (r[0], 1, r[1]) in ctx.wires or b in ctx.solid or (b[0], 1, b[1]) in ctx.wires \
                        or r in seen or b in seen:
                         continue
-                    facing = {(1, 0): "west", (-1, 0): "east",
-                              (0, 1): "north", (0, -1): "south"}[(dx, dz)]
+                    # ponytail: vanilla facing points output->input (toward the
+                    # driver, away from the junction), so identity, not negated.
+                    facing = {(1, 0): "east", (-1, 0): "west",
+                              (0, 1): "south", (0, -1): "north"}[(dx, dz)]
                     ctx.blocks.append((r[0], 1, r[1], f"minecraft:repeater[facing={facing},delay=1]"))
                     ctx.solid[r] = ("repeater", o)
                     reps.append((r, b))
@@ -318,7 +320,7 @@ def place_latch(ctx, place, g, i, ox, gz, pos):
             # only set is delayed, reset is not, and the cross-coupled
             # Q/Qb loop itself is untouched.
             del ctx.wires[(ox + 1, 1, gz + 4)]
-            ctx.repeaters[(ox + 1, 1, gz + 4)] = (a[0], "east")
+            ctx.repeaters[(ox + 1, 1, gz + 4)] = (a[0], "west")
             # ponytail: funnel the R stub like the AND/NOT inputs (a
             # repeater here would front the A-block and back-feed its
             # supply the same permanent way). Straight dust reads
@@ -398,7 +400,7 @@ def place_xor(ctx, place, g, i, ox, gz, pos):
                 if ctx.wires.get((_jx, 1, _jz)) != o:
                     raise RuntimeError(f"XOR diode spot holds {ctx.wires.get((_jx, 1, _jz), 'EMPTY')}")
                 del ctx.wires[(_jx, 1, _jz)]
-                ctx.repeaters[(_jx, 1, _jz)] = (o, "south")
+                ctx.repeaters[(_jx, 1, _jz)] = (o, "north")
             # ponytail: side feeds are repeaters, not levers. Wiki:
             # comparator sides need STRONG power and dust never counts,
             # so the old tile levers ringed their neighbours shut and
@@ -413,8 +415,8 @@ def place_xor(ctx, place, g, i, ox, gz, pos):
             for _rx, _rz in ((ox, gz - 1), (ox, gz + 3),
                              (ox + 1, gz + 1), (ox + 1, gz + 2), (ox, gz + 2)):
                 ring(ctx, _rx, _rz, fam)
-            ctx.repeaters[(ox, 1, gz - 1)] = (a[1], "south")
-            ctx.repeaters[(ox, 1, gz + 3)] = (a[0], "south")
+            ctx.repeaters[(ox, 1, gz - 1)] = (a[1], "north")
+            ctx.repeaters[(ox, 1, gz + 3)] = (a[0], "north")
             for cx_, cz_ in set([(ox, gz), (ox, gz + 4)] + Adust + Bdust + Odust):
                 for dx, dz in DIRS:
                     ring(ctx, cx_ + dx, cz_ + dz, fam)

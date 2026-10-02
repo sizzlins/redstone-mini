@@ -122,7 +122,9 @@ def export_html(blocks, size, path, label="build", extra=None):
         elif b == "minecraft:repeater":
             f = bid.split("facing=")[1].split(",")[0] if "facing=" in bid else "east"
             dl = bid.split("delay=")[1].split(",")[0].rstrip("]") if "delay=" in bid else "1"
-            repinfo[(x, y, z)] = {"f": list(fdir[f]), "dl": max(1, min(4, int(dl)))}
+            # render arrow points output-ward = negative of facing (which points output->input)
+            _v = fdir[f]
+            repinfo[(x, y, z)] = {"f": [-_v[0], -_v[1]], "dl": max(1, min(4, int(dl)))}
         if b == "minecraft:comparator":
             f = bid.split("facing=")[1].split(",")[0] if "facing=" in bid else "east"
             v = fdir[f]
