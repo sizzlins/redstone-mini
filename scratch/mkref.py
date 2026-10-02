@@ -36,7 +36,7 @@ parts = [
     "import heapq as _hq",
     "import os as _os",
     "",
-    "from core import DIRS, base",
+    "from core import DIRS, TORCH_BACK, base",
     "from layout import dust_points",
     "",
     "TICK_CAP = %d" % 20000,
