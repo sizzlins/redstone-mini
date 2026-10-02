@@ -868,19 +868,6 @@ def finish_assembly(blocks, solid, wires, rings, junctions, repeaters, pos):
     repeaters = {(x - minx, y, z - minz): v for (x, y, z), v in repeaters.items()}
     W, D = maxx - minx + 1, maxz - minz + 1
     out = list(blocks)
-    # ponytail: one cell, one block ID. A wire stamped into a glass/slab cell
-    # (or any mix the guards missed) pastes as ONE block while the sim sees
-    # two — silent wrongness. Loud here instead. The same block listed twice
-    # is NOT a fault: the world keeps one copy either way, and the router
-    # genuinely emits a duplicate pillar (measured: cobble vs cobble at
-    # (24,2,11) on the gate-fed D-latch, seed None). O(N).
-    _seenxy = {}
-    for _b in out:
-        _k = (_b[0], _b[1], _b[2])
-        _prev = _seenxy.get(_k)
-        if _prev is not None and _prev != _b[3]:
-            raise RuntimeError(f"duplicate block at {_k}: {_prev} vs {_b[3]}")
-        _seenxy[_k] = _b[3]
     # ponytail: one component per cell; a repeater wins over dust. The router
     # can re-stamp a wire label onto a tile repeater cell (tile dels it, route
     # re-adds it), which modelled dust+repeater at once -- a phantom loop that
@@ -938,6 +925,32 @@ def finish_assembly(blocks, solid, wires, rings, junctions, repeaters, pos):
             continue
         out.append((b[0], b[1], b[2], "minecraft:cobblestone"))
         _have.add(b)
+    # ponytail: ONE CELL, ONE BLOCK -- checked LAST, on the finished list.
+    # The pre-append version of this guard was blind to the whole wire class
+    # (wires are appended after it), and that is exactly where the real defect
+    # lived: alu4 (2026-10-02) carried 24 cells holding cobblestone AND wire,
+    # every one with a dust cell ABOVE resting on what became a wire. The sim
+    # read both blocks and called them supported; vanilla refuses dust on dust,
+    # so all 24 would pop on paste. Same block listed twice is NOT a fault
+    # (the world keeps one copy either way, and the router genuinely emits a
+    # duplicate pillar -- measured: cobble vs cobble at (24,2,11) on the
+    # gate-fed D-latch). O(N).
+    _cell = {}
+    for _b in out:
+        _k = (_b[0], _b[1], _b[2])
+        _prev = _cell.get(_k)
+        if _prev is not None and _prev != base(_b[3]):
+            raise RuntimeError(f"duplicate block at {_k}: {_prev} vs {_b[3]}")
+        _cell[_k] = _b[3]
+    _COMP = ("minecraft:redstone_wire", "minecraft:repeater", "minecraft:comparator")
+    _wirecells = {k for k, b in _cell.items() if b == "minecraft:redstone_wire"}
+    for _k, _b in sorted(_cell.items()):
+        if _b in _COMP and _k[1] != 1:
+            _below = (_k[0], _k[1] - 1, _k[2])
+            if _below in _wirecells:
+                raise RuntimeError(
+                    f"component at {_k} rests on the wire at {_below}: dust "
+                    f"cannot support dust (vanilla pops it; the sim read both)")
     io = {"levers": {c: n for c, (k, n) in solid.items() if k == "lever"},
           "lamps": {c: n for c, (k, n) in solid.items() if k == "lamp"},
           "nets": dict(wires)}

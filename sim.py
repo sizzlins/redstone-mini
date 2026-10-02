@@ -980,6 +980,14 @@ def _check_supports(P):
             continue
         if (c[0], c[1] - 1, c[2]) not in solid:
             raise RuntimeError(f"FLOATING {c} (no support below it)")
+        # ponytail: a WIRE is not a support. Vanilla pops dust/repeaters that
+        # rest on dust, and the parser can see both blocks in one cell only
+        # because the exporter collapses it -- so this is the sim's last chance
+        # to be loud. Measured on alu4 (2026-10-02): 24 such cells, every one
+        # with a dust cell above, all of which the build would lose on paste.
+        if (c[0], c[1] - 1, c[2]) in dust:
+            raise RuntimeError(f"FLOATING {c} (rests on dust at "
+                               f"{(c[0], c[1] - 1, c[2])})")
 
 
 def sim_verify(recipe, blocks, io, seed=7, quiet=False, collect=False):

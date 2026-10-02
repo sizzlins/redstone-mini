@@ -1208,7 +1208,58 @@ engine (**128 vectors, 16 chunks green**), `diff_engine` ALL IDENTICAL on the
 NEW alu4 build, sim.py / layout.py / compose_check.py suites green, alu1
 12294 blocks and ctrl_decode 4923 green.
 
-Assumption recorded (no one to ask): the stitch retry knob I offered is NOT
+### The export round-trip caught what the sim could not: dust on dust
+
+`export_schem` + read-back (500-block sample, 0 mismatches) is the only check
+that sees the PASTE, and it failed on the first alu4 export attempt: 24 cells
+came back as wire where the build list said cobblestone. All 24 were
+cobblestone+wire in one cell, and every one had a **dust cell above resting on
+what became a wire** — a staircase of dust on dust in the input-bank approach
+(OP1/B2/B3/OP0x_3 at x≈8, 456, 1063…). The sim read both blocks in the cell and
+called it supported; vanilla refuses dust on dust, so all 24 would have popped
+on paste while every verdict stayed green.
+
+Two causes, both fixed:
+
+1. **The duplicate guard ran too early.** It sat right after
+   `out = list(blocks)`, but wires/repeaters/stone are appended *after* it, so
+   the entire wire class was invisible to it. Moved to the end, on the
+   finished list, and extended with the real invariant: a component at y!=1
+   may not rest on a WIRE. `sim._check_supports` got the same rule, so the sim
+   is loud too rather than only the assembler.
+2. **compose's bridge/hop sites stamped their own supports** and never asked
+   whether the cell was occupied — `layout._support` has refused that since
+   the beginning, but compose bypasses it. Added `_supports_free` at the
+   tall-bridge and hop sites so those strategies refuse and the router takes
+   another path.
+
+With the guard first (bands 0 and 1 went NO GREEN RUNG — the class is
+systematic, so measuring first was what made the second fix findable), then
+the compose fix: bands 6/6 green again with *smaller* geometry (35,082 blocks
+vs 41,031), stitch MERGE green, **0 conflicting cells**, and
+**VERIFY OK: 1024 vectors, 16 chunks green** in 245 s instead of 1,150 s —
+the no-ring build also settles faster.
+
+Canonical caches replaced again (`alu4bands.pkl`, `alu4merge.pkl` +
+`verify.json` fp `6bd0cbfd80fe`, `alu4_build.pkl`). cpu4 re-verified from
+scratch under the new engine (128 vectors green), `diff_engine` ALL
+IDENTICAL, sim/layout/compose_check suites green, alu1 12,294 and ctrl_decode
+4,923 green.
+
+### alu4 exported
+
+- `build.schem` (12,356 bytes) installed at
+  `C:\Users\LOQ\AppData\Roaming\FreesmLauncher\instances\26.3\minecraft\config\worldedit\schematics\build.schem`,
+  round-trip checked: every one of 35,082 blocks reads back with the state it
+  was written with, plus a 500-block random re-read of the installed file (0
+  mismatches). The previous `build.schem` was copied to
+  `build.schem.bak-20261002-210028` rather than overwritten blind.
+- `build_alu4.mcfunction` (2.28 MB) and `build_alu4.html` (4.5 MB, with
+  per-vector state for the four smoke vectors so the preview is interactive —
+  `sim_verify` only collects states when a recipe has <=16 vectors, and alu4
+  has 1024).
+- Installed contents: 14,634 wire, 13,821 stone, 4,386 cobblestone, 2,059
+  repeaters, 138 torches, 21 levers, 18 comparators, 5 lamps.
 needed. The root cause was a placement rule, not bad luck, so fixing the rule
 produces a green stitch on the first attempt instead of burning retries on a
 seed ladder. `hier_stitch.py` did gain an optional 4th argument that saves

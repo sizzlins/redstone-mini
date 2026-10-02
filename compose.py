@@ -598,6 +598,10 @@ def _walk(ctx, sup, guard, a, b, net, cells):
                                 _ok3 = False
                                 break
                         if _ok3:
+                            _bad = _supports_free(_tp[1], ctx)
+                            if _bad:
+                                raise RuntimeError(
+                                    f"bridge support lands on wire at {_bad[0]}")
                             for sx, sy, sz in _tp[1]:
                                 sup[(sx, sy, sz)] = net
                                 ctx.blocks.append((sx, sy, sz, "minecraft:cobblestone"))
@@ -633,6 +637,9 @@ def _walk(ctx, sup, guard, a, b, net, cells):
         ff = (vx + d[0], vz + d[1])
         if ctx.wires.get((ff[0], 1, ff[1])) not in (None, net):
             raise RuntimeError(f"compose: no ground for {net}: {a} -> {b}")
+        _bad = _supports_free(supports, ctx)
+        if _bad:
+            raise RuntimeError(f"hop support lands on wire at {_bad[0]}")
         for sx, sy, sz in supports:
             sup[(sx, sy, sz)] = net
             ctx.blocks.append((sx, sy, sz, "minecraft:cobblestone"))
@@ -709,6 +716,23 @@ def _ends_ok(ctx, net, cx, cy, cz, dx, dz):
         ctx.torch_hosts = _torch_hosts(ctx.blocks)
         ctx.torch_hosts_n = len(ctx.blocks)
     return _inverter_ring_at(_fd, net, ctx.wires, ctx.torch_hosts) is None
+
+
+def _supports_free(cells, ctx):
+    """Support cells that cannot take a pillar: a cell already holding wire or
+    a repeater is a cell the run itself (or a foreign one) occupies, and one
+    cell is one block.
+
+    ponytail: found on alu4 (2026-10-02), where a support stamp landed on the
+    run's own dust at 24 cells in a 3-level input-bank staircase (OP1/B2/B3/
+    OP0x_3). The sim read both blocks and called it supported; vanilla refuses
+    dust on dust, so all 24 popped on paste. layout._support has refused this
+    since the beginning, but compose's bridge/hop sites stamp their own
+    supports and never asked. Returns the offenders so the caller can refuse
+    the strategy and try another. A cobble already there is fine (idempotent).
+    """
+    return [c for c in cells
+            if c in ctx.wires or c in ctx.repeaters]
 
 
 def _plant_repeaters(ctx, cells, net, flow, end_boost=False, fresh=None,
