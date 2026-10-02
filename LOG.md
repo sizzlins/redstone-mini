@@ -1152,6 +1152,54 @@ panes/stained/wood slabs (still loud).
    payoff in clean fields (coupling avoidance, not stamping, is what
    shortens routes); its value is hand-designed insulation, which verifies.
 
+## alu4 root cause: a booster that feeds a tile torch which feeds it back (2026-10-02)
+
+alu4 was never green under current physics, and the `64/64` in
+`scratch/alu4merge.pkl.verify.json` was a pre-flip ghost: re-verified today
+that merge is RED on all 16 chunks, every failure `Y2`/`Y3` with `B2`/`B3`
+set. So the old geometry was dead regardless, and a rebuild was required.
+
+Rebuild: `hier_bands` 6/6 green -> `hier_stitch` MERGE 41031 blocks. All-zero
+settled, **15 of 24 sampled vectors hunted** (0 logic mismatches — purely a
+ring). `REDSTONE_CHURN` named 18059 churn cells; the repo's own cycle finder
+(scratch/trace_cycle.py's rule graph, extended with repeater/lever/rblk/
+comparator edges) gave the shortest ring, 6 nodes, on net OP1x_3:
+
+    torch (2044,1,34) -> dust (2045,1,34) -> dust (2045,1,35)
+      -> repeater (2044,1,35) -> dust (2043,1,35) -> cobble (2043,1,34)
+      -> torch (2044,1,34)
+
+One inverter plus one wire is a ring, so the band-3 handoff latched itself.
+The twin at (2060,1,33) on OP0x_3 is the same shape.
+
+Why every existing guard missed it: `_closes_loop`/`_loop_rep` flood same-net
+DUST over blocks; `_ends_ok` only checks that a booster's front/back cells
+carry its own net. This ring leaves the dust through a TORCH -- a directed,
+inverting edge neither models. Fix, both places that plant or judge a booster:
+
+- `compose._ends_ok`: refuse a booster whose output cell drives a tile torch
+  that has this same net beside it. Torch host map cached on ctx, keyed by
+  block count (torches never move once placed; alu4 plants ~2400 boosters).
+- `layout`'s booster loop: same predicate, with the same unwind-and-try-the-
+  next-triple behaviour the loop check already uses.
+- `finish_assembly` keeps the loud all-scan version (`_booster_inverter_ring`)
+  so nothing hunted can ever ship. 0 hits on cpu4's green 74473-block merge
+  and on the old alu4 merge; 2 on the bad merge.
+
+Result: bands rebuilt under the new router, stitch MERGE 41031 blocks, and
+**SMOKE 0000000000 / 1111111111 / 0101010101 / 1010101010 ALL OK** — the
+all-ones vector that hunted now settles.
+
+### Facing trap, now asserted in a comment
+
+`layout`'s booster helpers treat `front = cell + _VEC[facing]`, but sim
+treats `facing` as pointing output->input, so the real output cell is
+`cell - _VEC[facing]`. Measured on the alu4 merge: **2426 of 2426 repeaters
+disagree** between the two readings. Harmless so far only because those
+helpers are direction-agnostic (they need the two cells, not which is which).
+Any new direction-aware check must use sim's rule; `_booster_out_cell` is the
+one place that encodes it.
+
 ## Target block: full wiki physics (2026-10-02, fd0aaeb)
 
 Wiki Target page read before modelling (minecraft.wiki/w/Target). Features

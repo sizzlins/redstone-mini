@@ -298,23 +298,10 @@ def _sidefed_repeaters(blocks, io):
     return out
 
 
-def _booster_inverter_ring(repeaters, wires, blocks):
-    """Boosters that close a ring through a foreign tile's output torch.
-
-    Found on alu4 (2026-10-02): a repeater's output dust rests on the cobble
-    that hosts the neighbouring tile's output torch, and the torch's own
-    neighbours carry the booster's net. That is a legal-looking handoff
-    (torch -> net is the intended direction) plus one extra wire (net ->
-    torch host), and the pair is a ring with exactly one inverter, so it hunts
-    forever instead of settling. Measured: nets OP1x_3/n1_3 at
-    (2044,1,35)->(2043,1,35) on (2043,1,34)->(2044,1,34), 18059 churn cells on
-    the all-ones vector, 15 of 24 sampled vectors hunting.
-
-    Existing guards miss it by construction: _closes_loop / _loop_rep flood
-    same-net DUST over blocks, and this ring leaves the dust through a torch,
-    which is a directed (inverting) edge they do not model. Loud here so the
-    stitch restart ladder retries instead of shipping a hunting build.
-    """
+def _torch_hosts(blocks):
+    """Host block -> torch cell, for every wall torch in `blocks`. Built once
+    and reused: torch cells never move during routing, and a per-candidate
+    rebuild would be O(blocks) per booster."""
     hosts = {}
     for x, y, z, bid in blocks:
         if base(bid) != "minecraft:redstone_wall_torch":
@@ -322,32 +309,67 @@ def _booster_inverter_ring(repeaters, wires, blocks):
         f = bid.split("facing=")[1].rstrip("]") if "facing=" in bid else "east"
         back = {"east": (-1, 0), "west": (1, 0), "south": (0, -1), "north": (0, 1)}[f]
         hosts[(x + back[0], y, z + back[1])] = (x, y, z)
+    return hosts
+
+
+def _booster_out_cell(cell, facing):
+    """The cell a booster DRIVES.
+
+    ponytail: `cell - _VEC[facing]`, NOT `cell + _VEC[facing]`. sim negates the
+    bid string (repeater facing points output->input, toward the driver), while
+    layout's booster helpers are direction-agnostic -- they only need the two
+    cells. Measured on alu4: 2426 of 2426 repeaters disagree between the two
+    readings, so the naive one names the INPUT and misses every real ring.
+    """
+    dx, dz = _VEC[facing]
+    return (cell[0] - dx, cell[1], cell[2] - dz)
+
+
+def _inverter_ring_at(outc, net, wires, hosts):
+    """Torch that dust cell `outc` would drive, whose own neighbours carry
+    `net` again -- the ring from _booster_inverter_ring, asked about ONE
+    booster (the placement-time question). None when clean."""
+    touched = [(outc[0] + ox, outc[1], outc[2] + oz) for ox, oz in DIRS]
+    touched.append((outc[0], outc[1] + 1, outc[2]))
+    for b in touched:
+        t = hosts.get(b)
+        if t is None:
+            continue
+        for ox, oz in DIRS:
+            if wires.get((t[0] + ox, t[1], t[2] + oz)) == net:
+                return t
+    return None
+
+
+def _booster_inverter_ring(repeaters, wires, blocks):
+    """Boosters that close a ring through a foreign tile's output torch.
+
+    Found on alu4 (2026-10-02): a booster's output dust rests on (or points at)
+    the cobble hosting the neighbouring tile's output torch, and the torch's own
+    neighbours carry the booster's net. That is a legal-looking handoff
+    (torch -> net is the intended direction) plus one extra wire (net -> torch
+    host), and the pair is a ring with exactly one inverter, so it hunts
+    forever instead of settling. Measured: nets OP1x_3/n1_3 at
+    (2044,1,35)->(2043,1,35) beside host (2043,1,34)->torch (2044,1,34), and the
+    twin at (2060,1,33) on OP0x_3; 18059 churn cells on the all-ones vector,
+    15 of 24 sampled vectors hunting.
+
+    Existing guards miss it by construction: _closes_loop / _loop_rep flood
+    same-net DUST over blocks, and this ring leaves the dust through a torch,
+    which is a directed (inverting) edge they do not model. Checked twice: at
+    placement time (the router picks another triple) and here in finish_assembly
+    (loud, so nothing hunted can ship).
+    """
+    hosts = _torch_hosts(blocks)
     out = []
-    for (x, y, z), (_net, facing) in repeaters.items():
-        # ponytail: OUTPUT side is c - _VEC[facing], NOT c + _VEC[facing].
-        # sim negates the bid string (repeater facing points output->input
-        # toward the driver), and layout's own booster helpers are
-        # direction-agnostic -- they only need the two cells. Measured on
-        # alu4: 2426 of 2426 repeaters disagree between the two readings, so
-        # the naive one points at the INPUT and misses every real ring.
-        dx, dz = _VEC[facing]
-        outc = (x - dx, y, z - dz)
+    for cell, (_net, facing) in repeaters.items():
+        outc = _booster_out_cell(cell, facing)
         net = wires.get(outc)
         if net is None:
             continue
-        # The booster's output dust couples to the host block two ways: it can
-        # sit ON it, or point at it from a side cell. The alu4 ring is the
-        # second kind (dust (2043,1,35) beside the host (2043,1,34)), which is
-        # why a "rest block below" test finds nothing.
-        touched = [(outc[0] + ox, outc[1], outc[2] + oz) for ox, oz in DIRS]
-        touched.append((outc[0], outc[1] + 1, outc[2]))
-        for b in touched:
-            t = hosts.get(b)
-            if t is None:
-                continue
-            for ox, oz in DIRS:
-                if wires.get((t[0] + ox, t[1], t[2] + oz)) == net:
-                    out.append(((x, y, z), t, net))
+        t = _inverter_ring_at(outc, net, wires, hosts)
+        if t is not None:
+            out.append((cell, t, net))
     return out
 
 
@@ -1897,6 +1919,10 @@ def layout(recipe, seed=None, grow=0, reserve=False):
         _cdust = {c for c in wires if c not in repeaters}
         _ccob = _flood3(blocks)
         _ccob |= {c for c in sup}
+        # ponytail: tile torches are fixed by now, so their host map is built
+        # once for every booster decision below (the alternative is O(blocks)
+        # per candidate, and alu4 places ~2400 boosters).
+        _hosts = _torch_hosts(blocks)
         i = n - 1
         _first = True
         while i > 14:
@@ -1905,7 +1931,7 @@ def layout(recipe, seed=None, grow=0, reserve=False):
                 raise RuntimeError(f"unboostable gap on {net} near index {i} "
                                    f"(twisty path): head={path[0]}")
             _js = sorted(_js, reverse=_first)
-            _placed, _loopcell = False, None
+            _placed, _loopcell, _ringcell = False, None, None
             for j in _js:
                 _jc = (path[j][0], path[j][1], path[j][2])
                 _had = _jc in repeaters
@@ -1923,9 +1949,23 @@ def layout(recipe, seed=None, grow=0, reserve=False):
                     _cdust.add(_jc)
                     _loopcell = _jc
                     continue
+                # ponytail: same unwind for a booster->inverter ring. Placing
+                # here is what shipped alu4's hunting band-3 handoff, and the
+                # next triple along is usually free, so this is a retry, not a
+                # refusal. Loud only when EVERY triple rings.
+                if _inverter_ring_at(_booster_out_cell(_jc, repeaters[_jc][1]),
+                                     net, wires, _hosts) is not None:
+                    del repeaters[_jc]
+                    wires[_jc] = net
+                    _cdust.add(_jc)
+                    _ringcell = _jc
+                    continue
                 _placed = True
                 break
             if not _placed:
+                if _ringcell is not None:
+                    raise RuntimeError(f"booster ring on {net} at {_ringcell}: "
+                                       f"every triple drives a tile torch back")
                 if _loopcell is not None:
                     raise RuntimeError(f"repeater loop on {net} at {_loopcell}: "
                                        f"every triple closes it")

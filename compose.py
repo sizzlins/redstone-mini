@@ -12,6 +12,7 @@ from tiles import (new_ctx, footprint, tap_lamps, own, ring, stamp_wire,
                    seal_tiles)
 from layout import build_netspec, check_shorts, check_opens, finish_assembly, _support, bridge_plan, bridge_plan_tall, astar
 from layout import _sup3 as _layout_sup3, _src3 as _layout_src3, _flood3 as _layout_flood3
+from layout import _torch_hosts, _inverter_ring_at
 
 # last compose() run's coordinate shift (netspec frame -> check frame),
 # for offline probes. Not part of the build contract.
@@ -693,7 +694,21 @@ def _ends_ok(ctx, net, cx, cy, cz, dx, dz):
     # diode-blind (no dust touch), so the planter must not plant it.
     _bd = (cx - dx, cy, cz - dz)
     _fd = (cx + dx, cy, cz + dz)
-    return ctx.wires.get(_bd, net) == net and ctx.wires.get(_fd, net) == net
+    if ctx.wires.get(_bd, net) != net or ctx.wires.get(_fd, net) != net:
+        return False
+    # ponytail: no booster may push power into a tile torch that feeds this
+    # same net back — one inverter plus one wire is a ring, and a ring hunts
+    # forever instead of settling. Found on alu4 (2026-10-02): OP1x_3's booster
+    # at (2044,1,35) drove the host of the tile torch at (2044,1,34), which
+    # drives OP1x_3, latching the handoff (18059 churn cells, 15 of 24 sampled
+    # vectors hunting). Neither the same-net front/back test above nor the
+    # dust-only loop flooders can see it: the ring leaves the dust THROUGH a
+    # torch. The torch host map is cached on ctx because tile torches never
+    # move once placed, and this runs per candidate (alu4 plants ~2400).
+    if getattr(ctx, "torch_hosts_n", -1) != len(ctx.blocks):
+        ctx.torch_hosts = _torch_hosts(ctx.blocks)
+        ctx.torch_hosts_n = len(ctx.blocks)
+    return _inverter_ring_at(_fd, net, ctx.wires, ctx.torch_hosts) is None
 
 
 def _plant_repeaters(ctx, cells, net, flow, end_boost=False, fresh=None,
