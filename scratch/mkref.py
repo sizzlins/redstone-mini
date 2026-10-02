@@ -46,8 +46,17 @@ parts = [
     "BOUT_GRACE = 60",
     "BOUT = {}",
     "",
+    "_TARGET_TICKS = {'arrow': 10, 'trident': 10}",
+    "_TARGET_OTHER_TICKS = 4",
+    "_TARGET_PROJECTILES = frozenset({",
+    "    'arrow', \"bottle o' enchanting\", 'dragon fireball', 'egg',",
+    "    'ender pearl', 'fireball', 'firework rocket', 'fishing bobber',",
+    "    'lingering potion', 'llama spit', 'shulker bullet', 'snowball',",
+    "    'small fireball', 'splash potion', 'trident', 'wind charge',",
+    "    'wither skull'})",
+    "",
 ]
-for fn in ("_parse_build", "_run_vec"):
+for fn in ("_target_shots", "_parse_build", "_run_vec"):
     body = grab(fn)
     body = body.replace("_TICK_CAP", "TICK_CAP").replace("_STEP_CAP", "STEP_CAP")
     body = body.replace("_STALL", "STALL")
