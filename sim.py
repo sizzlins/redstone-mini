@@ -708,7 +708,11 @@ def _parse_build(blocks, io):
             lampat.add(c)
         elif b == "minecraft:repeater":
             face = bid.split("facing=")[1].split(",")[0] if "facing=" in bid else "east"
-            rep[c] = {"east": (1, 0), "west": (-1, 0), "south": (0, 1), "north": (0, -1)}[face]
+            # ponytail: vanilla facing points output->input (toward the
+            # driver). The physics below walks travel vectors, so negate once
+            # here; comparators keep vanilla (rear = +facing) just below.
+            _v = {"east": (1, 0), "west": (-1, 0), "south": (0, 1), "north": (0, -1)}[face]
+            rep[c] = (-_v[0], -_v[1])
             dly = bid.split("delay=")[1].split(",")[0].rstrip("]") if "delay=" in bid else "1"
             repdelay[c] = max(1, min(4, int(dly)))
         elif b == "minecraft:comparator":
@@ -934,7 +938,7 @@ def sim_pulse(recipe, blocks, io, schedule):
 
 if __name__ == "__main__":
     # ponytail: one runnable check — delay-4 chain must settle at exactly tick 4.
-    _blocks = [(1, 1, 0, "minecraft:repeater[facing=east,delay=4]"),
+    _blocks = [(1, 1, 0, "minecraft:repeater[facing=west,delay=4]"),
                (2, 1, 0, "minecraft:redstone_wire"),
                (3, 1, 0, "minecraft:redstone_lamp")]
     _io = {"levers": {(0, 0): "a"}, "lamps": {(3, 0): "y"}, "nets": {}}
@@ -965,7 +969,7 @@ if __name__ == "__main__":
     print("pulse ok: press-20 lights, holds 1, drops by 5; dwell guarded")
     from export import export_html
     _blocks = [(0, 1, 0, "minecraft:lever"),
-               (1, 1, 0, "minecraft:repeater[facing=east,delay=4]"),
+               (1, 1, 0, "minecraft:repeater[facing=west,delay=4]"),
                (2, 1, 0, "minecraft:redstone_wire"),
                (3, 1, 0, "minecraft:redstone_wall_torch[facing=east]"),
                (4, 1, 0, "minecraft:redstone_lamp")]
@@ -1099,7 +1103,7 @@ if __name__ == "__main__":
             (1, 1, 0, "minecraft:redstone_wire"),
             (0, 1, 0, CMP + "[facing=east,mode=compare]"),
             (-1, 1, 0, "minecraft:redstone_wire"), (-2, 1, 0, "minecraft:redstone_lamp"),
-            (0, 1, 1, "minecraft:repeater[facing=north,delay=1]"), (0, 1, 2, "minecraft:lever")]
+            (0, 1, 1, "minecraft:repeater[facing=south,delay=1]"), (0, 1, 2, "minecraft:lever")]
     _cp2, _cio2 = _hand(_cb2, {(3, 0): "A", (0, 2): "S"}, {(-2, 0): "Y"})
     _cg2, _, _, _, _, _ = _run_vec({"A": 1, "S": 1}, None, _cp2)
     assert _cg2.get("Y", False) is False, _cg2
@@ -1112,7 +1116,7 @@ if __name__ == "__main__":
     _cb4 = [(2, 1, 0, "minecraft:lever"), (1, 1, 0, "minecraft:redstone_wire"),
             (0, 1, 0, CMP + "[facing=east,mode=subtract]"),
             (-1, 1, 0, "minecraft:redstone_wire"), (-2, 1, 0, "minecraft:redstone_lamp"),
-            (0, 1, 1, "minecraft:repeater[facing=north,delay=1]"), (0, 1, 2, "minecraft:lever")]
+            (0, 1, 1, "minecraft:repeater[facing=south,delay=1]"), (0, 1, 2, "minecraft:lever")]
     _cp4, _io4 = _hand(_cb4, {(2, 0): "A", (0, 2): "S"}, {(-2, 0): "Y"})
     assert _run_vec({"A": 1, "S": 1}, None, _cp4)[0].get("Y", True) is False
     assert _run_vec({"A": 1, "S": 0}, None, _cp4)[0].get("Y", False) is True

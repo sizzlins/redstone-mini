@@ -1561,7 +1561,9 @@ def layout(recipe, seed=None, grow=0, reserve=False):
     def place_rep(path, net, j):
         (x0, y0, z0), (x1, y1, z1) = path[j - 1], path[j]
         dx, dz = x1 - x0, z1 - z0
-        facing = {(1, 0): "east", (-1, 0): "west", (0, 1): "south", (0, -1): "north"}[(dx, dz)]
+        # ponytail: vanilla facing points output->input (toward the driver),
+        # so negate travel. Guards below use +-dx symmetrically, unaffected.
+        facing = {(1, 0): "east", (-1, 0): "west", (0, 1): "south", (0, -1): "north"}[(-dx, -dz)]
         if not _has_support((x1, y1, z1), sup, solid):
             raise RuntimeError(f"repeater {net} at {(x1, y1, z1)} has no support under it")
         for f in ((x1 + dx, y1, z1 + dz), (x1 - dx, y1, z1 - dz)):
@@ -1735,7 +1737,7 @@ if __name__ == "__main__":
     _nw = _nets.get((_lx - 5, 1, _lz))
     _nrb = [b for x, y, z, b in _nb
             if (x, z) == (_lx - 5, _lz) and b.startswith("minecraft:repeater")]
-    assert _nw == "a" or any("facing=east" in b for b in _nrb), \
+    assert _nw == "a" or any("facing=west" in b for b in _nrb), \
         f"NOT port drifted: {_nw} {_nrb}"
     _r = parse_recipe("IN a, b\nOUT t\nt = a AND b\n")
     _bb, _, _io, _ = layout_retry(_r, verify=True)
@@ -1744,7 +1746,7 @@ if __name__ == "__main__":
     _lx, _lz = _lamps[0]
     _nets = _io["nets"]
     assert _nets.get((_lx - 2, 1, _lz)) == "t", "AND out drifted"
-    # ponytail: a port holds dust or an east repeater (cover boosts tails;
+    # ponytail: a port holds dust or a west repeater (cover boosts tails;
     # the cell is what matters, not the component — both drive the tile).
     for _pc, _nm in (((_lx - 10, _lz - 1), "AND A-port"),
                      ((_lx - 10, _lz + 2), "AND B-port")):
@@ -1752,7 +1754,7 @@ if __name__ == "__main__":
         _rb = [b for x, y, z, b in _bb
                if (x, z) == _pc and b.startswith("minecraft:repeater")]
         assert _w == _nm[4].lower() or \
-            any("facing=east" in b for b in _rb), f"{_nm} drifted: {_w} {_rb}"
+            any("facing=west" in b for b in _rb), f"{_nm} drifted: {_w} {_rb}"
     print("ports ok: AND/NOT grid matches spec")
     # ponytail: OR-feeding inputs keep batch levers (junction aims at them);
     # verify=True proves the diodes fire (serve-DEMO class: silent dark bb).

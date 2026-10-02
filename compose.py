@@ -639,7 +639,8 @@ def _plant_repeaters(ctx, cells, net, flow, end_boost=False, fresh=None,
     # every 8 from the load end (tail freshness — the latch S-row needs
     # level 9 at its port). Hop dusts break straight triples, so one
     # direction alone strands the other side; over-boosting is cheap
-    # (block count is reported, never scored). Facing always along travel.
+    # (block count is reported, never scored). Vanilla facing points
+    # output->input (toward the driver), so emission negates travel.
     # ponytail: end_boost (hier stitches only) plants one extra repeater at
     # the nearest straight triple to the ENDPOINT. Every-8 leaves the endpoint
     # up to 7 cells past the last booster (level 7), and a consumer-side tail
@@ -702,7 +703,9 @@ def _plant_repeaters(ctx, cells, net, flow, end_boost=False, fresh=None,
                         for b in ctx.blocks):
                     continue
                 del ctx.wires[(cx, cy, cz)]
-                ctx.repeaters[(cx, cy, cz)] = (net, _VEC[(dx, dz)])
+                # ponytail: vanilla facing points output->input (toward the
+                # driver), so negate travel. Sim stores travel (negates back).
+                ctx.repeaters[(cx, cy, cz)] = (net, _VEC[(-dx, -dz)])
                 dist = 0
     if end_boost and len(cells) > 3:
         for k in range(len(cells) - 2, 0, -1):
@@ -721,7 +724,7 @@ def _plant_repeaters(ctx, cells, net, flow, end_boost=False, fresh=None,
                         b[:3] == (cx, cy - 1, cz) and "cobblestone" in b[3]
                         for b in ctx.blocks))):
                 del ctx.wires[(cx, cy, cz)]
-                ctx.repeaters[(cx, cy, cz)] = (net, _VEC[(dx, dz)])
+                ctx.repeaters[(cx, cy, cz)] = (net, _VEC[(-dx, -dz)])
                 break
         # ponytail: same for the HEAD. Latch Q tails are ~10 dust cells, so
         # a register fan-out stitch starts at level ~5 and the every-8
@@ -746,7 +749,7 @@ def _plant_repeaters(ctx, cells, net, flow, end_boost=False, fresh=None,
                         b[:3] == (cx, cy - 1, cz) and "cobblestone" in b[3]
                         for b in ctx.blocks))):
                 del ctx.wires[(cx, cy, cz)]
-                ctx.repeaters[(cx, cy, cz)] = (net, _VEC[(dx, dz)])
+                ctx.repeaters[(cx, cy, cz)] = (net, _VEC[(-dx, -dz)])
                 break
 
 
