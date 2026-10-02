@@ -1391,8 +1391,15 @@ def layout(recipe, seed=None, grow=0, reserve=False):
                     # tile cobble (short shapes never overwrite: center must be
                     # empty, shoulders refuse solid). Snapshot so the unwind
                     # below restores instead of deleting the tile's entry.
+                    # ponytail: for/else — no axis stamped for this fx (every
+                    # candidate refused or already tried). Without it the code
+                    # below ran with _sup unbound (UnboundLocalError) instead
+                    # of trying the next fx. Pre-existing shape, same fix.
                     _ssnap = {(_c[0], _c[2]): solid.get((_c[0], _c[2]))
                               for _c in _sup}
+                    break
+                else:
+                    continue
                 cond.update(_sup)
                 condg.update(c for c in _sup if c[1] == 1)
                 fa, fb = sorted(feet, key=lambda f: abs(f[0] - s[0]) + abs(f[2] - s[1]))
