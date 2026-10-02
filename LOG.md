@@ -968,3 +968,45 @@ dense_status. alu4/ctrl_decode fresh-compose gate still running at handoff.
 verify_par.py fingerprint now hashes the full engine
 (sim/simvec/recipe/layout/compose/tiles/core), so any physics edit voids every
 cache automatically. No more hand-deleting, no more silent stale greens.
+
+## Overnight 2026-10-02: vertical envelope (trench + y=4 bridge + sim support gate)
+
+Assumption: DONE = the vertical items from the height-ceiling thread (trench
+support export, sim repeater-support rule, taller bridge, usable wide bands).
+True 3D tile stacking stays out of scope (different compiler, stated before).
+Did not touch simvec.py except a 3-line support-gate call (agent 2's file;
+their morning report asked for no edits — this one is required for the trench
+to verify honestly, and it only ADDS a fail-loud check).
+
+Commit 5d93e1d (trench): the router skipped support for every y<2 cell while
+_support's own docstring promised "above and below alike". astar move legality
+(`my >= 2` -> `my != 1`, two sites), layout route() and compose lwire 3D
+stamping (`cell[1] < 2` -> `== 1`), _has_support (`<= 1` -> `== 1`, trench
+needs a stamped pillar, never 2D solid), compose _plant_repeaters (three
+`cy > 1` -> `cy != 1`), finish_assembly stamps one cobble cube at y-1 under
+every y<=0 wire/repeater (loud on stacked columns), sim._check_supports fails
+loud on any floating dust/repeater/comparator at y!=1 (y==1 rides the world).
+simvec.verify_par runs the same gate first so direct callers can't bypass it.
+
+Commit 7e98176 (tall bridge): bridge_plan_tall, 7-cell staircase peaking y=4
+(short 5-cell y=3 untouched and still tried first). maze try_bridge tries
+short then tall (shared 24-cap, solid snapshot/restore on unwind so a tall
+support sharing a key with tile cobble can't delete it), compose _walk falls
+back to tall only when the short footprint seals (short error preserved).
+layout.__main__ has tall template asserts + tall live-fire sim green.
+
+Proofs (all bounded, all green): recipe.py, sim.py, layout.py full __main__
+suites; compose_check bit-identical 144/322/224/214; astar routes y=0 under a
+sealed y=1 wall with ymin=-1 and every trench cell resolves a pillar; hand
+trench circuit (slopes down/up, repeater-free) sim-greens; trench repeaters
+unit-checked floating-loud / pillared-ok.
+
+alu1 COMPOSED (was loud no-ground on CIN): 12294 blocks in 86 s, y-histogram
+{0:5455, 1:5463, 2:744, 3:624, 4:8} — the y=4 tall hop fired in a real build.
+Verify running at handoff (background job, see MORNING-REPORT).
+
+Probe hygiene (learned the hard way): simvec.verify_par opens a spawn Pool,
+so any probe script WITHOUT `if __name__ == '__main__':` re-runs top-level in
+every child = fork bomb that eats the timeout. All probes here are main-
+guarded; REDSTONE_SERIES_VERIFY=1 forces the serial engine for quick probes.
+Same class the daemon guard already covers — repo rule: no unguarded probe.

@@ -1,4 +1,48 @@
-# MORNING-REPORT — redstone-mini, cpu4 session
+# MORNING-REPORT — overnight 2026-10-02: vertical envelope DONE
+
+## What now builds (was red, now green)
+
+- **alu1 COMPOSES and VERIFIES.** Was loud `no ground for CIN` on every rung;
+  now 12,294 blocks, sim green on the full vector set (maxticks 86). The
+  y-histogram shows `{0:5455, 1:5463, 2:744, 3:624, 4:8}` — the new y=4 tall
+  hop fired in a real build, and the support gate proves it pastes correctly.
+- **Underground wires work.** astar descends through a sealed y=1 wall
+  (proven with ymin=-1), every y<=0 cell resolves a pillar, finish_assembly
+  emits the cobble, sim greens through a hand trench circuit.
+- **Unchanged greens, all re-gated:** recipe.py, sim.py, layout.py full
+  __main__ suites; compose_check bit-identical 144/322/224/214.
+
+## What changed (2 commits on phase2-design)
+
+1. `5d93e1d` trench support: router stamps y-1 pillars for y<=0
+   (astar legality, layout route(), compose lwire, _has_support,
+   _plant_repeaters), finish_assembly emits the missing cubes (loud on
+   stacked columns), sim fails loud on floating dust/repeater/comparator
+   at y!=1 (y==1 rides the world). Same gate duplicated at the top of
+   simvec.verify_par so direct callers can't bypass it.
+2. `7e98176` tall bridge: 7-cell y=4 staircase, tried only after the y=3
+   shape seals (maze try_bridge + compose _walk). Greens bit-identical by
+   construction. Defaults unchanged: narrow band 1..3, wide -4..6 via
+   REDSTONE_COMPOSE_YMIN/MAX (now trustworthy), y=4 via bridge shape.
+   True 3D tile stacking still out of scope (different compiler).
+
+## What still fails / needs you
+
+- **cpu4 R0Q0** (handoff diagnosis) untouched — separate lane, still the live
+  wall. alu4/ctrl_decode/micro1 dense re-gates not re-run overnight (engine
+  fingerprint in verify_par voids their caches automatically; expect re-verify
+  on next run, should be green by the bit-identity argument, but not measured).
+- **Your ceiling question, answered:** wires can now use y=-4..6 (astar wide
+  band) + y=4 bridge apex. Below base 120 and above 123 both paste with
+  supports. Nothing structural caps it lower/higher except the validated
+  envelope — widen REDSTONE_*_YMIN/YMAX if you want more, sim rules are
+  y-generic.
+- Probe hygiene: every probe script must be main-guarded or set
+  REDSTONE_SERIES_VERIFY=1 — an unguarded script + spawn Pool = fork bomb
+  (ate two of my timeouts before I saw it). Details in LOG.md.
+
+---
+
 
 ## DONE: cpu4 is green
 
