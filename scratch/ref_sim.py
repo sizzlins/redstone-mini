@@ -17,11 +17,16 @@ BOUT = {}
 
 
 def _parse_build(blocks, io):
-    """Placed blocks/io -> physics structures shared by sim_verify/sequence."""
+    """Placed blocks/io -> physics structures shared by sim_verify/sequence.
+
+    Returns a 14-tuple (glass + slab joined at the end; every unpack site
+    names all fourteen).
+    """
     dust, torch, lampat, rep, rblk, cob = set(), {}, set(), {}, set(), set()
     comp = {}
     repdelay = {}
     leveratt = {}
+    glass, slab = set(), set()
     for x, y, z, bid in blocks:
         b, c = base(bid), (x, y, z)
         if b == "minecraft:redstone_wire":
@@ -52,7 +57,11 @@ def _parse_build(blocks, io):
             lampat.add(c)
         elif b == "minecraft:repeater":
             face = bid.split("facing=")[1].split(",")[0] if "facing=" in bid else "east"
-            rep[c] = {"east": (1, 0), "west": (-1, 0), "south": (0, 1), "north": (0, -1)}[face]
+            # ponytail: vanilla facing points output->input (toward the
+            # driver). The physics below walks travel vectors, so negate once
+            # here; comparators keep vanilla (rear = +facing) just below.
+            _v = {"east": (1, 0), "west": (-1, 0), "south": (0, 1), "north": (0, -1)}[face]
+            rep[c] = (-_v[0], -_v[1])
             dly = bid.split("delay=")[1].split(",")[0].rstrip("]") if "delay=" in bid else "1"
             repdelay[c] = max(1, min(4, int(dly)))
         elif b == "minecraft:comparator":
@@ -72,6 +81,28 @@ def _parse_build(blocks, io):
             # extended to _loop_rep/flood cobble (those assume powered when
             # crossing; pads tiling the field would join everything).
             cob.add(c)
+        elif b == "minecraft:glass":
+            # ponytail: transparent insulator (wiki: dust sits on glass;
+            # non-conductive blocks are never powered, never pass power
+            # downward, and never cut a diagonal link). Support-valid for
+            # dust/repeaters/comparators, dark always. Router never stamps
+            # it (search stays cobble-only, conservative); hand-placed
+            # shafts, floors and lids verify through here.
+            glass.add(c)
+        elif b in ("minecraft:stone_slab", "minecraft:smooth_stone_slab",
+                   "minecraft:cobblestone_slab"):
+            # ponytail: transparent-but-powerable (wiki: slabs carry signals
+            # yet never block a vertical connection; dust on a top slab reads
+            # from below but never transmits down). type=double is a full
+            # opaque cube and joins cob outright; top/bottom join slab.
+            # Bare bids assume bottom (documented; we never emit slabs).
+            _ty = "double"
+            if "type=" in bid:
+                _ty = bid.split("type=")[1].split(",")[0].rstrip("]")
+            if _ty == "double":
+                cob.add(c)
+            else:
+                slab.add(c)
         elif b == "minecraft:lever":
             # ponytail: levers are electrical identity, not geometry: which
             # net a lever drives comes from io["levers"], never from its
@@ -99,10 +130,10 @@ def _parse_build(blocks, io):
             pass
         else:
             # ponytail: fail loud on unknown bids. _parse_build used to drop
-            # anything it did not recognize (piston/glass/slab/stair hybrids
-            # from a foreign build read as air), so a build could verify
-            # green while vanilla conducted/cut through the ignored blocks.
-            # Zero behavior change for every bid above.
+            # anything it did not recognize (piston/stair hybrids from a
+            # foreign build read as air), so a build could verify green while
+            # vanilla conducted/cut through the ignored blocks. Zero behavior
+            # change for every bid above.
             raise ValueError(f"sim: unsupported block {bid!r} at {c}")
     def _y(k):
         return (k[0], 1, k[1]) if len(k) == 2 else k
@@ -111,7 +142,8 @@ def _parse_build(blocks, io):
     attach_rev = {}
     for t, a in torch.items():
         attach_rev.setdefault(a, []).append(t)
-    return dust, torch, lampat, rep, rblk, cob, repdelay, lever, lampnet, attach_rev, comp, leveratt
+    return (dust, torch, lampat, rep, rblk, cob, repdelay, lever, lampnet,
+            attach_rev, comp, leveratt, glass, slab)
 
 
 
@@ -120,7 +152,14 @@ def _run_vec(vec, init, ctx, until=None):
     init carries live/torch/repeater state across phases (memory!); None
     starts blank. until caps the run at a tick (for sim_pulse timelines).
     Returns (lamps, live, torches, ticks, repeaters)."""
-    dust, torch, lampat, rep, rblk, cob, repdelay, lever, lampnet, attach_rev, comp, leveratt = ctx
+    dust, torch, lampat, rep, rblk, cob, repdelay, lever, lampnet, attach_rev, comp, leveratt, glass, slab = ctx
+    # ponytail: transparent power sets (glass/slab feature). pwr = blocks
+    # that can hold power (cobble/stone + slabs; glass never). sup3 = blocks
+    # a slope may legally rest on (pwr + glass). Lids still cut only when
+    # opaque (cob), so glass/slab lids never appear in a lid test.
+    # Empty for every pre-glass build: bit-identical by construction.
+    pwr = cob | slab
+    sup3 = cob | slab | glass
     # tick-accurate vanilla timing: dust/cobble settle instantly each tick,
     # torch outputs flip 1 tick after their block changes, repeaters flip
     # after their delay=1..4 stage. Levels still drain phantom latches.
@@ -163,7 +202,7 @@ def _run_vec(vec, init, ctx, until=None):
             m = (c[0] + dx, c[1], c[2] + dz)
             if m in dust:
                 sched(now, "d", m)
-            elif m in cob:
+            elif m in pwr:
                 sched(now, "c", m)
             elif m in rep:
                 d = rep[m]
@@ -174,7 +213,7 @@ def _run_vec(vec, init, ctx, until=None):
         for vx, vy, vz in ((c[0], c[1] + 1, c[2]), (c[0], c[1] - 1, c[2])):
             if (vx, vy, vz) in dust:
                 sched(now, "d", (vx, vy, vz))
-            elif (vx, vy, vz) in cob:
+            elif (vx, vy, vz) in pwr:
                 sched(now, "c", (vx, vy, vz))
         for dx, dz in DIRS:
             for vx, vy, vz in ((c[0] + dx, c[1] + 1, c[2] + dz), (c[0] + dx, c[1] - 1, c[2] + dz)):
@@ -196,8 +235,9 @@ def _run_vec(vec, init, ctx, until=None):
         # ponytail: dust on top of a strongly powered block reads 15 (wiki:
         # strong power covers dust on top and beneath, not just beside).
         # Same class as the torch-below term: support power the old model
-        # could see (cob_state) but dust never read.
-        if _below in cob and pbs.get(_below, False):
+        # could see (cob_state) but dust never read. Slabs join (powered
+        # slabs feed dust on top); glass never holds pbs, so no term.
+        if _below in pwr and pbs.get(_below, False):
             return 15
         for dx, dz in DIRS:
             m = (c[0] + dx, c[1], c[2] + dz)
@@ -207,7 +247,7 @@ def _run_vec(vec, init, ctx, until=None):
                 return 15
             if m in rblk:
                 return 15
-            if m in cob and pbs.get(m, False):
+            if m in pwr and pbs.get(m, False):
                 return 15
             if m in dust:
                 lv = max(lv, pw.get(m, 0) - 1)
@@ -222,12 +262,20 @@ def _run_vec(vec, init, ctx, until=None):
             # ponytail: chip layers. Dust links Â±1 level iff the upper dust
             # sits on a conductive block and no lid covers the lower wire.
             # Direct stacks never link (no support, no link).
+            # Glass/slab refinement (wiki, verified against the dust page):
+            # the UP term (this cell reads the higher dust = power flowing
+            # DOWN) still needs the upper on opaque conductive â€” upper dust
+            # on glass/slab never feeds down, so `in cob` stays. The DN term
+            # (this cell reads the lower dust = power flowing UP onto this
+            # cell) accepts any solid rest (cob/slab/glass): dust climbs over
+            # glass. Lids cut only when opaque in both terms, so glass/slab
+            # lids never appear â€” transparent never cuts the diagonal.
             up = (c[0] + dx, c[1] + 1, c[2] + dz)
             if up in dust and (c[0] + dx, c[1], c[2] + dz) in cob \
                     and (c[0], c[1] + 1, c[2]) not in cob:
                 lv = max(lv, pw.get(up, 0) - 1)
             dn = (c[0] + dx, c[1] - 1, c[2] + dz)
-            if dn in dust and (c[0], c[1] - 1, c[2]) in cob \
+            if dn in dust and (c[0], c[1] - 1, c[2]) in sup3 \
                     and (c[0] + dx, c[1], c[2] + dz) not in cob:
                 lv = max(lv, pw.get(dn, 0) - 1)
         return max(lv, 0)
@@ -279,7 +327,9 @@ def _run_vec(vec, init, ctx, until=None):
         b = (c[0] - d[0], c[1], c[2] - d[1])
         if b in dust and pw.get(b, 0) >= 1:
             return True
-        if b in cob and pb.get(b, False):
+        # ponytail: repeater reads a powered slab like powered stone (wiki:
+        # slabs carry signals); glass never holds pb, so no term.
+        if b in pwr and pb.get(b, False):
             return True
         if b in lever and vec.get(lever[b], False):
             return True
@@ -333,7 +383,7 @@ def _run_vec(vec, init, ctx, until=None):
                     sl = max(sl, con.get(s, 0))
             elif s in dust and pw.get(s, 0) >= 1:
                 sl = max(sl, pw.get(s, 0))
-            elif s in cob and pbs.get(s, False):
+            elif s in pwr and pbs.get(s, False):
                 sl = max(sl, 15)
         return rl, sl
 
@@ -370,42 +420,85 @@ def _run_vec(vec, init, ctx, until=None):
         _pins = set(init.get("t", {}))
 
         def _presolve(with_rep):
+            # ponytail: WORKLIST, not a whole-field sweep. Every rule here
+            # reads only cells within one step (plus a y step, for chip links),
+            # so a cell whose value changed can only have disturbed its own
+            # 3x3x3 box. Re-sweeping all ~75k cells per round cost 170 s on the
+            # 72k-block cpu4 merge (measured, vs 3 s for the old repeater-frozen
+            # sweep) because a booster chain needs one round per link; the
+            # worklist touches each cell once per actual disturbance instead and
+            # converges in seconds. Same fixpoint, same answer.
             for c in rep:
                 ron[c] = False
             for c in comp:
                 con[c] = 0
-            for _ in range(20000):
-                _ch = False
-                for c in dust:
+            dq, cq, tq, rq, kq = set(dust), set(pwr), set(torch), set(), set()
+            if with_rep:
+                rq, kq = set(rep), set(comp)
+
+            def _box(c):
+                bx = c[0]
+                by = c[1]
+                bz = c[2]
+                for dx in (-1, 0, 1):
+                    for dy in (-1, 0, 1):
+                        for dz in (-1, 0, 1):
+                            m = (bx + dx, by + dy, bz + dz)
+                            if m in dust:
+                                dq.add(m)
+                            if m in pwr:
+                                cq.add(m)
+                            if m in torch:
+                                tq.add(m)
+                            if m in rep:
+                                rq.add(m)
+                            if m in comp:
+                                kq.add(m)
+
+            # ponytail: a pop budget, not a round count. A ring oscillates
+            # forever and would spin here; the cap turns that into the same
+            # "no fixpoint" answer the round-count version gave, and the caller
+            # falls back so the tick loop still names the churn set.
+            for _ in range(40 * (len(dust) + len(pwr) + len(rep)
+                                 + len(comp) + len(torch)) + 1000):
+                if dq:
+                    c = dq.pop()
                     v = dust_lvl(c)
                     if pw.get(c, 0) != v:
                         pw[c] = v
-                        _ch = True
-                for c in cob:
+                        _box(c)
+                    continue
+                if cq:
+                    c = cq.pop()
                     v, s = cob_state(c)
                     if pb.get(c, False) != v or pbs.get(c, False) != s:
                         pb[c], pbs[c] = v, s
-                        _ch = True
-                if with_rep:
-                    for c in rep:
-                        v = rep_on(c)
-                        if ron.get(c, False) != v:
-                            ron[c] = v
-                            _ch = True
-                    for c in comp:
-                        v = comp_out(c)
-                        if con.get(c, 0) != v:
-                            con[c] = v
-                            _ch = True
-                for c in torch:
+                        _box(c)
+                    continue
+                if rq:
+                    c = rq.pop()
+                    v = rep_on(c)
+                    if ron.get(c, False) != v:
+                        ron[c] = v
+                        _box(c)
+                    continue
+                if kq:
+                    c = kq.pop()
+                    v = comp_out(c)
+                    if con.get(c, 0) != v:
+                        con[c] = v
+                        _box(c)
+                    continue
+                if tq:
+                    c = tq.pop()
                     if c in _pins:
                         continue
                     v = not (pb.get(torch[c], False) or torch[c] in rblk)
                     if tl.get(c, False) != v:
                         tl[c] = v
-                        _ch = True
-                if not _ch:
-                    return True
+                        _box(c)
+                    continue
+                return True
             return False
 
         if not _presolve(True):
@@ -418,7 +511,7 @@ def _run_vec(vec, init, ctx, until=None):
 
     for c in dust:
         sched(0, "d", c)
-    for c in cob:
+    for c in pwr:
         sched(0, "c", c)
     for c in torch:
         sched(0, "t", c)
@@ -435,7 +528,7 @@ def _run_vec(vec, init, ctx, until=None):
         # startup (every cell evaluates once = 7000 steps with no change
         # yet). A wedged run processes cells over and over, so 3x the cell
         # count still catches it fast while letting big builds start up.
-        _stall_cap = max(STALL, 3 * (len(dust) + len(cob) + len(torch)
+        _stall_cap = max(STALL, 3 * (len(dust) + len(pwr) + len(torch)
                                      + len(rep) + len(comp)))
         if steps[0] - last_change[0] > _stall_cap:
             raise RuntimeError(
@@ -583,7 +676,7 @@ def _run_vec(vec, init, ctx, until=None):
             return True
         for dx, dz in DIRS:
             m = (cell[0] + dx, cell[1], cell[2] + dz)
-            if m in cob and pb.get(m, False):
+            if m in pwr and pb.get(m, False):
                 return True
             if m in torch and tl.get(m, False) and torch[m] != cell:
                 return True
