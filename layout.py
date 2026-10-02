@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import tiles as _tiles
 from tiles import footprint
 
-from core import DIRS, TORCH_BACK
+from core import DIRS, TORCH_BACK, base
 from recipe import expand_gates
 
 # ponytail: pop cap bounds worst-case search per astar call (a sealed field
@@ -46,6 +46,47 @@ _STEPCOST = 4
 _PASSES = int(_os.environ.get("REDSTONE_3D_PASSES", "2"))
 
 _OPP = {(1, 0): (-1, 0), (-1, 0): (1, 0), (0, 1): (0, -1), (0, -1): (0, 1)}
+
+
+# ponytail: transparent block sets for checkers (glass/slab feature).
+# Three roles, three sets — collapsing them reintroduces the exact bugs the
+# split fixes, so read twice before touching:
+#   _src3  opaque supports that can SOURCE downward power (cobble/stone/
+#          double slabs). Sim's up-term needs the upper dust on conductive.
+#   _sup3  any solid rest a slope may legally sit on (_src3 + glass +
+#          single slabs). Sim's dn-term accepts glass/slab rests.
+#   _flood3 blocks a loop-flood may cross assuming powered (cobble + all
+#          slabs; NOT stone pads, which tile the field, and NOT glass,
+#          which never holds power).
+# Lids are deliberately NOT here: only opaque cobblestone cuts a diagonal
+# (transparent never does), so every `not in cob` lid test stays exactly as
+# written. Router search sets (cond/condg/sup) stay cobble-only: the router
+# never stamps glass/slab, so hand glass is invisible to search —
+# conservative rejections only, never silent wrongness.
+_SLAB_BIDS = {"minecraft:stone_slab", "minecraft:smooth_stone_slab",
+              "minecraft:cobblestone_slab"}
+
+
+def _slab_double(bid):
+    return base(bid) in _SLAB_BIDS and "type=double" in bid
+
+
+def _src3(blocks):
+    return {(x, y, z) for x, y, z, bid in blocks
+            if base(bid) in ("minecraft:cobblestone", "minecraft:stone")
+            or _slab_double(bid)}
+
+
+def _sup3(blocks):
+    return {(x, y, z) for x, y, z, bid in blocks
+            if base(bid) in ("minecraft:cobblestone", "minecraft:stone",
+                             "minecraft:glass") or base(bid) in _SLAB_BIDS}
+
+
+def _flood3(blocks):
+    return {(x, y, z) for x, y, z, bid in blocks
+            if base(bid) == "minecraft:cobblestone"
+            or base(bid) in _SLAB_BIDS}
 
 
 def dust_points(cell, dust):
@@ -731,7 +772,9 @@ def finish_assembly(blocks, solid, wires, rings, junctions, repeaters, pos):
     # holds itself lit across phases (D-latch seeds 4/5). The world gets one
     # block, so the sim must see one.
     dust = set(wires) - set(repeaters)
-    _cob = {x[:3] for x in out if x[3].split("[")[0] == "minecraft:cobblestone"}
+    # ponytail: loop-flood crosses what can hold power (cobble + slabs;
+    # never stone pads, never glass — see _flood3).
+    _cob = _flood3(out)
     _loop = _loop_rep(wires, repeaters, dust, _cob)
     if _loop is not None:
         raise RuntimeError(f"repeater loop on {_loop[1]} at {_loop[0]}: front "
@@ -822,6 +865,12 @@ def check_shorts(wires, junctions, blocks):
     # no lid, sim's rule): stacked/unsupported y-adjacency never couples,
     # so legal overflight passes and real 3D shorts still fail loudly.
     cob3 = {(x, y, z) for x, y, z, bid in blocks if bid.split("[")[0] == "minecraft:cobblestone"}
+    # ponytail: support roles split for glass/slab (see _src3/_sup3): the
+    # up-read needs an opaque source under the higher dust, the down-read
+    # accepts any solid rest. Lids stay cobblestone-only (transparent never
+    # cuts). Empty deltas on pre-glass builds: identical verdicts.
+    sup3 = _sup3(blocks)
+    src3 = _src3(blocks)
     for (x, y, z), net in wires.items():
         for dx, dz in DIRS:
             m = (x + dx, y, z + dz)
@@ -836,9 +885,12 @@ def check_shorts(wires, junctions, blocks):
                 if w is None or w == net:
                     continue
                 if dy == 1:
-                    if (f[0], f[1] - 1, f[2]) in cob3 and (x, y + 1, z) not in cob3:
+                    if (f[0], f[1] - 1, f[2]) in src3 and (x, y + 1, z) not in cob3:
                         raise RuntimeError(f"SHORT3D: {net} slope-links {w} at {(x, y, z)}->{f}")
-                elif y >= 2 and (x, y - 1, z) in cob3 and (f[0], y, f[2]) not in cob3:
+                # ponytail: y != 1, not y >= 2 (trench slopes couple in sim
+                # exactly like high ones; the old gate was blind below the
+                # surface, which the trench envelope reopened).
+                elif y != 1 and (x, y - 1, z) in sup3 and (f[0], y, f[2]) not in cob3:
                     raise RuntimeError(f"SHORT3D: {net} slope-links {w} at {(x, y, z)}->{f}")
 
 
@@ -868,6 +920,10 @@ def check_opens(wires, junctions, repeaters, solid, pos, blocks):
     reached, seen_states = set(), set()
     stack = seed_states
     cob = {(x, y, z) for x, y, z, bid in blocks if bid.split("[")[0] == "minecraft:cobblestone"}
+    # ponytail: slope-walk support split (see _src3/_sup3): up-reads need an
+    # opaque source, down-reads accept any solid rest. Lids unchanged.
+    sup = _sup3(blocks)
+    src = _src3(blocks)
     while stack:
         c, n = stack.pop()
         if (c, n) in seen_states:
@@ -888,11 +944,11 @@ def check_opens(wires, junctions, repeaters, solid, pos, blocks):
             # ponytail: slope links use sim's rule (support below, no lid
             # above); without this every bridge reads as unconnected dust.
             up = (c[0] + dx, c[1] + 1, c[2] + dz)
-            if wires.get(up) == n and (c[0] + dx, c[1], c[2] + dz) in cob \
+            if wires.get(up) == n and (c[0] + dx, c[1], c[2] + dz) in src \
                     and (c[0], c[1] + 1, c[2]) not in cob:
                 stack.append((up, n))
             dn = (c[0] + dx, c[1] - 1, c[2] + dz)
-            if wires.get(dn) == n and (c[0], c[1] - 1, c[2]) in cob \
+            if wires.get(dn) == n and (c[0], c[1] - 1, c[2]) in sup \
                     and (c[0] + dx, c[1], c[2] + dz) not in cob:
                 stack.append((dn, n))
     dead = [(x, y, z) for (x, y, z) in wires if (x, y, z) not in reached
@@ -1734,7 +1790,7 @@ def layout(recipe, seed=None, grow=0, reserve=False):
         # guard-failing placements raise loud. dust tracked incrementally
         # (O(1) per place/unwind, not O(V) rebuilds).
         _cdust = {c for c in wires if c not in repeaters}
-        _ccob = {c[:3] for c in blocks if c[3].split("[")[0] == "minecraft:cobblestone"}
+        _ccob = _flood3(blocks)
         _ccob |= {c for c in sup}
         i = n - 1
         _first = True

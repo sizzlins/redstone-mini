@@ -140,7 +140,15 @@ def _tables_from(P, inp):
     already known to matter".
     """
     dust, torch, lampat, rep, rblk, cob, repdelay, lever, lampnet, \
-        attach_rev, comp, leveratt = P
+        attach_rev, comp, leveratt, glass, slab = P
+    # ponytail: glass/slab builds decline the fast engines (same precedent as
+    # the latch hold-seed: refuse rather than guess). The tables below mirror
+    # sim's cobble-only rules bit-for-bit; extending them to three support
+    # classes is optimisation work, and _serial_shard already falls back to
+    # sim._run_vec on NotImplementedError. Serial stays the authority.
+    if glass or slab:
+        raise NotImplementedError(
+            "simvec: no glass/slab tables; use sim._run_vec")
 
     def back(c, t):
         """Does the repeater/comparator at `c` feed `t`?"""
@@ -930,7 +938,7 @@ def run_scalar(vec, ctx, init=None, until=None, tick_cap=None, step_cap=None,
         raise NotImplementedError(
             "run_scalar: no latch pre-solve; use sim._run_vec when init is given")
     dust, torch, lampat, rep, rblk, cob, repdelay, lever, lampnet, \
-        attach_rev, comp, leveratt = ctx
+        attach_rev, comp, leveratt, glass, slab = ctx
     st = _tables(ctx)
     pw, pb, pbs = {}, {}, {}
     tl = {c: False for c in torch}

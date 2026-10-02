@@ -149,7 +149,14 @@ def _run_vec(vec, init, ctx, until=None):
     init carries live/torch/repeater state across phases (memory!); None
     starts blank. until caps the run at a tick (for sim_pulse timelines).
     Returns (lamps, live, torches, ticks, repeaters)."""
-    dust, torch, lampat, rep, rblk, cob, repdelay, lever, lampnet, attach_rev, comp, leveratt = ctx
+    dust, torch, lampat, rep, rblk, cob, repdelay, lever, lampnet, attach_rev, comp, leveratt, glass, slab = ctx
+    # ponytail: transparent power sets (glass/slab feature). pwr = blocks
+    # that can hold power (cobble/stone + slabs; glass never). sup3 = blocks
+    # a slope may legally rest on (pwr + glass). Lids still cut only when
+    # opaque (cob), so glass/slab lids never appear in a lid test.
+    # Empty for every pre-glass build: bit-identical by construction.
+    pwr = cob | slab
+    sup3 = cob | slab | glass
     # tick-accurate vanilla timing: dust/cobble settle instantly each tick,
     # torch outputs flip 1 tick after their block changes, repeaters flip
     # after their delay=1..4 stage. Levels still drain phantom latches.
@@ -192,7 +199,7 @@ def _run_vec(vec, init, ctx, until=None):
             m = (c[0] + dx, c[1], c[2] + dz)
             if m in dust:
                 sched(now, "d", m)
-            elif m in cob:
+            elif m in pwr:
                 sched(now, "c", m)
             elif m in rep:
                 d = rep[m]
@@ -203,7 +210,7 @@ def _run_vec(vec, init, ctx, until=None):
         for vx, vy, vz in ((c[0], c[1] + 1, c[2]), (c[0], c[1] - 1, c[2])):
             if (vx, vy, vz) in dust:
                 sched(now, "d", (vx, vy, vz))
-            elif (vx, vy, vz) in cob:
+            elif (vx, vy, vz) in pwr:
                 sched(now, "c", (vx, vy, vz))
         for dx, dz in DIRS:
             for vx, vy, vz in ((c[0] + dx, c[1] + 1, c[2] + dz), (c[0] + dx, c[1] - 1, c[2] + dz)):
@@ -225,8 +232,9 @@ def _run_vec(vec, init, ctx, until=None):
         # ponytail: dust on top of a strongly powered block reads 15 (wiki:
         # strong power covers dust on top and beneath, not just beside).
         # Same class as the torch-below term: support power the old model
-        # could see (cob_state) but dust never read.
-        if _below in cob and pbs.get(_below, False):
+        # could see (cob_state) but dust never read. Slabs join (powered
+        # slabs feed dust on top); glass never holds pbs, so no term.
+        if _below in pwr and pbs.get(_below, False):
             return 15
         for dx, dz in DIRS:
             m = (c[0] + dx, c[1], c[2] + dz)
@@ -236,7 +244,7 @@ def _run_vec(vec, init, ctx, until=None):
                 return 15
             if m in rblk:
                 return 15
-            if m in cob and pbs.get(m, False):
+            if m in pwr and pbs.get(m, False):
                 return 15
             if m in dust:
                 lv = max(lv, pw.get(m, 0) - 1)
@@ -251,12 +259,20 @@ def _run_vec(vec, init, ctx, until=None):
             # ponytail: chip layers. Dust links ±1 level iff the upper dust
             # sits on a conductive block and no lid covers the lower wire.
             # Direct stacks never link (no support, no link).
+            # Glass/slab refinement (wiki, verified against the dust page):
+            # the UP term (this cell reads the higher dust = power flowing
+            # DOWN) still needs the upper on opaque conductive — upper dust
+            # on glass/slab never feeds down, so `in cob` stays. The DN term
+            # (this cell reads the lower dust = power flowing UP onto this
+            # cell) accepts any solid rest (cob/slab/glass): dust climbs over
+            # glass. Lids cut only when opaque in both terms, so glass/slab
+            # lids never appear — transparent never cuts the diagonal.
             up = (c[0] + dx, c[1] + 1, c[2] + dz)
             if up in dust and (c[0] + dx, c[1], c[2] + dz) in cob \
                     and (c[0], c[1] + 1, c[2]) not in cob:
                 lv = max(lv, pw.get(up, 0) - 1)
             dn = (c[0] + dx, c[1] - 1, c[2] + dz)
-            if dn in dust and (c[0], c[1] - 1, c[2]) in cob \
+            if dn in dust and (c[0], c[1] - 1, c[2]) in sup3 \
                     and (c[0] + dx, c[1], c[2] + dz) not in cob:
                 lv = max(lv, pw.get(dn, 0) - 1)
         return max(lv, 0)
@@ -308,7 +324,9 @@ def _run_vec(vec, init, ctx, until=None):
         b = (c[0] - d[0], c[1], c[2] - d[1])
         if b in dust and pw.get(b, 0) >= 1:
             return True
-        if b in cob and pb.get(b, False):
+        # ponytail: repeater reads a powered slab like powered stone (wiki:
+        # slabs carry signals); glass never holds pb, so no term.
+        if b in pwr and pb.get(b, False):
             return True
         if b in lever and vec.get(lever[b], False):
             return True
@@ -362,7 +380,7 @@ def _run_vec(vec, init, ctx, until=None):
                     sl = max(sl, con.get(s, 0))
             elif s in dust and pw.get(s, 0) >= 1:
                 sl = max(sl, pw.get(s, 0))
-            elif s in cob and pbs.get(s, False):
+            elif s in pwr and pbs.get(s, False):
                 sl = max(sl, 15)
         return rl, sl
 
@@ -411,7 +429,7 @@ def _run_vec(vec, init, ctx, until=None):
                 ron[c] = False
             for c in comp:
                 con[c] = 0
-            dq, cq, tq, rq, kq = set(dust), set(cob), set(torch), set(), set()
+            dq, cq, tq, rq, kq = set(dust), set(pwr), set(torch), set(), set()
             if with_rep:
                 rq, kq = set(rep), set(comp)
 
@@ -425,7 +443,7 @@ def _run_vec(vec, init, ctx, until=None):
                             m = (bx + dx, by + dy, bz + dz)
                             if m in dust:
                                 dq.add(m)
-                            if m in cob:
+                            if m in pwr:
                                 cq.add(m)
                             if m in torch:
                                 tq.add(m)
@@ -438,7 +456,7 @@ def _run_vec(vec, init, ctx, until=None):
             # forever and would spin here; the cap turns that into the same
             # "no fixpoint" answer the round-count version gave, and the caller
             # falls back so the tick loop still names the churn set.
-            for _ in range(40 * (len(dust) + len(cob) + len(rep)
+            for _ in range(40 * (len(dust) + len(pwr) + len(rep)
                                  + len(comp) + len(torch)) + 1000):
                 if dq:
                     c = dq.pop()
@@ -490,7 +508,7 @@ def _run_vec(vec, init, ctx, until=None):
 
     for c in dust:
         sched(0, "d", c)
-    for c in cob:
+    for c in pwr:
         sched(0, "c", c)
     for c in torch:
         sched(0, "t", c)
@@ -507,7 +525,7 @@ def _run_vec(vec, init, ctx, until=None):
         # startup (every cell evaluates once = 7000 steps with no change
         # yet). A wedged run processes cells over and over, so 3x the cell
         # count still catches it fast while letting big builds start up.
-        _stall_cap = max(_STALL, 3 * (len(dust) + len(cob) + len(torch)
+        _stall_cap = max(_STALL, 3 * (len(dust) + len(pwr) + len(torch)
                                      + len(rep) + len(comp)))
         if steps[0] - last_change[0] > _stall_cap:
             raise RuntimeError(
@@ -655,7 +673,7 @@ def _run_vec(vec, init, ctx, until=None):
             return True
         for dx, dz in DIRS:
             m = (cell[0] + dx, cell[1], cell[2] + dz)
-            if m in cob and pb.get(m, False):
+            if m in pwr and pb.get(m, False):
                 return True
             if m in torch and tl.get(m, False) and torch[m] != cell:
                 return True
@@ -673,11 +691,16 @@ def _run_vec(vec, init, ctx, until=None):
 
 
 def _parse_build(blocks, io):
-    """Placed blocks/io -> physics structures shared by sim_verify/sequence."""
+    """Placed blocks/io -> physics structures shared by sim_verify/sequence.
+
+    Returns a 14-tuple (glass + slab joined at the end; every unpack site
+    names all fourteen).
+    """
     dust, torch, lampat, rep, rblk, cob = set(), {}, set(), {}, set(), set()
     comp = {}
     repdelay = {}
     leveratt = {}
+    glass, slab = set(), set()
     for x, y, z, bid in blocks:
         b, c = base(bid), (x, y, z)
         if b == "minecraft:redstone_wire":
@@ -732,6 +755,28 @@ def _parse_build(blocks, io):
             # extended to _loop_rep/flood cobble (those assume powered when
             # crossing; pads tiling the field would join everything).
             cob.add(c)
+        elif b == "minecraft:glass":
+            # ponytail: transparent insulator (wiki: dust sits on glass;
+            # non-conductive blocks are never powered, never pass power
+            # downward, and never cut a diagonal link). Support-valid for
+            # dust/repeaters/comparators, dark always. Router never stamps
+            # it (search stays cobble-only, conservative); hand-placed
+            # shafts, floors and lids verify through here.
+            glass.add(c)
+        elif b in ("minecraft:stone_slab", "minecraft:smooth_stone_slab",
+                   "minecraft:cobblestone_slab"):
+            # ponytail: transparent-but-powerable (wiki: slabs carry signals
+            # yet never block a vertical connection; dust on a top slab reads
+            # from below but never transmits down). type=double is a full
+            # opaque cube and joins cob outright; top/bottom join slab.
+            # Bare bids assume bottom (documented; we never emit slabs).
+            _ty = "double"
+            if "type=" in bid:
+                _ty = bid.split("type=")[1].split(",")[0].rstrip("]")
+            if _ty == "double":
+                cob.add(c)
+            else:
+                slab.add(c)
         elif b == "minecraft:lever":
             # ponytail: levers are electrical identity, not geometry: which
             # net a lever drives comes from io["levers"], never from its
@@ -759,10 +804,10 @@ def _parse_build(blocks, io):
             pass
         else:
             # ponytail: fail loud on unknown bids. _parse_build used to drop
-            # anything it did not recognize (piston/glass/slab/stair hybrids
-            # from a foreign build read as air), so a build could verify
-            # green while vanilla conducted/cut through the ignored blocks.
-            # Zero behavior change for every bid above.
+            # anything it did not recognize (piston/stair hybrids from a
+            # foreign build read as air), so a build could verify green while
+            # vanilla conducted/cut through the ignored blocks. Zero behavior
+            # change for every bid above.
             raise ValueError(f"sim: unsupported block {bid!r} at {c}")
     def _y(k):
         return (k[0], 1, k[1]) if len(k) == 2 else k
@@ -771,7 +816,8 @@ def _parse_build(blocks, io):
     attach_rev = {}
     for t, a in torch.items():
         attach_rev.setdefault(a, []).append(t)
-    return dust, torch, lampat, rep, rblk, cob, repdelay, lever, lampnet, attach_rev, comp, leveratt
+    return (dust, torch, lampat, rep, rblk, cob, repdelay, lever, lampnet,
+            attach_rev, comp, leveratt, glass, slab)
 
 
 def _latch_hold_seed(blocks, io):
@@ -815,13 +861,14 @@ def _check_supports(P):
     """Fail loud on floating dust/repeaters/comparators (vanilla pops them).
 
     y==1 rides the world/stone floor (finish_assembly pads it), so only
-    y!=1 is judged. Below must be cobble/stone or redstone_block. Without
+    y!=1 is judged. Below must be cobble/stone, glass, slab or
+    redstone_block (all placement-valid in vanilla). Without
     this a trenched repeater sim-greens and then fails to paste — the sim
     modeled power but never support. Zero behavior change for green builds
     (their y>=2 cells already ride stamped pillars).
     """
-    dust, torch, lampat, rep, rblk, cob, repdelay, lever, lampnet, attach_rev, comp, leveratt = P
-    solid = cob | rblk
+    dust, torch, lampat, rep, rblk, cob, repdelay, lever, lampnet, attach_rev, comp, leveratt, glass, slab = P
+    solid = cob | rblk | glass | slab
     for c in list(dust) + list(rep) + list(comp):
         if c[1] == 1:
             continue
@@ -1072,6 +1119,65 @@ if __name__ == "__main__":
     _g3, _, _, _, _, _ = _run_vec({"A": 1}, None, _p3)
     assert _g3.get("B", False) is False, _g3
     print("vertical units ok: stacked dark, step-up lit, lid blocks")
+    # ponytail: glass/slab verticals (wiki Redstone Dust + Slab, verified
+    # against those pages before modeling). Model: slabs are full-cell rests
+    # (bottom or top half both read as support at the cell below the dust);
+    # glass supports but never powers, never cuts, never feeds down; slabs
+    # carry power like stone but never cut and never feed down.
+    _GL, _SL = "minecraft:glass", "minecraft:stone_slab[type=bottom]"
+    # glass tower: dust climbs onto glass twice, lamp lights (up-flow onto
+    # glass works), glass itself never holds power.
+    _gb = [(0, 1, 0, "minecraft:lever"), (1, 1, 0, W_), (2, 1, 0, W_),
+           (3, 1, 0, _GL), (3, 2, 0, W_), (4, 2, 0, W_), (4, 1, 0, _GL),
+           (5, 1, 0, "minecraft:cobblestone"), (5, 2, 0, W_), (6, 2, 0, "minecraft:redstone_lamp")]
+    _gp, _gio = _hand(_gb, {(0, 0): "A"}, {(6, 2, 0): "B"})
+    _gg, _gl, _, _, _, _ = _run_vec({"A": 1}, None, _gp)
+    assert _gg.get("B", False) is True, _gg
+    assert (3, 1, 0) not in _gl and (4, 1, 0) not in _gl, _gl
+    # down off glass is blocked (upper on non-conductive never feeds down),
+    # while the identical cobble geometry conducts (control twin).
+    _db = [(0, 2, 0, "minecraft:lever"), (1, 1, 0, _GL), (1, 2, 0, W_),
+           (2, 0, 0, "minecraft:cobblestone"), (2, 1, 0, W_), (3, 1, 0, "minecraft:redstone_lamp")]
+    _dp, _dio = _hand(_db, {(0, 2, 0): "A"}, {(3, 1, 0): "B"})
+    _dg, _dl, _, _, _, _ = _run_vec({"A": 1}, None, _dp)
+    assert _dl.get((1, 2, 0), 0) == 15, _dl
+    assert _dl.get((2, 1, 0), 0) == 0, _dl
+    assert _dg.get("B", False) is False, _dg
+    _cb2 = [(0, 2, 0, "minecraft:lever"), (1, 1, 0, "minecraft:cobblestone"), (1, 2, 0, W_),
+            (2, 0, 0, "minecraft:cobblestone"), (2, 1, 0, W_), (3, 1, 0, "minecraft:redstone_lamp")]
+    _cp, _cio = _hand(_cb2, {(0, 2, 0): "A"}, {(3, 1, 0): "B"})
+    _cg, _cl, _, _, _, _ = _run_vec({"A": 1}, None, _cp)
+    assert _cl.get((2, 1, 0), 0) == 14, _cl
+    assert _cg.get("B", False) is True, _cg
+    print("glass ok: tower climbs, glass stays dark, down off glass blocked")
+    # slab carries power (side lamp on the slab lights) and feeds dust on
+    # top; a slab lid over the lower wire does NOT cut the slope.
+    _sb = [(0, 1, 0, "minecraft:lever"), (1, 1, 0, _SL), (1, 2, 0, W_),
+           (2, 1, 0, "minecraft:cobblestone"), (2, 2, 0, W_), (3, 2, 0, "minecraft:redstone_lamp"),
+           (1, 1, 1, "minecraft:redstone_lamp")]
+    _sp, _sio = _hand(_sb, {(0, 0): "A"}, {(3, 2, 0): "Y", (1, 1, 1): "S"})
+    _sg, _sl2, _, _, _, _ = _run_vec({"A": 1}, None, _sp)
+    assert _sg.get("Y", False) is True, _sg
+    assert _sg.get("S", False) is True, _sg
+    _lb = [(4, 1, 0, "minecraft:lever"), (5, 1, 0, W_), (6, 1, 0, "minecraft:cobblestone"),
+           (6, 2, 0, W_), (5, 2, 0, _SL), (7, 2, 0, "minecraft:redstone_lamp")]
+    _lp, _lio = _hand(_lb, {(4, 0): "A"}, {(7, 2, 0): "B"})
+    _lg, _, _, _, _, _ = _run_vec({"A": 1}, None, _lp)
+    assert _lg.get("B", False) is True, _lg
+    print("slab ok: carries power, feeds dust on top, lid never cuts")
+    # support gate accepts glass/slab rests, still rejects air.
+    _supp = _parse_build([(9, 1, 9, _GL),
+                          (9, 2, 9, "minecraft:repeater[facing=west,delay=1]"),
+                          (10, 2, 10, _SL), (10, 3, 10, W_)],
+                         {"levers": {}, "lamps": {}, "nets": {}})
+    _check_supports(_supp)
+    try:
+        _check_supports(_parse_build([(7, 2, 7, W_)],
+                                     {"levers": {}, "lamps": {}, "nets": {}}))
+        assert False, "floating dust passed"
+    except RuntimeError:
+        pass
+    print("glass/slab support ok: rests pass, air still fails")
     # pointing: end-of-line dust lights the lamp beyond its tip...
     _b4 = [(0, 1, 0, "minecraft:lever"), (1, 1, 0, W_), (2, 1, 0, W_), (3, 1, 0, "minecraft:redstone_lamp")]
     _p4, _io4 = _hand(_b4, {(0, 0): "A"}, {(3, 1, 0): "B"})

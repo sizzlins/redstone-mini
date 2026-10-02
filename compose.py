@@ -11,6 +11,7 @@ from tiles import (new_ctx, footprint, tap_lamps, own, ring, stamp_wire,
                    place_or, place_and, place_not, place_latch, place_xor,
                    seal_tiles)
 from layout import build_netspec, check_shorts, check_opens, finish_assembly, _support, bridge_plan, bridge_plan_tall, astar
+from layout import _sup3 as _layout_sup3, _src3 as _layout_src3, _flood3 as _layout_flood3
 
 # last compose() run's coordinate shift (netspec frame -> check frame),
 # for offline probes. Not part of the build contract.
@@ -2245,12 +2246,18 @@ def compose_hier_parts(built, gates, recipe):
         _bset = {(b[0], b[1], b[2]) for b in blocks}
         _cobset = {(b[0], b[1], b[2]) for b in blocks
                    if b[3].split("[")[0] == "minecraft:cobblestone"}
+        # ponytail: support roles split for glass/slab (layout sets): lids
+        # stay cobblestone-only, up-reads need opaque sources, down-reads
+        # accept any solid rest. Router geometry is glass-free, so empty
+        # deltas there; hand-glass stitches land honestly.
+        _supset = _layout_sup3(blocks)
+        _srcset = _layout_src3(blocks)
 
         def _cob(c):
             return c in _cobset
 
         def _sup(c):
-            return c in _cobset or (c[1] == 1 and c in _bset
+            return c in _supset or (c[1] == 1 and c in _bset
                                     and (c[0], c[2]) not in _trench)
 
         def _nbrs(c):
@@ -2275,7 +2282,7 @@ def compose_hier_parts(built, gates, recipe):
                         yield m
                 up = (c[0] + dx, c[1] + 1, c[2] + dz)
                 if wires.get(up) == n and (c[0] + dx, c[1], c[2] + dz) \
-                        in _cobs and (c[0], c[1] + 1, c[2]) not in _cobs:
+                        in _srcset and (c[0], c[1] + 1, c[2]) not in _cobs:
                     yield up
                 dn = (c[0] + dx, c[1] - 1, c[2] + dz)
                 if wires.get(dn) == n and _sup((c[0], c[1] - 1, c[2])) \
@@ -2411,8 +2418,7 @@ def compose_hier_parts(built, gates, recipe):
             for _dx in range(-25, 26):
                 for _dz in range(-25, 26):
                     _near.add((_x + _dx, _y, _z + _dz))
-        _cob = {(bx, by, bz) for bx, by, bz, bid in blocks
-                if bid.split("[")[0] == "minecraft:cobblestone"}
+        _cob = _layout_flood3(blocks)
         for (_x, _y, _z), (_rn, _f) in mctx.repeaters.items():
             if _rn != nn or (_x, _y, _z) not in _near:
                 continue
@@ -2504,8 +2510,7 @@ def compose_hier_parts(built, gates, recipe):
             _s = _snap()
             from layout import _loop_rep as _lr
             _dust0 = set(mctx.wires) - set(mctx.repeaters)
-            _cob0 = {b[:3] for b in blocks
-                     if b[3].split("[")[0] == "minecraft:cobblestone"}
+            _cob0 = _layout_flood3(blocks)
             _pre_loop = _lr(mctx.wires, mctx.repeaters, _dust0, _cob0)
             try:
                 _p = _landed(fn(), n, stub)
@@ -2533,8 +2538,7 @@ def compose_hier_parts(built, gates, recipe):
                 # rejects: a band tile can leave one behind, and that is not
                 # this strategy's to fix.
                 _dust = set(mctx.wires) - set(mctx.repeaters)
-                _cob = {b[:3] for b in blocks
-                        if b[3].split("[")[0] == "minecraft:cobblestone"}
+                _cob = _layout_flood3(blocks)
                 _post = _lr(mctx.wires, mctx.repeaters, _dust, _cob)
                 if _post is not None and _post != _pre_loop:
                     raise RuntimeError(f"hier stitch {n}: rings at {_post[0]}")
@@ -2551,8 +2555,7 @@ def compose_hier_parts(built, gates, recipe):
                 _plant_repeaters(mctx, _p, n, flow, end_boost=True,
                                  fresh={c for c in _p if c not in _prews[0]})
                 _dust = set(mctx.wires) - set(mctx.repeaters)
-                _cob = {b[:3] for b in blocks
-                        if b[3].split("[")[0] == "minecraft:cobblestone"}
+                _cob = _layout_flood3(blocks)
                 _post = _lr(mctx.wires, mctx.repeaters, _dust, _cob)
                 if _post is not None and _post != _pre_loop:
                     raise RuntimeError(f"hier stitch {n}: rings at {_post[0]}")
@@ -2924,8 +2927,12 @@ def compose_hier_parts(built, gates, recipe):
         # junctions carrying the net — so anything this flood cannot reach is
         # exactly what check_opens will flag. No radius cap: hop artifacts
         # traverse correctly now, and a far true orphan fails loud honestly.
+        # (Support split mirrors check_opens: _sup/_src from layout; lids
+        # stay cobblestone-only. Parity is load-bearing here by construction.)
         _cob = {(bx, by, bz) for bx, by, bz, bid in blocks
                 if bid.split("[")[0] == "minecraft:cobblestone"}
+        _sup = _layout_sup3(blocks)
+        _src = _layout_src3(blocks)
 
         # ponytail: seed AND traverse EXACTLY like check_opens (same
         # function, both halves). Two divergences were measured: (1) bare
@@ -2984,11 +2991,11 @@ def compose_hier_parts(built, gates, recipe):
                       and solid[(_m[0], _m[2])][1] == _nn):
                     _push(_m, _nn)
                 _up = (_c[0] + _ax, _c[1] + 1, _c[2] + _az)
-                if (wires.get(_up) == _nn and (_c[0] + _ax, _c[1], _c[2] + _az) in _cob
+                if (wires.get(_up) == _nn and (_c[0] + _ax, _c[1], _c[2] + _az) in _src
                         and (_c[0], _c[1] + 1, _c[2]) not in _cob):
                     _push(_up, _nn)
                 _dn = (_c[0] + _ax, _c[1] - 1, _c[2] + _az)
-                if (wires.get(_dn) == _nn and (_c[0], _c[1] - 1, _c[2]) in _cob
+                if (wires.get(_dn) == _nn and (_c[0], _c[1] - 1, _c[2]) in _sup
                         and (_c[0] + _ax, _c[1], _c[2] + _az) not in _cob):
                     _push(_dn, _nn)
         # ponytail: _seen holds (cell, net) states like check_opens (a cell
@@ -3012,8 +3019,7 @@ def compose_hier_parts(built, gates, recipe):
             _ss = _snap()
             from layout import _loop_rep as _lr
             _du0 = set(mctx.wires) - set(mctx.repeaters)
-            _cb0 = {b[:3] for b in blocks
-                    if b[3].split("[")[0] == "minecraft:cobblestone"}
+            _cb0 = _layout_flood3(blocks)
             _lp0 = _lr(mctx.wires, mctx.repeaters, _du0, _cb0)
             try:
                 _full = lwire(mctx, sup, guard, _anchor, (_x, _z), _n)
@@ -3027,8 +3033,7 @@ def compose_hier_parts(built, gates, recipe):
                     flow.setdefault((_v[0], _v[1], _v[2]), set()).add(_dd)
                 _plant_repeaters(mctx, _full, _n, flow)
                 _du = set(mctx.wires) - set(mctx.repeaters)
-                _cb = {b[:3] for b in blocks
-                       if b[3].split("[")[0] == "minecraft:cobblestone"}
+                _cb = _layout_flood3(blocks)
                 _lp = _lr(mctx.wires, mctx.repeaters, _du, _cb)
                 if _lp is not None and _lp != _lp0:
                     raise RuntimeError(f"hier stub {_n}: rings at {_lp[0]}")

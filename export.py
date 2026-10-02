@@ -9,7 +9,10 @@ COLORS = {"minecraft:stone": 0x8a8a8a, "minecraft:redstone_wire": 0xe02020,
           "minecraft:cobblestone": 0x7a7a7a, "minecraft:redstone_wall_torch": 0xd83a00,
           "minecraft:lever": 0x7a5a2e, "minecraft:redstone_lamp": 0xffa726,
           "minecraft:redstone_block": 0xb01010, "minecraft:repeater": 0xc7a17a,
-          "minecraft:comparator": 0x9a8a7a}
+          "minecraft:comparator": 0x9a8a7a, "minecraft:glass": 0xd8f0f0,
+          "minecraft:stone_slab": 0x9a9a9a,
+          "minecraft:smooth_stone_slab": 0x9a9a9a,
+          "minecraft:cobblestone_slab": 0x7a7a7a}
 # ponytail: textures stream from the upstream asset pack at runtime, no PNGs in this repo.
 
 
@@ -19,7 +22,10 @@ TEXBASE = "https://raw.githubusercontent.com/PrismarineJS/minecraft-assets/maste
 TEXMAP = {"minecraft:stone": "stone.png", "minecraft:cobblestone": "cobblestone.png",
           "minecraft:redstone_lamp": "redstone_lamp_on.png",
           "minecraft:redstone_block": "redstone_block.png", "minecraft:repeater": "repeater.png",
-          "minecraft:comparator": "comparator.png"}
+          "minecraft:comparator": "comparator.png",
+          "minecraft:glass": "glass.png"}
+# ponytail: slabs ride the stone.png fallback (asset names vary by variant;
+# a wrong guess 404s every preview, the fallback never does).
 
 
 
@@ -42,6 +48,9 @@ def build_stamp(label, nblocks):
 # block). The .schem palette holds no defaults: a strict loader (WorldEdit)
 # replaces a partial state with air. /setblock is lenient, so this is a
 # no-op there. Levers are fully stamped at their sites; not listed here.
+# Slabs always carry explicit type+waterlogged: a bare slab id is ambiguous
+# (we never emit slabs; hand bids should state type, default assumed bottom
+# here so a bare bid pastes instead of vanishing).
 _DEFAULT_PROPS = {
     "minecraft:redstone_wire": (("power", "0"),),
     "minecraft:repeater": (("powered", "false"), ("locked", "false")),
@@ -49,6 +58,9 @@ _DEFAULT_PROPS = {
     "minecraft:redstone_wall_torch": (("lit", "true"),),
     "minecraft:redstone_torch": (("lit", "true"),),
     "minecraft:redstone_lamp": (("lit", "false"),),
+    "minecraft:stone_slab": (("type", "bottom"), ("waterlogged", "false")),
+    "minecraft:smooth_stone_slab": (("type", "bottom"), ("waterlogged", "false")),
+    "minecraft:cobblestone_slab": (("type", "bottom"), ("waterlogged", "false")),
 }
 
 
@@ -111,7 +123,11 @@ def export_html(blocks, size, path, label="build", extra=None):
               "a": arms(x, y, z) if base(b) == "minecraft:redstone_wire" else 0}
             for x, y, z, b in blocks if not (b == "minecraft:stone" and y == 0)]
     fdir = {"east": (1, 0), "west": (-1, 0), "south": (0, 1), "north": (0, -1)}
-    mountxy = {(x, z) for x, y, z, b in blocks if y == 1 and base(b) in ("minecraft:cobblestone", "minecraft:stone")}
+    # ponytail: torch mounts include glass/slab (both wall-mountable).
+    _MOUNT = ("minecraft:cobblestone", "minecraft:stone", "minecraft:glass",
+              "minecraft:stone_slab", "minecraft:smooth_stone_slab",
+              "minecraft:cobblestone_slab")
+    mountxy = {(x, z) for x, y, z, b in blocks if y == 1 and base(b) in _MOUNT}
     torchinfo, repinfo, cmpinfo = {}, {}, {}
     for x, y, z, bid in blocks:
         b = base(bid)
