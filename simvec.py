@@ -1,38 +1,24 @@
-"""Bit-parallel redstone physics: SIMD-in-a-register across input vectors.
+"""Table-driven redstone physics: one sweep for the whole build, vectors across cores.
 
-The serial verifier runs one whole tick-stepped simulation PER input vector,
-so an n-input build costs O(2^n) simulations. Measured: alu4 (10 inputs, 34672
-blocks) = 1024 vectors x 1.31s = 1337s, doubling per input added.
+sim.sim_verify runs one whole tick-stepped simulation PER input vector, so an
+n-input build costs O(2^n) simulations. Measured: alu4 (10 inputs, 35k blocks)
+= 1024 vectors, and cpu4 (7 inputs) = 128.
 
-Every physics predicate is per-vector PURE -- dust level, block power, torch
-state -- so the only thing separating two vectors is the input bits. One
-Python int can therefore carry a whole vector's state per cell, and a bitwise
-AND/OR evaluates every vector at once. That is SWAR: what 90s code lived on
-before SIMD intrinsics were everywhere. Python's arbitrary-precision ints are
-the register. 1024 vectors become ONE simulation, not 1024.
+The physics itself does not change; only where the constants live.
+sim._run_vec re-derives the neighbourhood on every event (tuple construction,
+four direction scans, a dust_points call per powered neighbour) while the
+build is static, so every one of those queries has a constant answer.
+_tables_from hoists them once, and run_scalar replays sim._run_vec's rule set
+term for term over those tables -- same verdict, ~2.5x faster, and
+scratch/diff_engine.py proves it bit-identical (lamps, live dust, torches,
+ticks, repeaters, comparators) against a frozen copy of the committed engine.
 
-Lane layout, 6 bits per lane:
-    bits 0..3   value: dust level / comparator output, 0..15
-    bit  4      unused
-    bit  5      HIGH: the comparison guard bit, and the encoding of TRUE
+run_scalar declines (NotImplementedError) rather than guess when a latch
+hold-seed is involved; _serial_shard then hands those vectors to sim._run_vec,
+so the authority always owns the verdict and the loud diagnosis.
 
-Booleans are HIGH masks (0x20 or 0 per lane), so boolean logic is plain
-& | ^ against HIGH at one bignum op each. Levels sit in bits 0..3; raising the
-guard bit in a lane before subtracting turns every lane-wise max/min/dec/
-compare into shift+subtract with no carry escaping its lane. The rule set
-below is sim._run_vec's rule set, one lane wider.
-
-Event scheduling is Dial's bucket queue (1969): the longest delay is 4 (a
-repeater) and ticks are integers, so 5 rotating buckets replace the binary
-heap's log n comparisons and per-event tuple allocs.
-
-WHERE THIS IS EXACT. A drained queue means every lane sits at a fixpoint of
-the same equations the serial engine iterates; for a DAG build (no LATCH
-gate) that fixpoint is unique, so sim._run_vec lands on it too, whatever order
-it visited. Where uniqueness does not hold the run cannot drain -- it
-oscillates or stalls -- and sim.verify_par hands the vectors back to the
-serial engine, which keeps ownership of the loud diagnosis. So this module
-never reports "settled" on anything order-dependent.
+The module name is historical: it also carried a bit-parallel SWAR engine,
+measured slower on alu4 and cut (see the driver note below).
 """
 import os as _os
 import time as _time
@@ -40,81 +26,9 @@ import time as _time
 from core import DIRS
 from layout import dust_points
 
-LANE = 6
-SHIFT = 5
-
 # sim._run_vec gates lever power on this; default "1" (on). Read once so the
 # precomputed tables cannot disagree with the engine that uses them.
 _LEVPOW = _os.environ.get("REDSTONE_LEVER_POWER", "1") == "1"
-
-
-class Indecisive(RuntimeError):
-    """The bit-parallel run could not settle every lane.
-
-    `lanes` is the set of lane indices still changing when the budget ran out.
-    It is a heuristic (a rolling window of the last few change masks), so the
-    caller re-runs those vectors through the serial engine, which is the
-    authority on what actually went wrong.
-    """
-
-    def __init__(self, lanes, churn, ticks, steps, why):
-        self.lanes = tuple(sorted(lanes))
-        self.churn = churn
-        self.ticks = ticks
-        self.steps = steps
-        self.why = why
-        super().__init__(f"bit-parallel sim hit {why} at tick {ticks} after "
-                         f"{steps} steps; {len(self.lanes)} lane(s) still "
-                         f"changing, churn={len(churn)}")
-
-
-class _Ops:
-    """Lane-wise arithmetic over packed words. Pure int ops, no branches."""
-
-    __slots__ = ("ones", "high", "valm", "f15all", "nl")
-
-    def __init__(self, nl):
-        self.nl = nl
-        one, high, valm = 1, 1 << SHIFT, (1 << SHIFT) - 1
-        o = h = v = 0
-        for _ in range(nl):
-            o |= one
-            h |= high
-            v |= valm
-            one <<= LANE
-            high <<= LANE
-            valm <<= LANE
-        self.ones, self.high, self.valm = o, h, v
-        self.f15all = self.f15(h)
-
-    def nz(self, v):
-        """HIGH mask where the lane value is >= 1 ('is powered')."""
-        return ((v | self.high) - self.ones) & self.high
-
-    def dec(self, v):
-        """max(v-1, 0) lane-wise: vanilla dust decay."""
-        t = (v | self.high) - self.ones      # lane value + 31, never borrows
-        keep = t & self.high                # bit 5 set iff v >= 1
-        keep -= keep >> SHIFT               # 0x1F in those lanes
-        return t & self.valm & keep
-
-    def ge(self, a, b):
-        """0x1F in every lane where a >= b."""
-        g = ((a | self.high) - b) & self.high
-        return g - (g >> SHIFT)
-
-    def vmax(self, a, b):
-        m = self.ge(a, b)
-        return (a & m) | (b & (self.valm ^ m))
-
-    def sub(self, a, b):
-        """max(a-b, 0) lane-wise: comparator subtract mode."""
-        return ((a | self.high) - b) & self.valm & self.ge(a, b)
-
-    def f15(self, m):
-        """Broadcast a HIGH boolean mask into the value 15."""
-        h = m >> SHIFT
-        return h | (h << 1) | (h << 2) | (h << 3)
 
 
 def _orth(c):
@@ -366,148 +280,6 @@ def _tables_from(P, inp):
             "ncells": len(dust) + len(pwr) + len(rep) + len(comp) + len(torch)}
 
 
-def _dust_lvl(c, st, pw, pbs, tl, ron, con, inp, O):
-    """Dust level, lane-wise. Mirrors sim._run_vec's dust_lvl term for term and
-    IN ITS ORIGINAL ORDER, because the order is observable: a comparator facing
-    this cell returns its output outright. Lanes a hard term (=>15) already
-    decided are carried in `hard` and masked out of everything after, which is
-    what a per-vector `return` does.
-
-    The guard-bit dec/max are INLINED here rather than called on _Ops: this is
-    the hot loop, run once per dust cell per event, and at ~34k cells a Python
-    call per operation costs more than the arithmetic it wraps.
-    """
-    ones, high, valm = O.ones, O.high, O.valm
-    live = high
-    hard = 0
-    lv = 0
-    if st["d_below"][c][0]:
-        h = tl.get((c[0], c[1] - 1, c[2]), 0)
-        hard |= h
-        live ^= h
-    if st["d_below"][c][1]:
-        h = pbs.get((c[0], c[1] - 1, c[2]), 0)
-        hard |= h
-        live ^= h
-    for m, code, payload, cup, cdn in st["d_dirs"][c]:
-        if not live:
-            break
-        if code == 1:
-            h = live & tl.get(m, 0)
-        elif code == 2:
-            h = live & inp[payload]
-        elif code == 3:
-            h = live
-        elif code == 4 or code == 8:
-            h = live & pbs.get(m, 0)
-        elif code == 6:
-            h = live & ron.get(m, 0)
-        else:
-            h = 0
-        if h:
-            hard |= h
-            live ^= h
-            if not live:
-                break
-        lm = live - (live >> SHIFT)      # HIGH mask -> 0x1F per undecided lane
-        if code == 5:
-            a = lv & lm
-            t = (pw.get(m, 0) | high) - ones
-            k = t & high
-            k -= k >> SHIFT
-            b = t & valm & k & lm
-            g = ((a | high) - b) & high    # lane-wise a >= b
-            g -= g >> SHIFT
-            lv = (a & g) | (b & (valm ^ g))
-        elif code == 7:
-            # every undecided lane returns here; `lv` is discarded, exactly as
-            # the original `return con.get(m, 0)`
-            h = live >> SHIFT
-            return O.f15(hard) | (con.get(m, 0) & (live - h))
-        if cup is not None:
-            a = lv & lm
-            t = (pw.get(cup, 0) | high) - ones
-            k = t & high
-            k -= k >> SHIFT
-            b = t & valm & k & lm
-            g = ((a | high) - b) & high
-            g -= g >> SHIFT
-            lv = (a & g) | (b & (valm ^ g))
-        if cdn is not None:
-            a = lv & lm
-            t = (pw.get(cdn, 0) | high) - ones
-            k = t & high
-            k -= k >> SHIFT
-            b = t & valm & k & lm
-            g = ((a | high) - b) & high
-            g -= g >> SHIFT
-            lv = (a & g) | (b & (valm ^ g))
-    return O.f15(hard) | (lv & (live - (live >> SHIFT)))
-
-
-def _cob_state(c, st, pw, pb, pbs, tl, ron, inp, O):
-    """(weakly powered, strongly powered) for a block, lane-wise."""
-    pwrd = 0
-    for m in st["c_dust"][c]:
-        pwrd |= O.nz(pw.get(m, 0))
-    strong = 0
-    if st["c_rblk"][c]:
-        pwrd |= O.high
-        strong = O.high
-    for m in st["c_lev"][c]:
-        pwrd |= inp[m]
-        strong |= O.high
-    for m in st["c_torch"][c]:
-        pwrd |= tl.get(m, 0)
-        strong |= O.high
-    for m in st["c_rep"][c]:
-        pwrd |= ron.get(m, 0)
-        strong |= O.high
-    if st["c_up"][c] is not None:
-        pwrd |= O.nz(pw.get(st["c_up"][c], 0))
-    return pwrd, strong
-
-
-def _lev(spec, pw, pbs, tl, ron, con, inp, O):
-    """Level a comparator spec contributes, lane-wise."""
-    if spec is None:
-        return 0
-    k = spec[0]
-    if k == "d":
-        return pw.get(spec[1], 0)
-    if k == "l":
-        return O.f15(inp[spec[1]])
-    if k == "t":
-        return O.f15(tl.get(spec[1], 0))
-    if k == "r":
-        return O.f15all if len(spec) == 1 else O.f15(ron.get(spec[1], 0))
-    if k == "c":
-        return O.f15(pbs.get(spec[1], 0))
-    if k == "k":
-        return con.get(spec[1], 0)
-    return 0
-
-
-def _on(spec, pw, pb, tl, ron, con, inp, O):
-    """Boolean a repeater spec contributes, lane-wise."""
-    if spec is None:
-        return 0
-    k = spec[0]
-    if k == "d":
-        return O.nz(pw.get(spec[1], 0))
-    if k == "c":
-        return pb.get(spec[1], 0)
-    if k == "l":
-        return inp[spec[1]]
-    if k == "t":
-        return tl.get(spec[1], 0)
-    if k == "r":
-        return O.high if len(spec) == 1 else ron.get(spec[1], 0)
-    if k == "k":
-        return O.nz(con.get(spec[1], 0))
-    return 0
-
-
 def _comp_out(c, st, pw, pbs, tl, ron, con, inp, O):
     """Comparator output, lane-wise. subtract: max(rear-side, 0);
     compare: rear if side <= rear else 0."""
@@ -521,241 +293,6 @@ def _comp_out(c, st, pw, pbs, tl, ron, con, inp, O):
     if st["k_mode"][c] == "subtract":
         return O.sub(rl, sl)
     return rl & O.ge(rl, sl)
-
-
-def run(ins, blocks, io, combos, tick_cap, step_cap, stall, state_out=None):
-    """Simulate every vector in `combos` in one pass.
-
-    Returns (lamps, ticks): lamps maps net -> HIGH mask whose lane L bit is set
-    iff that net's lamp is lit under combos[L]. A caller compares against a
-    bit-parallel eval_net with one XOR per net, not 1024 comparisons.
-    Raises Indecisive if any lane fails to settle.
-    """
-    nl = len(combos)
-    O = _Ops(nl)
-    inp = {}
-    for name in ins:
-        m = 0
-        for l, v in enumerate(combos):
-            if v[name]:
-                m |= 1 << (l * LANE + SHIFT)
-        inp[name] = m
-    st = _pre(blocks, io, inp)
-    dust, cob, rep, comp = st["dust"], st["cob"], st["rep"], st["comp"]
-    pwr = st["pwr"]
-    torch = st["torch"]
-    pw, pb, pbs, tl, ron, con = {}, {}, {}, {}, {}, {}
-    nz, wake, repdelay = O.nz, st["wake"], st["repdelay"]
-    high = O.high
-
-    RING = 5                       # longest delay is 4, so 5 slots never collide
-    buckets = [[] for _ in range(RING)]
-    b0 = buckets[0]
-    for c in dust:
-        b0.append(("d", c))
-    for c in pwr:
-        b0.append(("c", c))
-    for c in torch:
-        b0.append(("t", c))
-    for c in rep:
-        b0.append(("r", c))
-    for c in comp:
-        b0.append(("k", c))
-    alive = len(b0)
-    steps = now = idle = 0
-    stall_cap = max(stall, 3 * st["ncells"])
-    tsched, rsched, ksched = set(), set(), set()
-    flips = {}
-    recent = []                    # rolling window of change masks, for triage
-
-    while alive:
-        if now > tick_cap or steps > step_cap:
-            why = "tick cap" if now > tick_cap else "step cap"
-            lanes = set()
-            for m in recent:
-                for l in range(nl):
-                    if m >> (l * LANE + SHIFT) & 1:
-                        lanes.add(l)
-            raise Indecisive(lanes, _churn(flips), now, steps, why)
-        i = now % RING
-        items = buckets[i]
-        if not items:
-            now += 1
-            idle += 1
-            if idle > stall_cap:
-                raise Indecisive(range(nl), _churn(flips), now, steps, "stall")
-            continue
-        idle = 0
-        buckets[i] = []
-        alive -= len(items)
-        here = buckets[i]      # same-tick wakes land in this slot
-        hset = set()      # ...and this dedups them (see run_scalar) fresh list
-        for kind, c in items:
-            steps += 1
-            if kind == "d":
-                v = _dust_lvl(c, st, pw, pbs, tl, ron, con, inp, O)
-                old = pw.get(c, 0)
-                if old != v:
-                    pw[c] = v
-                    flips[c] = flips.get(c, 0) + 1
-                    idle = 0
-                    recent.append(nz(v) ^ nz(old))
-                    del recent[:-8]
-                    for k2, c2 in wake[c]:
-                        if c2 not in hset:
-                            hset.add(c2)
-                            here.append((k2, c2))
-                            alive += 1
-            elif kind == "c":
-                pwrd, strong = _cob_state(c, st, pw, pb, pbs, tl, ron, inp, O)
-                opb, ops = pb.get(c, 0), pbs.get(c, 0)
-                if opb != pwrd or ops != strong:
-                    pb[c], pbs[c] = pwrd, strong
-                    flips[c] = flips.get(c, 0) + 1
-                    idle = 0
-                    recent.append((opb ^ pwrd) | (ops ^ strong))
-                    del recent[:-8]
-                    for k2, c2 in wake[c]:
-                        if c2 not in hset:
-                            hset.add(c2)
-                            here.append((k2, c2))
-                            alive += 1
-            elif kind == "t":
-                if c in tsched or st["t_dead"][c]:
-                    continue
-                if (~pb.get(st["t_att"][c], 0)) & high != tl.get(c, 0):
-                    tsched.add(c)
-                    buckets[(now + 1) % RING].append(("T", c))
-                    alive += 1
-            elif kind == "T":
-                tsched.discard(c)
-                v = (~pb.get(st["t_att"][c], 0)) & high
-                old = tl.get(c, 0)
-                if old != v:
-                    tl[c] = v
-                    flips[c] = flips.get(c, 0) + 1
-                    idle = 0
-                    recent.append(old ^ v)
-                    del recent[:-8]
-                    for k2, c2 in wake[c]:
-                        if c2 not in hset:
-                            hset.add(c2)
-                            here.append((k2, c2))
-                            alive += 1
-            elif kind == "r":
-                if c in rsched:
-                    continue
-                if _on(st["r_src"][c], pw, pb, tl, ron, con, inp, O) \
-                        != ron.get(c, 0):
-                    rsched.add(c)
-                    buckets[(now + repdelay.get(c, 1)) % RING].append(("R", c))
-                    alive += 1
-            elif kind == "R":
-                rsched.discard(c)
-                v = _on(st["r_src"][c], pw, pb, tl, ron, con, inp, O)
-                if ron.get(c, 0) != v:
-                    ron[c] = v
-                    idle = 0
-                    for k2, c2 in wake[c]:
-                        if c2 not in hset:
-                            hset.add(c2)
-                            here.append((k2, c2))
-                            alive += 1
-            elif kind == "k":
-                if c in ksched:
-                    continue
-                if _comp_out(c, st, pw, pbs, tl, ron, con, inp, O) != con.get(c, 0):
-                    ksched.add(c)
-                    buckets[(now + 1) % RING].append(("K", c))
-                    alive += 1
-            elif kind == "K":
-                ksched.discard(c)
-                v = _comp_out(c, st, pw, pbs, tl, ron, con, inp, O)
-                if con.get(c, 0) != v:
-                    con[c] = v
-                    idle = 0
-                    for k2, c2 in wake[c]:
-                        if c2 not in hset:
-                            hset.add(c2)
-                            here.append((k2, c2))
-                            alive += 1
-
-    if state_out is not None:
-        state_out.update(pw=pw, pb=pb, pbs=pbs, tl=tl, ron=ron, con=con)
-    lamps = {}
-    for cell, net in st["lampnet"].items():
-        m = 0
-        for a in st["l_arm"][cell]:
-            m |= nz(pw.get(a, 0))
-        if st["l_up"][cell] is not None:
-            m |= nz(pw.get(st["l_up"][cell], 0))
-        for b in st["l_cob"][cell]:
-            m |= pb.get(b, 0)
-        for t in st["l_torch"][cell]:
-            m |= tl.get(t, 0)
-        if st["l_rblk"][cell]:
-            m |= high
-        for nm in st["l_lev"][cell]:
-            m |= inp[nm]
-        lamps[net] = lamps.get(net, 0) | m
-    return lamps, now
-
-
-def _churn(flips):
-    return sorted((c for c, k in flips.items() if k >= 3), key=lambda c: -flips[c])
-
-
-def eval_net_par(ins, gates, outputs, combos):
-    """eval_net over every vector at once: one nl-lane bitwise pass.
-
-    Same Gauss-Seidel sweep as recipe.eval_net, but each signal is a HIGH
-    mask, so "and" is "&" and the whole circuit costs ~80 bigint ops instead
-    of gates x vectors Python-level evaluations.
-    """
-    nl = len(combos)
-    O = _Ops(nl)
-    sig = {"0": 0, "1": O.high}
-    for name in ins:
-        m = 0
-        for l, v in enumerate(combos):
-            if v[name]:
-                m |= 1 << (l * LANE + SHIFT)
-        sig[name] = m
-    for _ in range(20):
-        before = dict(sig)
-        for g in gates:
-            a = [sig.get(x) for x in g["args"]]
-            if any(x is None for x in a):
-                bad = [x for x, y in zip(g["args"], a) if y is None]
-                raise KeyError(f"eval_net_par reads undefined signal {bad[0]!r}")
-            op = g["op"]
-            if op == "AND":
-                sig[g["out"]] = a[0] & a[1]
-            elif op == "OR":
-                sig[g["out"]] = a[0] | a[1]
-            elif op == "XOR":
-                sig[g["out"]] = a[0] ^ a[1]
-            elif op == "NOT":
-                sig[g["out"]] = ~a[0] & O.high
-            elif op == "LATCH":
-                o = g["out"]
-                sig[o + "~qb"] = ~(a[0] | sig.get(o, 0)) & O.high
-                sig[o] = ~(a[1] | sig.get(o + "~qb", 0)) & O.high
-            else:
-                raise ValueError(f"eval_net_par: unknown op {op!r}")
-        if sig == before:
-            break
-    else:
-        raise ValueError("no stable state (oscillating loop?)")
-    missing = [n for n in outputs if n not in sig]
-    if missing:
-        raise KeyError(f"output {missing[0]!r} is never driven")
-    return sig, O
-
-
-def lanes_of(mask, nl):
-    """HIGH mask -> the lane indices it selects."""
-    return [l for l in range(nl) if mask >> (l * LANE + SHIFT) & 1]
 
 
 # ------------------------------------------------------------ scalar engine
@@ -1167,24 +704,21 @@ def run_scalar(vec, ctx, init=None, until=None, tick_cap=None, step_cap=None,
 
 
 # ---------------------------------------------------------------- driver
-# ponytail: measured reality of the SWAR path on alu4 (34672 blocks, 1024
-# vectors, 20 cores), because it decides the whole design:
-#     8 lanes   1.13s     32 lanes  1.27s    128 lanes 1.54s
-#   -> where lanes converge together they SHARE events and this is ~110x.
-#     256-1023 -> 6 of 8 x 128-lane shards burn a 4M-step budget; at 20M steps
-#     they are still going (tick 4090). Merged event count is ~sum(lane), not
-#     max(lane), so one hard vector costs the whole shard its serial cost
-#     x shard_size. On this build SWAR is a big win on the easy vectors and a
-#     LOSS on the hard ones, and the hard ones dominate.
-# Also: a single run over all 1024 lanes can NEVER terminate if any one vector
-# hunts, because sim's torch-burnout rule -- a termination device -- is not
-# reimplemented here. Hence shards, hard bounds, and a fallback.
-#
-# So the default driver is the boring one: vectors across cores, serial engine,
-# which is a fixed ~ncores speedup and cannot stall. SWAR is per shard and
-# opt-in (REDSTONE_VEC_SWAR=1); a shard that does not settle inside its budget
-# falls back to the serial engine for those vectors, so the verdict always
-# comes from an engine that finished.
+# ponytail: one engine, vectors across cores. A bit-parallel (SWAR) engine
+# lived here from 2026-09 and was measured against this one on alu4 (34672
+# blocks, 1024 vectors, 20 cores): 22.7s against 21.5s for the table engine
+# alone -- a 5.6% REGRESSION, byte-identical either way. It only pays when
+# every lane in a shard converges together (an all-easy 128-lane shard ran
+# ~110x faster), and real builds contain hard vectors: 6 of 8 x 128-lane
+# shards burned the whole step budget, because merged event count is
+# ~sum(lane) rather than ~max(lane). It could not terminate on a hunting
+# vector at all (sim's torch-burnout rule was never reimplemented), which is
+# why it needed shards, a step budget and a fallback. Off by default, enabled
+# by nobody, measured slower on the only build big enough to matter: cut. The
+# per-core serial engine is a fixed ~ncores speedup and cannot stall.
+# Restore point if a 12+ input recipe ever makes 2^n unaffordable: git history
+# at 68dd094 has the whole engine, and scratch/diff_engine.py is the gate that
+# would prove a replacement bit-identical.
 
 _W = {}
 _CTX = None
@@ -1203,7 +737,7 @@ def _serial_shard(combos):
     declines -- i.e. when a latch hold-seed is involved, which run_scalar does
     not implement and refuses rather than guessing.
 
-    Returns (bad, ticks, retry, fatal). `fatal` is a not-settling / burnout /
+    Returns (bad, ticks, fatal). `fatal` is a not-settling / burnout /
     stall message: that is a TOPOLOGY fault of the build, identical in kind
     for every vector that touches the loop, so continuing is wasted budget.
     The stop event lets the rest of the pool stop too.
@@ -1218,7 +752,7 @@ def _serial_shard(combos):
     scalar = True
     for vec in combos:
         if stop is not None and stop.is_set():
-            return bad, ticks, [], "aborted (another worker hit a structural fault)"
+            return bad, ticks, "aborted (another worker hit a structural fault)"
         try:
             got, live, tlv, tk, rlv, cn = run_scalar(vec, P)
         except NotImplementedError:
@@ -1227,7 +761,7 @@ def _serial_shard(combos):
         except RuntimeError as e:
             if stop is not None:
                 stop.set()
-            return (bad, ticks, [],
+            return (bad, ticks,
                     "sim not settling / burnout on vector %s: %s"
                     % (vec, str(e)[:400]))
         ticks = max(ticks, tk)
@@ -1238,13 +772,13 @@ def _serial_shard(combos):
     if not scalar:                      # latch path: authority only
         for vec in combos:
             if stop is not None and stop.is_set():
-                return bad, ticks, [], "aborted (another worker hit a fault)"
+                return bad, ticks, "aborted (another worker hit a fault)"
             try:
                 got, live, tlv, tk, rlv, cn = _run_vec(vec, None, P, until=None)
             except RuntimeError as e:
                 if stop is not None:
                     stop.set()
-                return (bad, ticks, [],
+                return (bad, ticks,
                         "sim not settling / burnout on vector %s: %s"
                         % (vec, str(e)[:400]))
             ticks = max(ticks, tk)
@@ -1253,51 +787,17 @@ def _serial_shard(combos):
                 if bool(got.get(net, False)) != bool(exp[net]):
                     bad.append((vec, net, bool(got.get(net, False)),
                                 bool(exp[net])))
-    return bad, ticks, [], None
-
-
-def _swar_shard(combos, step_cap):
-    """Try the bit-parallel engine on this shard.
-
-    Returns (bad, ticks) on success, or None if it cannot decide -- in which
-    case the caller re-dispatches those vectors ONE PER TASK. Bundling the
-    fallback into the same shard is what made a 1024-vector run take 20
-    minutes: a shard containing one hunting vector held a worker for the whole
-    serial sweep of all 8 of its vectors while 19 workers sat idle.
-    """
-    ins, gates, outs = _W["ins"], _W["gates"], _W["outputs"]
-    try:
-        lamps, tk = run(ins, _W["blocks"], _W["io"], combos, _W["tick_cap"],
-                        step_cap, _W["stall"])
-        sig, _O = eval_net_par(ins, gates, outs, combos)
-    except (Indecisive, Exception):               # noqa: BLE001
-        return None
-    nl = len(combos)
-    full = (1 << (nl * LANE)) - 1
-    bad = []
-    for net in outs:
-        lm = lamps.get(net, 0)
-        d = (lm ^ sig[net]) & full
-        if d:
-            for l in lanes_of(d, nl):
-                bad.append((combos[l], net, l in lanes_of(lm, nl),
-                            bool(sig[net] >> (l * LANE + SHIFT) & 1)))
-    return bad, tk, [], None
+    return bad, ticks, None
 
 
 def _shard_job(combos):
-    if _W.get("swar") and len(combos) > 1:
-        got = _swar_shard(combos, _W["swar_cap"])
-        if got is not None:
-            return got
-        return [], 0, list(combos), None   # could not decide: re-dispatch singly
     return _serial_shard(combos)
 
 
 def _serial_drain(combos, ins, gates, outputs, blocks, io):
     """verify_par's body, run in THIS process with no pool (daemon callers)."""
     _init_worker(blocks, io, gates, outputs, ins, 20000, 5000)
-    _W["swar"], _W["swar_cap"], _W["stop"] = 0, 4000000, None
+    _W["stop"] = None
     bad, ticks = [], 0
     for vec in combos:
         try:
@@ -1325,29 +825,14 @@ def _parse_build_ctx():
 
 
 def verify_par(ins, gates, outputs, blocks, io, combos, workers=None,
-               shard=None, tick_cap=20000, step_cap=4000000, stall=5000,
-               swar=None, progress=None):
+               shard=None, tick_cap=20000, stall=5000, progress=None):
     """Verify every vector in `combos`. Returns (bad, max_ticks).
 
     bad is a list of (vec, net, got, want), the same shape sim.sim_verify
-    raises on, so the caller reports it identically. Hard-bounded: no shard
-    can exceed step_cap events, and anything the bit-parallel engine cannot
-    decide is re-dispatched one vector per task so the pool balances the
-    stragglers.
-
-    REDSTONE_VEC_SWAR=1 opts into the bit-parallel shards. It is OFF by
-    default, and that is a measurement, not modesty: at 256 vectors on alu4
-    it came out 22.7s against 21.5s for run_scalar alone -- a 5.6% regression,
-    byte-identical results either way. Bit-parallel pays only when every lane
-    in a shard converges together, because then the lanes SHARE events; a
-    single hunting vector in the shard means merged event count is ~sum(lane)
-    rather than ~max(lane), and the shard loses (measured: 6 of 8 x 128-lane
-    shards burn the step budget on alu4, while an all-easy 128-lane shard runs
-    in 1.54s -- ~110x). Real builds contain hard vectors, so the default pays
-    the wasted step budget for nothing. It stays in because it is the only
-    sub-linear option for exhaustive verification of high-input-count recipes,
-    where 2^n serial runs stop being affordable; set the env var when the
-    vector set is uniform.
+    raises on, so the caller reports it identically. Vectors are split into
+    shards and run across processes on the table engine, which is the only
+    engine here (see the driver note above for the bit-parallel one that was
+    measured slower and cut). Every shard is bounded by the engine's own caps.
     """
     import multiprocessing as _mp
     # ponytail: same floating-support gate as sim.sim_verify (trench work).
@@ -1368,12 +853,11 @@ def verify_par(ins, gates, outputs, blocks, io, combos, workers=None,
             return _serial_drain(combos, ins, gates, outputs, blocks, io)
     except Exception:
         pass
-    swar = int(_os.environ.get("REDSTONE_VEC_SWAR", "0")) if swar is None else swar
     n = max(1, min(workers or (_os.cpu_count() or 1), len(combos)))
     shard = shard or max(1, len(combos) // (n * 4) or 1)
     init = (blocks, io, gates, outputs, ins, tick_cap, stall)
     ctx = _mp.get_context("spawn")
-    bad, ticks, retry, fatal = [], 0, [], None
+    bad, ticks, fatal = [], 0, None
     shards = [combos[i:i + shard] for i in range(0, len(combos), shard)]
     seen = [0]
 
@@ -1382,14 +866,12 @@ def verify_par(ins, gates, outputs, blocks, io, combos, workers=None,
         # while the workers grind, so a silent parent is indistinguishable
         # from a hung one. Count here, in the consumer, because a closure
         # defined in verify_par cannot be pickled to a spawn worker.
-        nonlocal bad, ticks, retry, fatal
+        nonlocal bad, ticks, fatal
         for res in it:
             bad += res[0]
             ticks = max(ticks, res[1])
-            if len(res) > 2:
-                retry.extend(res[2])
-            if len(res) > 3 and res[3] and fatal is None:
-                fatal = res[3]
+            if res[2] and fatal is None:
+                fatal = res[2]
             seen[0] += 1
             if progress and (seen[0] % 8 == 0 or seen[0] == total):
                 progress(seen[0], total, 0.0)
@@ -1397,22 +879,12 @@ def verify_par(ins, gates, outputs, blocks, io, combos, workers=None,
                 break
 
     _init_worker(*init)
-    _W["swar"], _W["swar_cap"] = swar, step_cap
     _W["stop"] = _mp.Event()
     if n == 1:
         drain(map(_shard_job, shards), len(shards))
-        if not fatal:
-            drain(map(_serial_shard, ([v] for v in retry)), len(retry))
     else:
         with ctx.Pool(n, initializer=_init_worker, initargs=init) as pool:
             drain(pool.imap_unordered(_shard_job, shards), len(shards))
-            if retry and not fatal:
-                if progress:
-                    print("   SWAR settled most shards; re-dispatching %d vectors "
-                          "one per task for load balance" % len(retry), flush=True)
-                seen[0] = 0
-                drain(pool.imap_unordered(_serial_shard, ([v] for v in retry)),
-                      len(retry))
     # ponytail: FAIL FAST on a structural fault. A not-settling / burnout /
     # stall verdict is a property of the BUILD, not of one vector -- every
     # vector that touches the same loop gets it -- so simulating the remaining
@@ -1429,9 +901,9 @@ def verify_par(ins, gates, outputs, blocks, io, combos, workers=None,
 
 if __name__ == "__main__":
     # ponytail: one runnable check, and it is the only one that matters -- the
-    # bit-parallel engine must agree with the serial engine BIT for BIT, or it
-    # is not a faster verifier, it is a wrong one. Routed through the real
-    # router, then compared vector by vector against sim._run_vec.
+    # table engine must agree with the authority BIT for BIT, or it is not a
+    # faster verifier, it is a wrong one. Routed through the real router, then
+    # compared vector by vector against sim._run_vec.
     import os
     from recipe import parse_recipe
     from sim import _parse_build, _run_vec
@@ -1444,13 +916,12 @@ if __name__ == "__main__":
     _combos = [{_ins[j]: (k >> j) & 1 for j in range(len(_ins))}
                for k in range(2 ** len(_ins))]
     _P = _parse_build(_blocks, _io)
-    _lamps, _ticks = run(_ins, _blocks, _io, _combos, 20000, 2000000, 5000)
-    _sig, _O = eval_net_par(_ins, _r["gates"], _r["outputs"], _combos)
-    assert _lamps["y"] == _sig["y"], (lanes_of(_lamps["y"], 8),
-                                       lanes_of(_sig["y"], 8))
-    _sel = lanes_of(_lamps["y"], len(_combos))
+    _bad, _ticks = verify_par(_ins, _r["gates"], _r["outputs"], _blocks, _io,
+                              _combos)
+    assert not _bad, _bad
     for _k, _vec in enumerate(_combos):
-        _serial = _run_vec(_vec, None, _P)[0]["y"]
-        assert _serial == (_k in _sel), (_k, _vec, _serial, _k in _sel)
-    print(f"simvec ok: {len(_combos)} vectors, bit-identical to "
+        _ser = _run_vec(_vec, None, _P)
+        _tab = run_scalar(_vec, _P)
+        assert _ser == _tab, (_k, _vec)
+    print(f"simvec ok: {len(_combos)} vectors, run_scalar bit-identical to "
           f"sim._run_vec, {_ticks} ticks")
