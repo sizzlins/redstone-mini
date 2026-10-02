@@ -297,7 +297,7 @@ def lwire(ctx, sup, guard, a, b, net, avoid=frozenset()):
         needs = []
         try:
             for cell in fly:
-                if cell[1] < 2:
+                if cell[1] == 1:
                     continue
                 r = _support(cell, net, ctx.solid, ctx.wires, sup,
                              ctx.repeaters, guard)
@@ -695,10 +695,11 @@ def _plant_repeaters(ctx, cells, net, flow, end_boost=False, fresh=None,
             # (stairs are never planted, so bridge slopes keep their dust)
             # and y>1 needs cobble below (the flight guarantees a pillar).
             # Same straight-triple + single-flow rules as y=1; sim judges.
+            # y<=0 trench likewise needs its stamped pillar below.
             if dist >= 8 and (dx, dz) == (nx - cx, nz - cz) and (dx, dz) in _VEC \
                     and py == cy == ny \
                     and _ends_ok(ctx, net, cx, cy, cz, dx, dz):
-                if cy > 1 and not any(
+                if cy != 1 and not any(
                         b[:3] == (cx, cy - 1, cz) and "cobblestone" in b[3]
                         for b in ctx.blocks):
                     continue
@@ -720,7 +721,7 @@ def _plant_repeaters(ctx, cells, net, flow, end_boost=False, fresh=None,
             if ((dx, dz) == (nx - cx, nz - cz) and (dx, dz) in _VEC
                     and py == cy == ny
                     and _ends_ok(ctx, net, cx, cy, cz, dx, dz)
-                    and not (cy > 1 and not any(
+                    and not (cy != 1 and not any(
                         b[:3] == (cx, cy - 1, cz) and "cobblestone" in b[3]
                         for b in ctx.blocks))):
                 del ctx.wires[(cx, cy, cz)]
@@ -745,7 +746,7 @@ def _plant_repeaters(ctx, cells, net, flow, end_boost=False, fresh=None,
             if ((dx, dz) == (nx - cx, nz - cz) and (dx, dz) in _VEC
                     and py == cy == ny
                     and _ends_ok(ctx, net, cx, cy, cz, dx, dz)
-                    and not (cy > 1 and not any(
+                    and not (cy != 1 and not any(
                         b[:3] == (cx, cy - 1, cz) and "cobblestone" in b[3]
                         for b in ctx.blocks))):
                 del ctx.wires[(cx, cy, cz)]

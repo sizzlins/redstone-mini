@@ -317,13 +317,16 @@ def _loop_rep(wires, repeaters, dust, cobble):
 
 def _has_support(cell, sup, solid):
     """Can a repeater stand at `cell`? y=1 rides the ground/stone floor; y>=2
-    needs a solid block directly under it (route pillar or tile cobble).
+    needs a solid block directly under it (route pillar or tile cobble);
+    y<=0 needs a stamped pillar directly under it (trench floor).
     Loud False, never a floating repeater."""
-    if cell[1] <= 1:
+    if cell[1] == 1:
         return True
     b = (cell[0], cell[1] - 1, cell[2])
     if b in sup:
         return True
+    if cell[1] <= 0:
+        return False  # trench: only a stamped pillar counts, never 2D solid
     return solid.get((b[0], b[2]), (None,))[0] == "cobble"
 
 
@@ -533,12 +536,12 @@ def astar(starts, goal, net, W, D, solid, rings, wires, junctions, margin=None, 
                     # level change: support under the upper endpoint (stamped
                     # once by route(), never during search) + lid over the
                     # lower endpoint clear, else the slope never conducts.
-                    if my >= 2 and _support(m, net, solid, wires, sup, reps, guard) is False:
+                    if my != 1 and _support(m, net, solid, wires, sup, reps, guard) is False:
                         continue
                     lo = cell if my > y else m
                     if lid((lo[0], lo[1] + 1, lo[2])):
                         continue
-                elif my >= 2 and _support(m, net, solid, wires, sup, reps, guard) is False:
+                elif my != 1 and _support(m, net, solid, wires, sup, reps, guard) is False:
                     continue
                 if m == goal and (m[0], m[2]) in junctions and net in junctions[(m[0], m[2])]:
                     pass  # OR junction: wired-OR is the gate
@@ -718,6 +721,23 @@ def finish_assembly(blocks, solid, wires, rings, junctions, repeaters, pos):
     for x, z in sorted({(x, z) for x, y, z, bid in out if y == 1}
                        - _trench):
         out.append((x, 0, z, "minecraft:stone"))
+    # ponytail: trench floor. A y<=0 wire/repeater needs a solid block at
+    # y-1 (vanilla pops it otherwise). Route pillars in `blocks` already
+    # cover flown cells; this stamps the missing single cubes so a trenched
+    # run pastes exactly as the sim saw it. Loud if the support cell itself
+    # holds a wire/repeater (stacked column the router must never emit).
+    _have = {(x, y, z) for x, y, z, bid in out}
+    _wset = set(wires) | set(repeaters)
+    for (x, y, z) in sorted(set(wires) | set(repeaters)):
+        if y > 0:
+            continue
+        b = (x, y - 1, z)
+        if b in _wset:
+            raise RuntimeError(f"trench support at {b} holds wire (stacked column)")
+        if b in _have:
+            continue
+        out.append((b[0], b[1], b[2], "minecraft:cobblestone"))
+        _have.add(b)
     io = {"levers": {c: n for c, (k, n) in solid.items() if k == "lever"},
           "lamps": {c: n for c, (k, n) in solid.items() if k == "lamp"},
           "nets": dict(wires)}
@@ -983,7 +1003,7 @@ def layout(recipe, seed=None, grow=0, reserve=False):
                 needs = []
                 try:
                     for cell in cand:
-                        if cell[1] < 2:
+                        if cell[1] == 1:
                             continue
                         r = _support(cell, net, solid, wires, sup, repeaters, guard)
                         if r is False:

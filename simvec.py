@@ -1326,6 +1326,11 @@ def verify_par(ins, gates, outputs, blocks, io, combos, workers=None,
     vector set is uniform.
     """
     import multiprocessing as _mp
+    # ponytail: same floating-support gate as sim.sim_verify (trench work).
+    # Direct callers bypass sim_verify, so check here too; deferred import
+    # (sim imports this module lazily, never at top level).
+    from sim import _parse_build as _sv_parse, _check_supports as _sv_check
+    _sv_check(_sv_parse(blocks, io))
     # ponytail: refuse to fan out from inside a pool worker. A pool worker is
     # DAEMONIC by definition, so the nested Pool raises "daematic processes are
     # not allowed to have children" -- and under spawn that is not a raise, it

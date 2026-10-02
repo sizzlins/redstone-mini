@@ -811,6 +811,24 @@ def _latch_hold_seed(blocks, io):
     return {"w": seed_w, "t": seed_t, "_solve": True}
 
 
+def _check_supports(P):
+    """Fail loud on floating dust/repeaters/comparators (vanilla pops them).
+
+    y==1 rides the world/stone floor (finish_assembly pads it), so only
+    y!=1 is judged. Below must be cobble/stone or redstone_block. Without
+    this a trenched repeater sim-greens and then fails to paste — the sim
+    modeled power but never support. Zero behavior change for green builds
+    (their y>=2 cells already ride stamped pillars).
+    """
+    dust, torch, lampat, rep, rblk, cob, repdelay, lever, lampnet, attach_rev, comp, leveratt = P
+    solid = cob | rblk
+    for c in list(dust) + list(rep) + list(comp):
+        if c[1] == 1:
+            continue
+        if (c[0], c[1] - 1, c[2]) not in solid:
+            raise RuntimeError(f"FLOATING {c} (no support below it)")
+
+
 def sim_verify(recipe, blocks, io, seed=7, quiet=False, collect=False):
     """Independent redstone simulation of the PLACED build (ignores layout nets).
     Plays input vectors through tick-stepped torch/dust physics, compares
@@ -820,6 +838,7 @@ def sim_verify(recipe, blocks, io, seed=7, quiet=False, collect=False):
     """
     import random as _r
     P = _parse_build(blocks, io)
+    _check_supports(P)
     _hold = _latch_hold_seed(blocks, io)
 
     ins = recipe["inputs"]
