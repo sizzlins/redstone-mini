@@ -10,7 +10,7 @@ from recipe import expand_gates
 from tiles import (new_ctx, footprint, tap_lamps, own, ring, stamp_wire,
                    place_or, place_and, place_not, place_latch, place_xor,
                    seal_tiles)
-from layout import build_netspec, check_shorts, check_opens, finish_assembly, _support, bridge_plan, astar
+from layout import build_netspec, check_shorts, check_opens, finish_assembly, _support, bridge_plan, bridge_plan_tall, astar
 
 # last compose() run's coordinate shift (netspec frame -> check frame),
 # for offline probes. Not part of the build contract.
@@ -30,8 +30,9 @@ _WIDE_YMAX = int(os.environ.get("REDSTONE_COMPOSE_YMAX", "6"))
 _VEC = {(1, 0): "east", (-1, 0): "west", (0, 1): "south", (0, -1): "north"}
 
 
-def _hop_free(ctx, sup, guard, feet, supports, dusts, victim, net):
+def _hop_free(ctx, sup, guard, feet, supports, dusts, victim, net, apex=3):
     # adapted bridge_free (layout.py:582-634): unbounded field, plus sup.
+    # apex=4 for the tall hop (air check one above the apex).
     fx, _, fz = victim
     if ctx.wires.get((fx, 1, fz)) in (None, net) and not (
             (fx, fz) in ctx.rings and net not in ctx.rings[(fx, fz)]):
@@ -67,7 +68,7 @@ def _hop_free(ctx, sup, guard, feet, supports, dusts, victim, net):
             return False
     if ctx.solid.get((fx, fz)) is not None or (fx, 1, fz) in ctx.repeaters:
         return False  # center column must hold only victim dust
-    if ctx.wires.get((fx, 4, fz)) is not None:
+    if ctx.wires.get((fx, apex + 1, fz)) is not None:
         return False  # air above the hop
     for x, y, z in feet:
         if ctx.wires.get((x, y, z)) not in (None, net):
@@ -555,8 +556,66 @@ def _walk(ctx, sup, guard, a, b, net, cells):
         dusts = [(vx - d[0], 2, vz - d[1]), (vx, 3, vz), (vx + d[0], 2, vz + d[1])]
         assert (set(feet) | set(supports) | set(dusts)) == \
             (set(bridge_plan(vx, vz, axis)[0]) | set(bridge_plan(vx, vz, axis)[1]) | set(bridge_plan(vx, vz, axis)[2])), (feet, supports, dusts)
+        _tall_done = False
         if not _hop_free(ctx, sup, guard, feet, supports, dusts, (vx, 1, vz), net):
-            raise RuntimeError(f"compose: no ground for {net}: {a} -> {b}")
+            # ponytail: tall hop fallback (7-cell y=4 staircase). The short
+            # footprint sealed but the wider/higher one may be free. Same
+            # physics, same guards; short stays primary so green builds keep
+            # their exact geometry.
+            _b3 = (vx - 3 * d[0], vz - 3 * d[1])
+            _f3 = (vx + 3 * d[0], vz + 3 * d[1])
+            if _b3 in seqflats and _f3 in seqflats:
+                _bi3, _fi3 = seqflats.index(_b3), seqflats.index(_f3)
+                _straight3 = all(
+                    (qx - vx) * d[1] == (qz - vz) * d[0]
+                    for t in range(_bi3, _fi3 + 1)
+                    for (qx, qz) in [seqflats[t]])
+                if _bi3 < j <= _fi3 and _straight3:
+                    _axis3 = "ns" if d[0] == 0 else "ew"
+                    _feet3 = [(_b3[0], 1, _b3[1]), (_f3[0], 1, _f3[1])]
+                    _tp = bridge_plan_tall(vx, vz, _axis3)
+                    assert (set(_feet3) | set(_tp[1]) | set(_tp[2])) == \
+                        (set(_tp[0]) | set(_tp[1]) | set(_tp[2])), (_feet3, _tp)
+                    if _hop_free(ctx, sup, guard, _feet3, _tp[1], _tp[2],
+                                 (vx, 1, vz), net, apex=4):
+                        _ok3 = True
+                        for _k in (1, 2):
+                            _bc = (vx - _k * d[0], vz - _k * d[1])
+                            if ctx.wires.get((_bc[0], 1, _bc[1])) == net:
+                                if not (done and done[-1] == (_bc[0], 1, _bc[1])):
+                                    _ok3 = False
+                                    break
+                                del ctx.wires[(_bc[0], 1, _bc[1])]
+                                done.pop()
+                        for _k in (1, 2):
+                            _fc = (vx + _k * d[0], vz + _k * d[1])
+                            if ctx.wires.get((_fc[0], 1, _fc[1])) not in (None, net):
+                                _ok3 = False
+                                break
+                        if _ok3:
+                            for sx, sy, sz in _tp[1]:
+                                sup[(sx, sy, sz)] = net
+                                ctx.blocks.append((sx, sy, sz, "minecraft:cobblestone"))
+                                if sy == 1:
+                                    ctx.solid.setdefault((sx, sz), ("cobble", net))
+                            for dx_, dy_, dz_ in _tp[2]:
+                                stamp_wire(ctx, [(dx_, dy_, dz_)], net)
+                                done.append((dx_, dy_, dz_))
+                            for q in ((_b3), (victim), (_f3)):
+                                skip.add(q)
+                            for q in ((vx - 2 * d[0], vz - 2 * d[1]),
+                                      (vx - d[0], vz - d[1]),
+                                      (vx + d[0], vz + d[1]),
+                                      (vx + 2 * d[0], vz + 2 * d[1])):
+                                skip.add(q)
+                            stamp_wire(ctx, [(_f3[0], _f3[1])], net)
+                            done.append((_f3[0], 1, _f3[1]))
+                            j = _fi3 + 1
+                            _tall_done = True
+            if not _tall_done:
+                raise RuntimeError(f"compose: no ground for {net}: {a} -> {b}")
+        if _tall_done:
+            continue
         # back flank: retrofit own path wire into the up-slope, else stamp
         # support on the free cell. Anything else (foreign, or own wire that
         # is not the live tail) is genuine contention -> loud.

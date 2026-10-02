@@ -607,12 +607,33 @@ def bridge_plan(fx, fz, axis):
     return feet, supports, dusts
 
 
-def bridge_free(wires, solid, repeaters, guard, W, D, fx, fz, axis, net, cond=()):
+def bridge_plan_tall(fx, fz, axis):
+    """Taller crossover: 7-cell staircase peaking at y=4 (short shape peaks
+    at y=3). Tried only when the short shape is sealed, so green builds keep
+    their exact geometry. Same vanilla slope physics (1 step per level)."""
+    if axis == "ns":
+        feet = [(fx, 1, fz - 3), (fx, 1, fz + 3)]
+        supports = [(fx, 1, fz - 2), (fx, 1, fz + 2),
+                    (fx, 2, fz - 1), (fx, 2, fz + 1), (fx, 3, fz)]
+        dusts = [(fx, 2, fz - 2), (fx, 3, fz - 1), (fx, 4, fz),
+                 (fx, 3, fz + 1), (fx, 2, fz + 2)]
+    else:
+        feet = [(fx - 3, 1, fz), (fx + 3, 1, fz)]
+        supports = [(fx - 2, 1, fz), (fx + 2, 1, fz),
+                    (fx - 1, 2, fz), (fx + 1, 2, fz), (fx, 3, fz)]
+        dusts = [(fx - 2, 2, fz), (fx - 1, 3, fz), (fx, 4, fz),
+                 (fx + 1, 3, fz), (fx + 2, 2, fz)]
+    return feet, supports, dusts
+
+
+def bridge_free(wires, solid, repeaters, guard, W, D, fx, fz, axis, net, cond=(), tall=False):
     # ponytail: single bridge shape; any footprint collision -> no bridge,
     # the router detours instead. Full 3D search if hops ever dominate.
+    # tall=True tries the 7-cell y=4 staircase when the 5-cell y=3 one seals.
     if wires.get((fx, 1, fz)) in (None, net):
         return False  # nothing foreign to hop
-    feet, supports, dusts = bridge_plan(fx, fz, axis)
+    _plan = bridge_plan_tall if tall else bridge_plan
+    feet, supports, dusts = _plan(fx, fz, axis)
     for x, y, z in supports + dusts:
         if not (0 <= x < W and 0 <= z < D):
             return False
@@ -650,7 +671,7 @@ def bridge_free(wires, solid, repeaters, guard, W, D, fx, fz, axis, net, cond=()
             return False
     if solid.get((fx, fz)) is not None or (fx, 1, fz) in repeaters:
         return False  # center column must hold only victim dust
-    if wires.get((fx, 4, fz)) is not None:
+    if wires.get((fx, 5 if tall else 4, fz)) is not None:
         return False  # air above the hop
     for x, y, z in feet:
         if not (0 <= x < W and 0 <= z < D):
@@ -662,10 +683,11 @@ def bridge_free(wires, solid, repeaters, guard, W, D, fx, fz, axis, net, cond=()
     return True
 
 
-def bridge_stamp(blocks, solid, wires, rings, placed, net, fx, fz, axis):
+def bridge_stamp(blocks, solid, wires, rings, placed, net, fx, fz, axis, tall=False):
     """Stamp a free-checked bridge; returns ground feet for 2D routing."""
     CB = "minecraft:cobblestone"
-    feet, supports, dusts = bridge_plan(fx, fz, axis)
+    _plan = bridge_plan_tall if tall else bridge_plan
+    feet, supports, dusts = _plan(fx, fz, axis)
     for x, y, z in supports:
         blocks.append((x, y, z, CB))
         solid[(x, z)] = ("cobble", net)
@@ -1328,11 +1350,12 @@ def layout(recipe, seed=None, grow=0, reserve=False):
         return gone
     fails = {}
     netfails = {}  # net -> total failed searches, across every blocker set
-    bridged = set()  # (fx, fz, axis) already hopped; never retry
+    bridged = set()  # (fx, fz, axis, tall) already hopped; never retry
     def try_bridge(s, t, net):
         # ponytail: last-resort hop over sealing dust with one pre-proven
         # bridge, then two 2D segments (no 3D search). Green builds never
         # reach here, so their routes are unchanged. Cap 24 hops per build.
+        # Short (y=3) first, tall (y=4) only where short seals.
         if len(bridged) >= 24 or s is None or t is None:
             return False
         cands = []
@@ -1354,14 +1377,22 @@ def layout(recipe, seed=None, grow=0, reserve=False):
         cands.sort(key=lambda p: ((p[0], 1, p[1]) not in placed,
                                   abs(p[0] - s[0]) + abs(p[1] - s[1]) + abs(p[0] - t[0]) + abs(p[1] - t[1]), p))
         prefer = ("ew", "ns") if abs(s[0] - t[0]) >= abs(s[1] - t[1]) else ("ns", "ew")
-        for fx, fz in cands[:8]:
-            for axis in prefer:
-                if (fx, fz, axis) in bridged:
-                    continue
-                if not bridge_free(wires, solid, repeaters, guard, W, D, fx, fz, axis, net, cond=cond):
-                    continue
-                feet = bridge_stamp(blocks, solid, wires, rings, placed, net, fx, fz, axis)
-                _sup, _dst = bridge_plan(fx, fz, axis)[1:]
+        for _tall in (False, True):
+            for fx, fz in cands[:8]:
+                for axis in prefer:
+                    if (fx, fz, axis, _tall) in bridged:
+                        continue
+                    if not bridge_free(wires, solid, repeaters, guard, W, D, fx, fz, axis, net, cond=cond, tall=_tall):
+                        continue
+                    feet = bridge_stamp(blocks, solid, wires, rings, placed, net, fx, fz, axis, tall=_tall)
+                    _plan = bridge_plan_tall if _tall else bridge_plan
+                    _sup, _dst = _plan(fx, fz, axis)[1:]
+                    # ponytail: tall y>=2 supports may share a solid key with
+                    # tile cobble (short shapes never overwrite: center must be
+                    # empty, shoulders refuse solid). Snapshot so the unwind
+                    # below restores instead of deleting the tile's entry.
+                    _ssnap = {(_c[0], _c[2]): solid.get((_c[0], _c[2]))
+                              for _c in _sup}
                 cond.update(_sup)
                 condg.update(c for c in _sup if c[1] == 1)
                 fa, fb = sorted(feet, key=lambda f: abs(f[0] - s[0]) + abs(f[2] - s[1]))
@@ -1415,7 +1446,11 @@ def layout(recipe, seed=None, grow=0, reserve=False):
                         placed.discard(c)
                         aircells.discard(c)
                     for c in _sup:
-                        solid.pop((c[0], c[2]), None)
+                        _prev = _ssnap.get((c[0], c[2]))
+                        if _prev is None:
+                            solid.pop((c[0], c[2]), None)
+                        else:
+                            solid[(c[0], c[2])] = _prev
                         cond.discard(c)
                         if c[1] == 1:
                             condg.discard(c)
@@ -1428,7 +1463,7 @@ def layout(recipe, seed=None, grow=0, reserve=False):
                                 if not _r:
                                     del rings[(c[0] + dx, c[2] + dz)]
                     return False
-                bridged.add((fx, fz, axis))
+                bridged.add((fx, fz, axis, _tall))
                 try:
                     tasks.remove((s, t, net))
                 except ValueError:
@@ -1955,6 +1990,28 @@ if __name__ == "__main__":
                      {"out": "Bout", "op": "AND", "args": ["B", "B"]}]}
     _sv(_xr, _xb, _xio, quiet=True)
     print("bridge ok: ns hop crosses live wire, sim green both ways")
+    # ponytail: tall bridge template + live-fire (7-cell y=4 staircase).
+    # Same slope physics as the short hop, one level higher.
+    _tfeet, _tsup, _tdst = bridge_plan_tall(7, 5, "ns")
+    assert _tdst == [(7, 2, 3), (7, 3, 4), (7, 4, 5), (7, 3, 6), (7, 2, 7)], _tdst
+    assert _tsup == [(7, 1, 3), (7, 1, 7), (7, 2, 4), (7, 2, 6), (7, 3, 5)], _tsup
+    assert _tfeet == [(7, 1, 2), (7, 1, 8)], _tfeet
+    assert bridge_free({(7, 1, 5): "A"}, {}, {}, set(), 40, 40, 7, 5, "ns", "B",
+                       tall=True) is True
+    assert bridge_free({}, {}, {}, set(), 40, 40, 7, 5, "ns", "B", tall=True) is False
+    _tbl, _tso, _twi, _tri, _tpl = [], {}, {}, {}, set()
+    assert bridge_stamp(_tbl, _tso, _twi, _tri, _tpl, "B", 7, 5, "ns",
+                        tall=True) == [(7, 1, 2), (7, 1, 8)]
+    _txb = [(2, 1, 5, "minecraft:lever")] + [(x, 1, 5, _W) for x in range(3, 10)] + [(10, 1, 5, "minecraft:redstone_lamp")]
+    _txb += [(7, 1, 1, "minecraft:lever"), (7, 1, 2, _W)]
+    for _c in _tsup:
+        _txb.append((_c[0], _c[1], _c[2], _CB))
+    for _c in _tdst:
+        _txb.append((_c[0], _c[1], _c[2], _W))
+    _txb += [(7, 1, 8, _W), (7, 1, 9, _W), (7, 1, 10, "minecraft:redstone_lamp")]
+    _txio = {"levers": {(2, 5): "A", (7, 1): "B"}, "lamps": {(10, 5): "Aout", (7, 10): "Bout"}, "nets": {}}
+    _sv(_xr, _txb, _txio, quiet=True)
+    print("bridge-tall ok: y=4 hop crosses live wire, sim green both ways")
     # ponytail: 3D Attempt 1 rules — support assert FIRES on a bad case, cover
     # accepts a pillar run and refuses a long pure-elevated one. No fixture:
     # hand-built cells, the same helpers route() uses.
