@@ -5,7 +5,7 @@ import os as _os
 import time as _time
 
 import snapshot
-from core import DIRS, base
+from core import DIRS, TORCH_BACK, base
 from layout import layout, dust_points
 from compose import compose
 from recipe import eval_gate, eval_net
@@ -800,7 +800,7 @@ def _parse_build(blocks, io):
             dust.add(c)
         elif b == "minecraft:redstone_wall_torch":
             face = bid.split("facing=")[1].rstrip("]") if "facing=" in bid else "east"
-            back = {"east": (-1, 0), "west": (1, 0), "south": (0, -1), "north": (0, 1)}[face]
+            back = TORCH_BACK[face]
             torch[c] = (c[0] + back[0], c[1], c[2] + back[1])
         elif b == "minecraft:redstone_torch":
             # ponytail: STANDING torch, added so other people's builds can be
@@ -896,8 +896,7 @@ def _parse_build(blocks, io):
                 _face = bid.split("face=")[1].split(",")[0]
                 _facing = bid.split("facing=")[1].split(",")[0]
                 if _face == "wall":
-                    _back = {"east": (-1, 0), "west": (1, 0),
-                             "south": (0, -1), "north": (0, 1)}[_facing]
+                    _back = TORCH_BACK[_facing]
                     leveratt[c] = (c[0] + _back[0], c[1], c[2] + _back[1])
                 elif _face == "floor":
                     leveratt[c] = (c[0], c[1] - 1, c[2])

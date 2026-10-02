@@ -79,14 +79,6 @@ def _src3(blocks):
             or _slab_double(bid)}
 
 
-def _ig3(blocks):
-    """Hand glass/slab cells (3D). Router-blind support/insulation the search
-    may reuse (never stamp: stamping into one is a two-blocks-one-cell
-    paste collision, caught loud by finish_assembly's duplicate check)."""
-    return {(x, y, z) for x, y, z, bid in blocks
-            if base(bid) == "minecraft:glass" or base(bid) in _SLAB_BIDS}
-
-
 def _sup3(blocks):
     return {(x, y, z) for x, y, z, bid in blocks
             if base(bid) in ("minecraft:cobblestone", "minecraft:stone",
@@ -156,21 +148,17 @@ def wire_bid(cell, dust, targets=frozenset()):
         f"{_DIRNAME[d]}={'side' if d in pts else 'none'}" for d in DIRS) + ",power=0]"
 
 
-def _support(cell, net, solid, wires, sup, reps, guard, reuse=frozenset()):
-    """Support under an off-ground (y>=2 or y<=0) wire cell: None=reuse,
-    (x,y,z)=stamp once, False=infeasible. Never share foreign pillars (no
-    refcounting), never reuse torch-attached cobble (dust powers it, flips
-    the tile torch), never bury dust/diodes, never pillar directly under
-    foreign dust (that would create a link the search never assumed).
+def _support(cell, net, solid, wires, sup, reps, guard):
+    """Support under an off-ground (y>=2 or y<=0) wire cell: None=the cell
+    already rests on something, (x,y,z)=stamp once, False=infeasible. Never
+    share foreign pillars (no refcounting), never reuse torch-attached cobble
+    (dust powers it, flips the tile torch), never bury dust/diodes, never
+    pillar directly under foreign dust (that would create a link the search
+    never assumed).
 
     y==1 is the surface: it rests on the world, so no support. Above and
     below it alike, a wire needs a real block under it — which is what lets
     a route trench downward when the ground above is saturated.
-
-    reuse: hand glass/slab cells (ownerless insulation). Reusing one stamps
-    nothing, so a route can slope onto hand glass without burying it.
-    Ownerless is what makes sharing safe (foreign cobble can be powered;
-    glass never can). Empty by default: identical behavior.
     """
     x, y, z = cell
     if y == 1:
@@ -189,8 +177,6 @@ def _support(cell, net, solid, wires, sup, reps, guard, reuse=frozenset()):
     w = wires.get((b[0], b[1] + 1, b[2]))
     if w is not None and w != net:
         return False
-    if b in reuse:
-        return None
     return b
 
 
@@ -307,7 +293,7 @@ def _torch_hosts(blocks):
         if base(bid) != "minecraft:redstone_wall_torch":
             continue
         f = bid.split("facing=")[1].rstrip("]") if "facing=" in bid else "east"
-        back = {"east": (-1, 0), "west": (1, 0), "south": (0, -1), "north": (0, 1)}[f]
+        back = TORCH_BACK[f]
         hosts[(x + back[0], y, z + back[1])] = (x, y, z)
     return hosts
 
@@ -475,16 +461,13 @@ def _has_support(cell, sup, solid):
     return solid.get((b[0], b[2]), (None,))[0] == "cobble"
 
 
-def astar(starts, goal, net, W, D, solid, rings, wires, junctions, margin=None, blocked=None, congest=None, guard=None, sup=None, reps=None, cob3=None, flat_only=False, aircells=frozenset(), ymin=None, ymax=None, reuse=frozenset(), ig=frozenset()):
+def astar(starts, goal, net, W, D, solid, rings, wires, junctions, margin=None, blocked=None, congest=None, guard=None, sup=None, reps=None, cob3=None, flat_only=False, aircells=frozenset(), ymin=None, ymax=None):
     """6-dir maze route for one wire (multi-source: fanout taps nearest own wire).
     None if blocked (loud fail, never silent wrong). Cells are (x, y, z),
     y in 1.._H; starts/goal are y=1 tile ports. Guards are per-level: y=1
     keeps solid/ring/torch-hug rules, y>=2 ignores tile columns (overflight)
     and couples only via true slope links (support + no lid, sim's rule).
-    Supports are feasibility-checked here, stamped once by route().
-    reuse/ig: hand glass/slab cells — reusable as supports (ownerless, never
-    stamped), never occupiable (a wire inside one is a paste collision).
-    Empty by default: identical behavior."""
+    Supports are feasibility-checked here, stamped once by route()."""
     if sup is None:
         sup = {}
     # per-call vertical envelope: the maze keeps its verified y=1.._H band
@@ -541,7 +524,6 @@ def astar(starts, goal, net, W, D, solid, rings, wires, junctions, margin=None, 
     # same-level neighbours (+8 slope partners when elevated dust exists)
     # instead of every candidate probing 12 neighbours. Per search: ~1.3k
     # cheap ops instead of 12.8k x ~6 dict.gets (was 63M gets on alu1).
-    _XCHECK = _os.environ.get("REDSTONE_XCHECK") == "1"
     forb, fwire = _coupling_forb(wires, net, starts, goal, junctions, cob, air,
                                  (x0, x1, z0, z1))
     def lid(cell):
@@ -573,9 +555,6 @@ def astar(starts, goal, net, W, D, solid, rings, wires, junctions, margin=None, 
             return False
         if cell == goal:
             return True
-        if cell in ig:
-            return False  # hand glass/slab: reusable as support, never
-                          # occupiable (two blocks, one cell, corrupt paste).
         if wg2(cell) not in (None, net):
             return False
         if y == 1:
@@ -588,12 +567,6 @@ def astar(starts, goal, net, W, D, solid, rings, wires, junctions, margin=None, 
             return False  # inside a pillar (tile/bridge/stamped): no dust here
         return True
 
-    def _unused_ok_reference(cell):
-        x, y, z = cell
-        if not (x0 <= x <= x1 and z0 <= z <= z1 and ymin <= y <= ymax):
-            return False
-        if cell == goal:
-            return True
         if cell in wires and wires[cell] != net:
             return False
         if y == 1:
@@ -610,54 +583,6 @@ def astar(starts, goal, net, W, D, solid, rings, wires, junctions, margin=None, 
         elif cell in cob:
             return False
         return True
-    def _unused_touches_foreign_reference(cell, prev):
-        # same-y side touch couples; diagonal +-1 couples only via a true
-        # slope link (support under upper + no lid over lower). Stacked or
-        # unsupported y-adjacency never links, so overflight stays legal.
-        # Hot path (millions of calls): local refs, no generators.
-        x, y, z = cell
-        wg = wires.get
-        jn = junctions
-        up = y > 1 or (air and (x, z) in airstrip)   # any vertical coupling left?
-        for dx, dz in DIRS:
-            m = (x + dx, y, z + dz)
-            if m != prev and m not in starts:
-                w = wg(m)          # cheap first: no foreign dust, no junction work
-                if w is not None and w != net:
-                    j = jn.get((m[0], m[2]))
-                    if not (j and net in j):   # OR junction: wired-OR is the gate
-                        if blocked is not None:
-                            if y == 1:
-                                # blame the ring, exactly as the 2D code did:
-                                # a closed loop far from the goal seals just as
-                                # dead as a wall on the goal itself.
-                                for dx2, dz2 in DIRS:
-                                    k = (m[0] + dx2, 1, m[2] + dz2)
-                                    if k != cell and k in wires and wires[k] != net:
-                                        blocked.add(k)
-                            else:
-                                blocked.add(m)
-                        return True
-            if not up:
-                continue
-            for dy in (1, -1):
-                f = (x + dx, y + dy, z + dz)
-                if f == prev or f in starts or f == goal:
-                    continue
-                w = wg(f)
-                if w is None or w == net:
-                    continue
-                if dy == 1:
-                    if (f[0], f[1] - 1, f[2]) in cob and (x, y + 1, z) not in cob:
-                        if blocked is not None:
-                            blocked.add(f)
-                        return True
-                elif y > 1 and (f[0], y, f[2]) not in cob:
-                    # support below own cell is guaranteed by move legality
-                    if blocked is not None:
-                        blocked.add(f)
-                    return True
-        return False
     open_h = [(abs(s[0] - goal[0]) + abs(s[2] - goal[2]), 0, s, s, None) for s in starts]
     heapq.heapify(open_h)
     came, cost = {s: None for s in starts}, {s: 0 for s in starts}
@@ -679,32 +604,23 @@ def astar(starts, goal, net, W, D, solid, rings, wires, junctions, margin=None, 
             dns = () if (flat_only or y <= ymin) else (((x + dx, y - 1, z + dz), _STEPCOST),)
             for m, step in (((x + dx, y, z + dz), 1),) + ups + dns:
                 if not ok(m):
-                    if _XCHECK and ok(m) is not _unused_ok_reference(m):
-                        raise AssertionError(f"hard-set merge differs at {m}")
                     continue
                 mx, my, mz = m
                 if my != y:
                     # level change: support under the upper endpoint (stamped
                     # once by route(), never during search) + lid over the
                     # lower endpoint clear, else the slope never conducts.
-                    if my != 1 and _support(m, net, solid, wires, sup, reps, guard, reuse) is False:
+                    if my != 1 and _support(m, net, solid, wires, sup, reps, guard) is False:
                         continue
                     lo = cell if my > y else m
                     if lid((lo[0], lo[1] + 1, lo[2])):
                         continue
-                elif my != 1 and _support(m, net, solid, wires, sup, reps, guard, reuse) is False:
+                elif my != 1 and _support(m, net, solid, wires, sup, reps, guard) is False:
                     continue
                 if m == goal and (m[0], m[2]) in junctions and net in junctions[(m[0], m[2])]:
                     pass  # OR junction: wired-OR is the gate
                 else:
                     _tf = m in forb
-                    if _XCHECK and _tf is not _unused_touches_foreign_reference(m, cell):
-                        # Set REDSTONE_XCHECK=1 to run the old predicate beside
-                        # the hoisted one on every candidate (it caught three
-                        # inversion bugs: the support cell, the candidate's y,
-                        # and that the junction gate reads the FOREIGN column).
-                        # Keep it green when touching `forb` or this test.
-                        raise AssertionError(f"forb inversion differs at {m}")
                     if _tf:
                         if blocked is not None:
                             for dx, dz in DIRS:
