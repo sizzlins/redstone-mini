@@ -2117,3 +2117,56 @@ User: preview IN/OUT broken; did the .schem update? Both real:
   morning report softened to per-run verification, which is what
   actually gates). Restaged + hash-matched (D747DA35).
   Correction method for the future: compare hashes, never assume.
+
+## Night 2026-10-04 (1): genetic adder — deterministic beat evolution
+
+evo_add2 stalled at eval 40/100 (6707 blocks, 17 gates). The stall was
+not the search being weak, it was the search being asked a question
+algebra already answers. best.txt was carrying pure rewrite fat:
+
+    x0 = A0 XOR B0
+    x0_eb = NOT x0        <- double inverter, zero loads elsewhere
+    x0_eb2 = NOT x0_eb    <- ditto
+    S0 = x0_eb2 AND x0_eb2   <- buffer of a buffer of a buffer
+    dead1/2/3 = ...           <- a dead chain op_dead can only peel
+                                one layer per random draw
+
+Six mutation operators churn for exactly this. Added op_simplify: three
+exact rules to fixpoint (X AND X / X OR X -> X; NOT NOT X -> X where
+the inner NOT feeds nothing else; iterative dead sweep). Output gates
+are never deleted (nothing would produce them) -- which is why the fat
+hid in the first place, and why the double-NOT fold eating the
+inverters *underneath* S0 is what actually pays.
+
+    17 gates -> 8 gates, 6707 -> 4648 blocks (-31%)
+
+Hand-written add2 is 8083, so the GA's own best was already past it and
+still 31% fat. Verified: exhaustive 16/16 truth table vs the stalled
+best, then compose + full sim_verify green, all 16 vectors, 7 seconds
+total. Textbook ripple-carry adder: sum bits are XOR/half-adder, carry
+is the OR of generate and propagate. evolve's fitness gate would have
+found this in tens of evals if the operators hadn't been spending their
+draws on re-deriving it.
+
+GA runner made faster/less dumb (all in scratch/evolve.py):
+- pinned-rung first. Mutants are one gate from best, so best's rung
+  routes them in seconds; full ladder only on failure. Records how='pinned'
+  vs 'full' per eval, so the win rate is measured, not hoped for.
+- memo is now engine-fingerprinted (sha over sim/simvec/compose/recipe/
+  tiles/layout). A stale memo used to promote pre-lock 'ok' entries
+  under locking physics -- a wrong build ships that way. Stale memos
+  are dropped whole, never merged.
+- resume reads best.txt BEFORE overwriting it, and only trusts it after
+  an exhaustive equiv check + a paid fitness run.
+- eval budget 420s -> 180s per child (deadline is honored by compose, so
+  hard rungs fail fast instead of eating the wall clock).
+
+selftest: op_simplify must shrink known fat, keep the truth table, keep
+outputs, and be idempotent. Runs on every evolve.py invocation.
+
+Honest note on the wasted 40 evals: 17 -> 8 gates is a 53% cut, which
+means the stalled run had ~9 gates of provably-dead weight it never
+found in 40 draws, and eval 40 was still improving. The gate-count
+metric was misleading me: it optimizes mutations, not the artifact. The
+simplifier is the actual fix; more evals would have found the same thing
+eventually, just later and at 4-core burn.
