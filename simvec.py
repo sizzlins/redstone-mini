@@ -119,6 +119,9 @@ def _tables_from(P, inp):
     # ---- cobble: weak power, strong power ------------------------------
     # ponytail: loop runs over pwr (cobble/stone + slabs); glass never holds
     # power so it needs no row. Empty delta when slabs are absent.
+    # ponytail: below-feeds mirror sim cob_state (torch/dust beneath powers
+    # solid; see sim.py). Below-dust carries no pointing condition, same as
+    # sim; torch/rblk/lever keep their same-y conditions.
     c_dust, c_rep, c_torch, c_lev, c_rblk, c_up = {}, {}, {}, {}, {}, {}
     for c in pwr:
         x, y, z = c
@@ -137,6 +140,16 @@ def _tables_from(P, inp):
                 ll.append(lever[m])
             if m in rblk:
                 rblk_side = True
+        dn = (x, y - 1, z)
+        if dn in dust:
+            dd.append(dn)
+        if dn in torch and torch[dn] != c:
+            tt.append(dn)
+        if dn in rblk:
+            rblk_side = True
+        if (dn in lever and _LEVPOW
+                and leveratt.get(dn) in (None, c)):
+            ll.append(lever[dn])
         c_dust[c], c_rep[c], c_torch[c], c_lev[c] = dd, rr, tt, ll
         c_rblk[c] = rblk_side
         up = (x, y + 1, z)

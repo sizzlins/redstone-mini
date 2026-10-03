@@ -1848,3 +1848,11 @@ T1/T3/T4 mismatches and T2a/b/c correct.
   property-less repeaters are all intended-north = defaults match),
   stale power in schem (palette is all power_0/powered=false/lit=true),
   chunk loading (2375 forceloaded, schedules advance at full 20tps).
+
+### simvec mirror + ref freeze (same session)
+
+`simvec.py` tables mirror the below-feeds (`c_dust/c_torch/c_lev/c_rblk`
+gain below-neighbour rows; repeater/comparator cannot face up, so no
+new rows there). `diff_engine` is ALL IDENTICAL across ref/live/scalar
+afterwards. `scratch/ref_sim.py` re-frozen via `mkref.py` (the +19 is
+exactly the cob_state hunk).
