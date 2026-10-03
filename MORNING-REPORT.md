@@ -72,6 +72,26 @@ documented load-bearing — gate count (GA) is the lever, not tiles.
 - `c9bfbaf` cpu4 log (this report's work; engine untouched tonight
   apart from the two sim commits)
 
+## Evening addendum (same session, pre-paste)
+
+- **alu1 repaired the same way:** 3 torch-pillars -> `scratch/alu1glass.pkl`,
+  sim 32/32 x3 runs, block count identical (13300), exported
+  `build_alu1glass.*`. Full nonhier suite 6/7 green (all counts match the
+  handoff record); alu1's suite-RED is the fixed sim working as a
+  detector, not a regression.
+- **Insulation generalized:** `scratch/pillars.py:insulate()` (any pkl;
+  y>=2 only, no attached torches — blanket swaps break tile attaches
+  and slope conduction, measured).
+- **GA hardened + running:** parallel batched evals (4 direct children,
+  deadlines, memo, low priority), `op_factor` added, SOP adders proven
+  unroutable in 10 min (start near-routable). `add2fat` 100-eval run in
+  flight (detached).
+- **Readability:** per-net floor quilt (20,566 pads) + 15 wool markers
+  exported and installed as `build.schem` (old bank preserved).
+- **Sim determinism:** 160+ identical T1/T3 runs; one unreproduced
+  outlier stands with a re-run-reds-3x policy.
+- Tree: sim/simvec/ref/export/LOG/MORNING-REPORT committed (5 commits
+  today); working tree clean apart from the two pre-existing `.bak`s.
 Scratch tooling added (all gitignored, kept): hier_retry, evolve,
 regiondiff/mapdump/levercheck/loophunt/diodeloop/liveloop/simexact/
 latchtest/maxima/explain/finaldiv/vcontact/traceback_y2/mapfirst,
