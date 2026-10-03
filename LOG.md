@@ -1865,3 +1865,18 @@ colors for inputs/outputs, hash for the rest) + 15 labeled wool marker
 columns. Sim/router untouched (recolor is post-compose; router never sees
 wool). Preview COLORS +16 wool. In-game auto-suite is the physics gate
 for the recolored build.
+
+## Overnight: cpu4 GREEN 128/128 via combination-aware retry (same session)
+
+cpu4's Y2 ghost reproduced under the fixed sim with fresh bands (all 10
+green per-band in 92s, merge 105,080 blocks, SMOKE 0101010 MISMATCH Y2).
+New tool `scratch/hier_retry.py`: on merge smoke mismatch, map failing
+outputs to fanin bands (gate-arg closure), skip their cached rungs via
+HIER_SKIP, re-climb, re-stitch, re-smoke (bounded iters, hang-safe).
+First retry round (7 Y2-fanin bands re-climbed) merged 129,953 blocks
+with 4/4 smokes green; full `verify_par` then 128/128 green (~9 min).
+Exported `build_cpu4retry.{schem,mcfunction,html}` (7 levers, one column
+x=3 z=3..63). Lesson: the ladder optimizes bands standalone but
+correctness lives in the combination — retry must too. Lesson 2: the
+fixed sim's below-feeds didn't move cpu4's geometry (bands re-climbed
+identically green); the fault was purely combinational rung choice.
