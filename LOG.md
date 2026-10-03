@@ -1880,3 +1880,18 @@ x=3 z=3..63). Lesson: the ladder optimizes bands standalone but
 correctness lives in the combination — retry must too. Lesson 2: the
 fixed sim's below-feeds didn't move cpu4's geometry (bands re-climbed
 identically green); the fault was purely combinational rung choice.
+
+### GA superoptimizer parallel + adder run (same session)
+
+`scratch/evolve.py`: netlist mutations (buffer/dedup/dead/rebind/unshare/
+factor) with exhaustive equiv gate + compose/verify fitness. Hardened for
+speed: memo dict (sha256, survives restarts), batched parallel evals (4
+direct non-daemon children like hier_bands, hard deadlines, low priority
+so the game stays playable), hillclimb-from-best with elitism. PoC:
+pessimize mux2 (14 gates) recovered 13311->5387 = exactly the known
+optimum (dedup fired). Notable: rebind/dedup mutants often pass equiv
+but fail sim (shared-nS, band moves change physics, not logic) — the
+two-stage gate earns its keep; equiv is necessary, never sufficient.
+SOP-form adder (91-gate minterm mesh) does NOT route in 10 min: starting
+points must be near-routable. Queued: add2fat (19 gates, equiv-proven)
+100-eval run detached.
