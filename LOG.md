@@ -1779,3 +1779,72 @@ Evidence added for this rewrite, since two of the three engine fixes live in
 So the `lwire` guards and the `_landed` repeater-direction fix moved nobody
 else's geometry. New bounded tool: `scratch/nonhier_suite.py` (one killable
 child per recipe, per-recipe cap).
+## 2026-10-03 day session: in-game paste test finds a real sim gap (fixed)
+
+Pasted `build_alu4bank.schem` (verified hash `837113a0`, 60,724 cells) into
+a fresh world via WorldEdit, force-loaded the footprint with a datapack
+function (`/function alu4:load`, 2375 chunks; one command covers max 256,
+so 10 strips — block coords, not chunk coords), lever column left-to-right
+B0 A0 B1 A1 B2 A2 OP1 OP0 B3 A3, lamps teleported. Full automation built
+along the way: datapack auto-suite (lever set/read/probe/schedule chains,
+results to chat log which is machine-readable), `scratch/gen_pack.py`
+regenerates the whole pack for any paste origin, `scratch/regiondiff.py`
++ `scratch/mapdump.py` + `scratch/levercheck.py` diff on-disk block
+states vs sim (nbtlib region parsing).
+
+### Finding: Y2 stuck lit with all inputs off, stable for hours
+
+T1 (all off) reads Y=0001 in game, sim said 0000. T3 (1+1 ADD) reads
+Y1+Y2+COUT, T4 (5+3 ADD) reads Y3+COUT; T2a/b/c all correct. Bisected
+in game (wire-power probes) and on disk (region diff, 1824 divergences):
+whole runs hot with dark inputs (C2 842/903 cells, OP1, S2, m22, t22,
+o22, Y2, A3B3 380/614, C4); everything downstream conducts correctly.
+
+### Root cause: cob_state/pbs had no below-neighbour terms
+
+`cob_state` (sim.py) derived solid power from same-y neighbours and dust
+above only — never from directly below. Vanilla powers solids from below
+(torch strongly powers the block above it; dust powers the block beneath
+it). Every torch-topped pillar (the 3D flights stamp them everywhere)
+reads dark in sim, lit in vanilla; dust on top follows. Elevated-only
+fault, which is why no flat build ever tripped it.
+
+### Fix (sim.py +31, canary `pillar-feed ok`)
+
+Below-terms in `cob_state`: dust below (weak), torch below (strong,
+same host exception), redstone block below (strong), lever below (via
+attachment). Standing-torch-below and repeater/comparator-below excluded
+(attach / cannot face up).
+
+Gates: sim.py suite green (canary fails pre-fix, passes post-fix, both
+measured); diff_engine diverges ONLY on the alu4 bank vectors (Y2 now
+lit, matching the game); small builds bit-identical; simvec agrees
+(no scalar mismatches, no simvec change needed); compose/recipe/layout
+suites green; nonhier geometry untouched (compose-side, unaffected).
+
+Post-fix sim reproduces all 8 in-game vectors lamp-for-lamp, including
+T1/T3/T4 mismatches and T2a/b/c correct.
+
+### Deliberately NOT done (needs direction)
+
+- No commit (not requested). Tree: `M sim.py` only. ref_sim NOT
+  re-frozen (run `scratch/mkref.py` after committing a physics change).
+- The BUILD is still wrong in game (Y2 fault stands in the pasted
+  schematic). Fixing it means re-routing bank/gate runs off
+  torch-topped pillars (or insulating), re-compose, re-verify green
+  in sim, re-export, re-paste, in-game auto-verify. Separate phase.
+- `scratch/` gained probe tooling (gen_pack, gen_snap, regiondiff,
+  mapdump, levercheck, loophunt, diodeloop, liveloop, simexact,
+  latchtest, maxima, explain, finaldiv, vcontact, traceback, mapfirst,
+  clean_pack, mkcanary, gen_flick). All gitignored; keep the six that
+  matter (gen_pack, regiondiff/mapdump/levercheck, verify_par,
+  diff_engine, nonhier_suite) when pruning.
+- Dead ends recorded: repeater-locking (no side cells anywhere on the
+  fault paths), comparator modes (all subtract, modeled + oracled),
+  torch burnout (relight + full torch replacement both leave Y2 lit;
+  not the mechanism), bistable loops (zero torch cycles full-build,
+  even with slope edges; sim drains from full-hot seed in 353 ticks),
+  paste gaps (presence/facing verified for all 3862 devices; the 629
+  property-less repeaters are all intended-north = defaults match),
+  stale power in schem (palette is all power_0/powered=false/lit=true),
+  chunk loading (2375 forceloaded, schedules advance at full 20tps).

@@ -393,6 +393,25 @@ def _run_vec(vec, init, ctx, until=None, target_hits=None):
         up = (c[0], c[1] + 1, c[2])
         if up in dust and pw.get(up, 0) >= 1:
             pwrd = True
+        # ponytail: feeds from directly below (wiki: a torch strongly
+        # powers the block above it; dust powers the block beneath it).
+        # Missing this made dust-on-pillar-over-torch read dark while
+        # vanilla lit it (measured: alu4 bank, OP1 row over a lit NOT
+        # torch stayed dark in sim with Y2 stuck lit in game). Weak for
+        # dust (no shape condition, like dust-on-top above), strong for
+        # torch (same host exception), strong for redstone block; lever
+        # only via its attachment; repeaters/comparators cannot face up.
+        dn = (c[0], c[1] - 1, c[2])
+        if dn in dust and pw.get(dn, 0) >= 1:
+            pwrd = True
+        if dn in torch and tl.get(dn, False) and torch[dn] != c:
+            pwrd, strong = True, True
+        if dn in rblk:
+            pwrd, strong = True, True
+        if (dn in lever and vec.get(lever[dn], False)
+                and _os.environ.get("REDSTONE_LEVER_POWER", "1") == "1"
+                and (leveratt.get(dn) is None or leveratt.get(dn) == c)):
+            pwrd, strong = True, True
         return pwrd, strong
 
     def rep_on(c):
@@ -1558,6 +1577,18 @@ if __name__ == "__main__":
     assert _pw4.get((2, 2, 0), 0) == 0, "host block of a torch stays dark"
     assert _pw4.get((0, 2, 0), 0) == 15, "neighbour block of a torch lights"
     print("lamp-sources ok: top dust, powered block, free torch, lever-pedestal")
+    # ponytail: dust on a pillar over a lit torch reads lit (below-feed).
+    # cob_state had no below-neighbour terms, so support power from a
+    # torch (or dust) underneath was invisible: alu4's bank rows over
+    # lit NOT torches stayed dark in sim with Y2 stuck lit in game.
+    # Pillar (0,1,0) stands on torch (0,0,0) (sim models no gravity);
+    # the torch strongly powers the block above it, dust reads 15.
+    _pb = [(0, 0, 0, "minecraft:redstone_torch"),
+           (0, 1, 0, CB), (0, 2, 0, W_)]
+    _pp, _ = _hand(_pb, {}, {})
+    _pw6 = _run_vec({}, None, _pp)[1]
+    assert _pw6.get((0, 2, 0), 0) == 15, "dust above a torch-powered pillar lights"
+    print("pillar-feed ok: dust on torch-powered pillar reads lit")
     _sb = [(2, 1, 0, "minecraft:lever"), (1, 1, 0, W_),
            (0, 1, 0, CMP + "[facing=east,mode=subtract]"),
            (0, 1, 1, W_), (0, 1, 2, "minecraft:lever"),
