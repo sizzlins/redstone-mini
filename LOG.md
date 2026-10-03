@@ -2048,6 +2048,34 @@ not decoration. stack3d vias already keep foreign dust off diode
 sides (clear()); same-net side dust self-follows (settles +1 tick,
 verified). No new exposure class.
 
+## Night 2026-10-03: bridges beat detours (router cost, user ask)
+
+User: make a bridge cheaper than long wires. Was true: lwire ranked
+flat corridors by seals then length, so a 200-cell clean detour beat
+a 20-cell corridor needing 2 hops (bridges only fired on failure).
+Fix (compose.py only): _score_cells returns (fatals, hops, eff) with
+eff = len + 2*hops (a hop costs ~flat+marginal); candidates sort by
+(fatal, eff, L-first); fast-path perfect check is fatal==hops==0
+(same winner guaranteed: Ls are Manhattan-minimal). Open-field
+scoring is byte-identical (no seals: eff==len).
+
+Gates: compose self-checks green; 4 small bit-identical
+(144/322/224/214); micro1 2925 + ctrl_decode 5499 green identical.
+alu1 suite RED as before (pillar fault) but changed SHAPE
+(sim-mismatch x-vectors -> compose no-ground on one seed): blame-
+restart is order-sensitive, new order explores a new trajectory.
+NOT a regression (never green flat; glass repair path intact --
+alu1glass re-verify queued below). Compose geometry is hash-seeded
+nondeterministic across processes anyway (268 vs 324 measured).
+
+GA add2fat found DEAD at eval 40/100 (out tail 18:33, empty .err,
+no python alive 23:48): silent death ~5h ago, cause unknown (OOM?
+host sleep? NOT restarted: midnight CPU burn while user is on the
+machine + memo staleness under locking sim needs a look first --
+memo keys netlist hash; pre-lock fitness entries may be stale).
+Resume cmd: `python scratch/evolve.py scratch/add2fat.txt
+scratch/evo_add2 100 2` (memo.json resumes). Queued for direction.
+
 ## Evening 2026-10-03 (2): stacked preview IO + schem restage
 
 User: preview IN/OUT broken; did the .schem update? Both real:

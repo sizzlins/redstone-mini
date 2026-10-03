@@ -130,19 +130,35 @@ def _sealed(ctx, x, z, net, ownset, near_end):
 
 
 def _score_cells(ctx, cells, net, avoid, a, b):
-    """Precheck cost of one corridor (0 = perfect). Factored out of
-    _candidates so lwire's fast path can score just the L-paths."""
+    """Precheck cost of one corridor: (fatals, hops, effective length).
+
+    A hop-able seal (foreign wire underfoot: _walk hops it with the
+    proven 5-cell bridge) costs HOP_PENALTY extra cells, not a lost
+    corridor -- so a short hop through beats a long clean detour
+    (measured want: 20 cells + 2 hops must beat 200 clean cells).
+    Fatals (solids, rings, foreign repeaters, avoid-list) still lose
+    outright. Factored out of _candidates so lwire's fast path can
+    score just the L-paths."""
+    # ponytail: HOP_PENALTY=2 prices a bridge at ~flat (5 bridge cells
+    # replace ~5 path cells + supports: marginal, not free). It only
+    # breaks seal-ties in favor of short hops; open-field scoring is
+    # identical (no seals: eff == len), so green geometry never moves
+    # for lack of a wall to hop.
     ownset = {(c[0], c[2]) for c in cells} | {a, b}
-    bad = 0
+    fatal, hops = 0, 0
     # near_end exempts a cell from needing clearance around foreign wires.
     # Only the port cell itself may do that: a port genuinely lives inside
     # a tile's wire neighbourhood, but the outbound run must not hug —
     # the 3-cell window let parallel input stubs run one cell apart down
     # the port row and die on a touch (alu4 B3/A1 at y=1, z=7).
     for i, (x, _, z) in enumerate(cells):
-        bad += _sealed(ctx, x, z, net, ownset, i < 1 or i >= len(cells) - 1)
-    bad += sum(100 for (x, _, z) in cells if (x, z) in avoid)
-    return bad
+        s = _sealed(ctx, x, z, net, ownset, i < 1 or i >= len(cells) - 1)
+        if s >= 100:
+            fatal += 1
+        elif s:
+            hops += 1
+    fatal += sum(1 for (x, _, z) in cells if (x, z) in avoid)
+    return (fatal, hops, len(cells) + 2 * hops)
 
 
 def _candidates(ctx, a, b, net, avoid):
@@ -153,8 +169,10 @@ def _candidates(ctx, a, b, net, avoid):
     # parallel corridors u rows north/south of the load row for jogs whose
     # own row is sealed (input E-W jogs through the top tile band: B's
     # (-7,16)->(159,16) march). Bounded (2 + 24 + 12), deterministic; the
-    # single winner walks (loud on surprise). Longer detours lose ties
-    # (sort keys bad, then L, then len), so open corridors keep cands[0].
+    # single winner walks (loud on surprise). Effective length breaks
+    # seal-ties: a corridor needing 2 hops (eff len+4) beats a clean
+    # detour twice its length, so bridges win over sprawl. Fatals still
+    # lose outright; open corridors keep cands[0] bit-identically.
     zc, xc = _path_cells(a, b, True), _path_cells(a, b, False)
     cands = [("L", zc), ("L", xc)]
     for k in range(1, 7):
@@ -174,9 +192,9 @@ def _candidates(ctx, a, b, net, avoid):
     for kind, cells in cands:
         if not cells:
             continue
-        bad = _score_cells(ctx, cells, net, avoid, a, b)
-        out.append((bad, len(cells), kind, cells))
-    out.sort(key=lambda t: (t[0], t[2] != "L", t[1]))
+        fatal, hops, eff = _score_cells(ctx, cells, net, avoid, a, b)
+        out.append((fatal, eff, kind, cells))
+    out.sort(key=lambda t: (t[0], t[1], t[2] != "L"))
     return [c for _, _, _, c in out]
 
 
@@ -194,11 +212,13 @@ def lwire(ctx, sup, guard, a, b, net, avoid=frozenset()):
     if not cands and (a == b or not os.environ.get("REDSTONE_NOFLAT")):
         return []  # already there: zero-length run
     # ponytail: fast path. Score just the 2 L-paths (O(2L), not O(38L)).
-    # A perfect L (bad=0) is GUARANTEED to be cands[0] under full scoring:
-    # nothing beats bad=0, and L wins every tie on kind. So if the best L
-    # is perfect and walks, the other 36 corridors could never have won —
-    # skip building and scoring them. If it fails to walk, or neither L is
-    # perfect, fall through to full scoring (identical behavior).
+    # A perfect L (fatal=0, hops=0) is GUARANTEED to be cands[0] under
+    # full scoring: nothing beats fatal=0, no corridor is shorter than
+    # Manhattan length, and L wins every remaining tie on kind. So if
+    # the best L is perfect and walks, the other 36 corridors could
+    # never have won — skip building and scoring them. If it fails to
+    # walk, or neither L is perfect, fall through to full scoring
+    # (identical behavior).
     # Big-O: per net, O(L) amortized in open field vs O(38L); dense fields
     # pay the full O(38L) exactly as before. No layout can change: the fast
     # path only fires when full scoring would have picked the same cells.
@@ -206,8 +226,8 @@ def lwire(ctx, sup, guard, a, b, net, avoid=frozenset()):
         _zc, _xc = _path_cells(a, b, True), _path_cells(a, b, False)
         _ls = [(c, _score_cells(ctx, c, net, avoid, a, b))
                for c in (_zc, _xc) if c]
-        _ls.sort(key=lambda t: (t[1], len(t[0])))
-        if _ls and _ls[0][1] == 0:
+        _ls.sort(key=lambda t: (t[1][0], t[1][2]))
+        if _ls and _ls[0][1][0] == 0 and _ls[0][1][1] == 0:
             _snap = (dict(ctx.wires), dict(sup), dict(ctx.sup),
                      dict(ctx.solid), len(ctx.blocks))
             try:
