@@ -13,7 +13,15 @@ COLORS = {"minecraft:stone": 0x8a8a8a, "minecraft:redstone_wire": 0xe02020,
           "minecraft:comparator": 0x9a8a7a, "minecraft:glass": 0xd8f0f0,
           "minecraft:target": 0xfffcf5, "minecraft:stone_slab": 0x9a9a9a,
           "minecraft:smooth_stone_slab": 0x9a9a9a,
-          "minecraft:cobblestone_slab": 0x7a7a7a}
+          "minecraft:cobblestone_slab": 0x7a7a7a,
+          "minecraft:white_wool": 0xe9ecec, "minecraft:orange_wool": 0xf07613,
+          "minecraft:magenta_wool": 0xbd44b3, "minecraft:light_blue_wool": 0x3aafd9,
+          "minecraft:yellow_wool": 0xf1af15, "minecraft:lime_wool": 0x70b919,
+          "minecraft:pink_wool": 0xed8dac, "minecraft:gray_wool": 0x3e4447,
+          "minecraft:light_gray_wool": 0x8e8e86, "minecraft:cyan_wool": 0x158991,
+          "minecraft:purple_wool": 0x792aac, "minecraft:blue_wool": 0x35399d,
+          "minecraft:brown_wool": 0x724728, "minecraft:green_wool": 0x546d1b,
+          "minecraft:red_wool": 0xa02722, "minecraft:black_wool": 0x181414}
 # ponytail: textures stream from the upstream asset pack at runtime, no PNGs in this repo.
 
 

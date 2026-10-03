@@ -1856,3 +1856,12 @@ gain below-neighbour rows; repeater/comparator cannot face up, so no
 new rows there). `diff_engine` is ALL IDENTICAL across ref/live/scalar
 afterwards. `scratch/ref_sim.py` re-frozen via `mkref.py` (the +19 is
 exactly the cob_state hunk).
+
+### color organization: per-net floor quilt + markers (same session)
+
+Course-style readability (redstone-university: colored wool per signal).
+`export_marked.py` recolors y=0 floor pads per net (20,566 pads, curated
+colors for inputs/outputs, hash for the rest) + 15 labeled wool marker
+columns. Sim/router untouched (recolor is post-compose; router never sees
+wool). Preview COLORS +16 wool. In-game auto-suite is the physics gate
+for the recolored build.
