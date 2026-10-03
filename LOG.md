@@ -1909,3 +1909,104 @@ bit-identical to the handoff record (example 144/322/224/214, micro1
 pillar class (repaired via glass, not a regression). Lesson: recolor
 (safe, post-compose) vs repillar (changes conduction, verify-gated)
 are different operations with different gates; never blanket-swap.
+
+## Overnight 2026-10-03/04: TRUE 3D TILE STACKING v1 (stack3d.py) — DONE
+
+DONE = true 3D tile stacking. Delivered: `stack3d.py` (new file, ~900
+lines, zero engine edits) + `build_stack3d.*` demo (gitignored outputs,
+regenerate: `PYTHONHASHSEED=0 python stack3d.py`, ~3 min).
+
+ASSUMPTIONS (per sleeping rules, logged not asked):
+- A1: DONE means a genuinely stacked build (two tiles sharing one
+  (x,z) footprint on different decks, signals crossing decks),
+  composed end-to-end by the pipeline and sim-verified green -- not a
+  full 2D->3D map migration (the ~140-site migration stays documented
+  in tiles.new_ctx; this is the deck post-pass rung below it).
+- A2: reference HDL repos skipped after a listing peek (all flat
+  compilers, no stacking pass); the in-repo hier pipeline + post-pass
+  is the mechanism.
+- A3: course priority = compact/stacked slices (user's redstone-
+  university note); wool color-coding stays OUT tonight (the marked
+  quilt already proved untestable: sim raises on wool).
+- A4: verify = sim_verify 8/8 on the merged build + engine suites
+  (compose/recipe/sim/export self-checks) + deterministic rerun
+  (PYTHONHASHSEED=0). No paste test possible overnight (needs hands).
+
+### Design (maps untouched; decks merge vertically as a post-pass)
+- Each deck composes FLAT via layout_retry(verify=True) (proven
+  regime); deck1 translates +5y over deck0's footprint; glass floor
+  plate at y=5 (transparent: conducts nothing, cuts nothing, floats
+  legally); boundary nets cross decks on staircase vias; sim gates all.
+- Deck pitch 5: lower decks top at y<=4, sim couples dy<=1 only, so
+  dy>=2 is parasitic-free by construction. Translation (never mirror:
+  preserves facings + dust shapes). Glass pillars for all via support
+  (inert; a cobble pillar beside foreign dust is a parasitic feed --
+  the engine verifies glass wire but never stamps it, compose.py:2337).
+- Vias: driver-region taps (sim-measured level-15 cells, not arbitrary
+  leg cells) -> y=1 leg -> fixed diagonal shaft (x+i,1+i, provably
+  stack-free) -> top booster (flat+repeater, fresh 15) -> y=6 leg ->
+  forced end diode INTO the ex-lever cell (B's leg then behaves exactly
+  as standalone with lever on) -> port-aligned translation (drivers
+  over feeds, not centers: 35-49 dust dead-on-arrival otherwise).
+  Periodic diodes every <=7 flats, straight-runs only (a corner diode
+  faces one branch and reads the other dark).
+- Feed points = ex-lever cells (unambiguous, one per boundary input);
+  B's tile-side runs kept whole (an earlier component-strip orphaned
+  the diode→junction continuation: diode firing into air).
+
+### Failures measured along the way (each a real rule now in code)
+1. Decay: 40-cell unboosted vias arrive dark (shaft top needs entry
+   >=7). Fix: taps at drivers + boosters (top mandatory, periodic,
+   forced end diode). Caught a real typo this way (rep z missing 2*:
+   every z-directed booster was a dud).
+2. Order landlock: first via's wall starves the second (6 starts, 0 of
+   166 shafts, both orders). Fix: longest+shortest order retries with
+   rebuilt state + 3x3 avoid columns around the other feed.
+3. Dust-on-dust stacking (leg above shaft, booster flat above shaft):
+   reserved sets + explicit pillar-on-path/self-stack rejections.
+4. Slope coupling: sim reads diagonal dust (cup/cdn) regardless of
+   lids on transparent supports -- clearance covers 8 vertical
+   diagonals + above, not just orthogonal.
+5. Dust-on-torch supports reused (occ-only rule): support-valid set
+   (mirrors sim._check_supports) gate.
+6. Diode severs: diodes planted on pre-existing nets face walk-dir and
+   cut loads behind (deck0 t lamp dark with driver lit). Air-only
+   paths (joins by adjacency at endpoints) + no diodes on B runs.
+7. Lamp arms: via dust hugging a lamp corner-blocks its arm (t lamp
+   dark at 13 on the arm). Vias keep 1 cell from every lamp block.
+8. Hairpins (leg doubling back over booster) + degenerate loops:
+   explicit rejects, next shaft.
+
+### Result
+`stack3d ok: 8/8 vectors` (FULL recipe t/c2/y), 2464 blocks, 122
+shared footprint columns, 2069 glass, 11 repeaters on vias. Decks
+overlap (asserted structurally, not side-by-side). Engine suites all
+green (compose lwire/compose/buffers, recipe xor/fanout/latch/gate,
+sim canary+tall-bridge+latch+lamp+burnout+ladder+budget, export pack).
+Deterministic under PYTHONHASHSEED=0 (compose geometry otherwise
+varies run to run: 268 vs 324 blocks measured on deck0).
+
+### Course mapping (redstone-university 09 ALU, verified read)
+- Dust staircase (vertical wire) = via shafts. Glass insulation
+  between floors = the plate. Bit-slices = BANDs (already).
+  Comparator-XOR = dual-subtract tiles (already).
+- Through-floor reads do NOT span pitch 5 passively (weak power
+  doesn't hop block-to-block; needs repeater zigzag): documented v2
+  direction (2-tall slices need redesigned tiles, not translated
+  flat ones), not attempted.
+- Compact/stacked tiles: v1 stacks flat-composed decks (course would
+  hand-design tighter slices; GA superoptimizer is the code lever).
+
+### TODO (ordered)
+1. Paste test (needs hands): `build_stack3d.schem` (952 B) -> tell me
+   B0 and I regen a `stack3d` datapack suite in 30 s (vec/readsay fns);
+   or hand-test 8 vectors (3 levers a/b/c, lamps t/c2 deck0 + y deck1).
+2. stack3d generality: demo-hardcoded SUB_A/SUB_B/FULL + boundary
+   ["t","c2"]; generalize to BAND partitions (alu1 4-deck stack is the
+   obvious next demo) once one paste test confirms vanilla parity.
+3. True map migration (tiles.new_ctx 2D->3D) remains the full fix;
+   stack3d is the v1 capability on top, not a replacement.
+4. wool==stone one-liner (sim.py:865) still open before any marked
+   (quilt) build pastes again.
+5. evo_add2 (add2fat 100-eval) was still running at session start;
+   check `done best=` before trusting old evo numbers.
