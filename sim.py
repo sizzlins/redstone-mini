@@ -1084,10 +1084,15 @@ def sim_verify(recipe, blocks, io, seed=7, quiet=False, collect=False):
     latchouts = {g["out"] for g in recipe["gates"] if g["op"] == "LATCH"}
     latchargs = {a for g in recipe["gates"] if g["op"] == "LATCH" for a in g["args"]}
     states = None
+    # ponytail: 3D io keys (stacked decks keep lamps at y!=1): 2-tuples
+    # mean y=1 as before, 3-tuples carry their level. Flat builds emit
+    # byte-identical keys either way.
+    def _iokey(k):
+        return f"{k[0]},1,{k[1]}" if len(k) == 2 else f"{k[0]},{k[1]},{k[2]}"
     if collect and len(combos) <= 16:
         states = {"inputs": list(ins),
-                  "levers": {f"{x},1,{z}": n for (x, z), n in io["levers"].items()},
-                  "lamps": {f"{x},1,{z}": n for (x, z), n in io["lamps"].items()},
+                  "levers": {_iokey(k): n for k, n in io["levers"].items()},
+                  "lamps": {_iokey(k): n for k, n in io["lamps"].items()},
                   "vectors": {}}
     # ponytail: bit-parallel fast path (simvec.SWAR + one core per shard).
     # The serial loop below costs O(2^n) whole simulations -- measured alu4 at
@@ -1141,8 +1146,8 @@ def sim_verify(recipe, blocks, io, seed=7, quiet=False, collect=False):
             states["vectors"][vkey] = {
                 "w": {f"{x},{y},{z}": v for (x, y, z), v in live.items()},
                 "t": {f"{x},{y},{z}": v for (x, y, z), v in tlive.items()},
-                "lamps": {f"{x},1,{z}": 1 if got.get(net, False) else 0
-                          for (x, z), net in io["lamps"].items()},
+                "lamps": {_iokey(k): 1 if got.get(net, False) else 0
+                          for k, net in io["lamps"].items()},
                 "ticks": nticks,
                 "r": {f"{x},{y},{z}": v for (x, y, z), v in rlive.items()},
                 "o": {f"{x},{y},{z}": v for (x, y, z), v in _conc.items()}}

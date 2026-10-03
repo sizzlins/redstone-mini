@@ -914,7 +914,7 @@ def stack_demo():
     print(f"stacked: {len(out)} blocks, {len(shared)} shared columns, "
           f"{glassn} glass", flush=True)
     try:
-        sim_verify(rF, out, io)
+        st, _ticks = sim_verify(rF, out, io, collect=True)
     except RuntimeError:
         if os.environ.get("STACKDUMP"):
             import pickle as _pk
@@ -924,11 +924,14 @@ def stack_demo():
                      open("scratch/stackfail.pkl", "wb"))
             print("dumped scratch/stackfail.pkl", flush=True)
         raise
+    # ponytail: collect=True for the preview's interactive IO table
+    # (sim keys 3D lamp cells correctly; flat builds unaffected).
     W = max(x for (x, _y, _z) in occ) + 4
     D = max(z for (_x, _y, z) in occ) + 4
     export_mcfunction(out, "build_stack3d.mcfunction")
     export_schem(out, "build_stack3d.schem")
-    export_html(out, (W, D), "build_stack3d.html", "stack3d 2-deck demo")
+    export_html(out, (W, D), "build_stack3d.html", "stack3d 2-deck demo",
+                st)
     print("stack3d ok: 8/8 vectors, outputs staged", flush=True)
     return out, io
 

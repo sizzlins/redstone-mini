@@ -2047,3 +2047,19 @@ Lesson for the router: side-lit diodes are now load-bearing truth,
 not decoration. stack3d vias already keep foreign dust off diode
 sides (clear()); same-net side dust self-follows (settles +1 tick,
 verified). No new exposure class.
+
+## Evening 2026-10-03 (2): stacked preview IO + schem restage
+
+User: preview IN/OUT broken; did the .schem update? Both real:
+- Preview shipped with states=None (no lever/lamp maps). Fixed by
+  collecting sim states in stack3d + a real engine gap found on the
+  way: sim_verify's collect dicts hardcoded "x,1,z" keys and CRASHED
+  (ValueError) on the deck1 y=6 lamp. Fixed with _iokey (2-tuple =
+  y=1 as before, 3-tuple carries level; flat builds byte-identical).
+  Preview now embeds levers a/b/c + lamps t/c2/y@deck1 + 8 vectors.
+- Staged schematics copy WAS stale (repo schem re-exports on every
+  green run and geometry varies run to run despite PYTHONHASHSEED --
+  compose has unseeded randomness somewhere; determinism claim in the
+  morning report softened to per-run verification, which is what
+  actually gates). Restaged + hash-matched (D747DA35).
+  Correction method for the future: compare hashes, never assume.
