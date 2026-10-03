@@ -1713,3 +1713,47 @@ The old `build_alu4.html` (4.0 MB) turns out to have been exported from a
 partial states set -- its wire blob is ~29 bytes per vector, i.e. ~58 wire
 instances, not a whole build. The new page's is ~13 KB per vector, which is
 the full 25815-wire field at 4 bits each.
+### Reproducibility, and cpu4
+
+The alu4 result does not depend on a stale cache. Rebuilt end to end with the
+fixed engine:
+
+    python scratch/hier_bands.py  scratch/cand_alu4hier.txt scratch/alu4bandsBANK 150
+    -> 6 bands, 161 s; ALL SIX byte identical to scratch/alu4bands.pkl
+       (shift, block count and a sha over blocks+wires all match)
+
+    python scratch/hier_stitch.py scratch/alu4bandsBANK.pkl scratch/cand_alu4hier.txt 900 scratch/alu4fresh.pkl
+    -> MERGE 60724 blocks, byte identical to scratch/alu4bank.pkl, 4/4 smoke OK
+
+So the three engine fixes are geometry-neutral for band composition, and the
+16/16 verify was not an artifact of a cache that no longer matches the engine.
+(That was worth checking: alu4 had been stitched from CACHED bands throughout,
+so a guard that changed partition geometry would have been invisible.)
+
+**cpu4 rebuilt from scratch: bands green, merge RED, and it is not the bank.**
+
+    python scratch/hier_bands.py scratch/cand_cpu4hier.txt scratch/cpu4bandsBANK 150
+    -> all 10 bands green per-band, 203 s
+
+    REDSTONE_INPUT_BANK=1  -> MERGE 101031 blocks; SMOKE 1111111 MISMATCH ['Y2']
+    REDSTONE_INPUT_BANK=0  -> MERGE  73589 blocks; SMOKE 1111111 MISMATCH ['Y2']
+
+Identical failure with the bank off, so this predates the input bank and is
+independent of it.
+
+**Diagnosis: the band ladder optimises per band, correctness is a property of
+the combination.** `hier_bands` keeps the FIRST rung that makes a band green
+STANDALONE; each band does sim green alone, but the cross-band handoff is what
+`Y2` depends on, and a fresh climb is free to pick a different combination than
+the old cache did. The old cache's combination only worked because the sim
+reading it let 8 cells hold two blocks.
+
+Next step for cpu4 is therefore NOT redstone: make the ladder
+combination-aware. The bands are cached and the stitch is ~9 min, so the cheap
+version is a loop -- merge, smoke, and on disagreement re-climb only the bands
+feeding the wrong output, then re-stitch. Pinning the `Y2` producers and
+re-climbing only those is the smallest version.
+
+**A gate that would have caught this**: `hier_stitch` already runs a 4-vector
+smoke and exits 1 on a mismatch, but nothing above it treats that as a signal
+to re-pick rungs. The ladder has no merge-level retry at all.
