@@ -1757,3 +1757,25 @@ re-climbing only those is the smallest version.
 **A gate that would have caught this**: `hier_stitch` already runs a 4-vector
 smoke and exits 1 on a mismatch, but nothing above it treats that as a signal
 to re-pick rungs. The ladder has no merge-level retry at all.
+### handoff rewritten
+
+`notes/handoff.md` now describes THIS session rather than 2026-10-02: the goal
+(one lever cluster), the current state table with the lever coordinates and the
+byte-identical control/reproducibility evidence, the seven commits and what each
+one changed, the three engine bugs, the full failed-attempt table with the
+exact error strings, the files touched (and the explicit list of tracked files
+NOT touched), and the next steps.
+
+Evidence added for this rewrite, since two of the three engine fixes live in
+`lwire` and every partition composition uses it, not just the hier ones:
+
+    python scratch/nonhier_suite.py
+    example_and GREEN 144 | example_2gates GREEN 322 | latch_sr GREEN 224
+    example_xor  GREEN 214 | micro1 GREEN 2925
+    alu1         GREEN 13300  == 13300     <- unchanged
+    ctrl_decode  GREEN 5499   == 5499      <- unchanged
+    python compose.py   ->  lwire ok / compose ok / buffers ok
+
+So the `lwire` guards and the `_landed` repeater-direction fix moved nobody
+else's geometry. New bounded tool: `scratch/nonhier_suite.py` (one killable
+child per recipe, per-recipe cap).
