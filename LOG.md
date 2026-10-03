@@ -2043,6 +2043,32 @@ NOT re-run (needs quiet machine; GA still grinding add2fat):
 alu4glass7 1024v (timed out at 900s under GA+game load; prior green
 289s pre-lock) and cpu4retry 128v. Queued, not skipped.
 
+## Night 2026-10-03 (2): lock diverges serial-vs-scalar on alu1glass
+
+alu1glass.pkl (shipped green 32/32, exported): serial GREENS it,
+scalar (run_scalar, what sim_verify actually runs) REDS x12 (Y on
+OP01 vectors, COUT on ADD). Bisected to a side-locked repeater pair:
+both side cobbles hot (dust above), back glitches in one event order
+and holds in the other -- 598 dust + 86 rep cells diverge downstream.
+Scalar's state is NOT a sim fixpoint (serial walks it to y=1), but
+that probe is inconclusive (init seeds dust/torch/rep, not cobble
+power: a 1-tick transient can unlock what settled locked).
+
+Standing question, recorded not guessed: pre-roll (serial) starts
+from a fixpoint with sides hot (glitch arrives locked-off, ignored);
+blank-start (scalar, and arguably vanilla power-on) races the glitch
+against the sides. If vanilla latches the glitch (1-tick pulse
+suffices for a delay-1 repeater with hot sides), the x12 are REAL
+vanilla faults and alu1glass needs side-feed repair (same saga shape
+as pillars: sim-green/game-broken until the model caught up). If
+vanilla doesn't latch, my side terms are over-broad somewhere.
+QUEUED FOR GAME: paste build_alu1glass.schem, 4 vectors from the
+mismatch list (ask me, I'll print them), report lamps. Until then
+the x12 stands LOUD (not waived, not reverted).
+diff_engine suite gap noted: its sampled builds have no side-powered
+repeaters, so it gates lock vacuously; the sim canaries are the real
+lock gate for now.
+
 Lesson for the router: side-lit diodes are now load-bearing truth,
 not decoration. stack3d vias already keep foreign dust off diode
 sides (clear()); same-net side dust self-follows (settles +1 tick,

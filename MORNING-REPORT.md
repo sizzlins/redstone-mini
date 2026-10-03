@@ -46,8 +46,14 @@ Two lessons from you, both verified before coding, both gated:
 6/7 bit-identical (144/322/224/214/2925/5499; alu1 RED is the known
 pillar fault, stash A/B identical: same 4 Y vectors), chainmix 11497
 + mux4 20239 fresh recompose+verify green, stack3d re-verified 8/8
-identical geometry. NOT re-run (needs quiet machine; GA grinding):
-alu4glass7 1024v, cpu4retry 128v — queued in LOG, not skipped.
+identical geometry. One open item, LOUD not waived: lock makes
+**alu1glass sim-red x12** (was green) via side-locked repeaters on a
+glitchy input — serial greens / scalar reds (order-dependent latch).
+Read LOG "Night (2)" for the full analysis. Most likely real vanilla
+faults (same saga shape as pillars), needs 4 vectors in game to
+confirm: paste `build_alu1glass.schem`, run the 4 mismatch vectors
+(ask me for the table), report. If the game greens it, my side terms
+are over-broad and I'll narrow with evidence.
 
 **What still fails / needs hands:**
 1. **Paste test** (nothing here can replace the client):
