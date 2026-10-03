@@ -175,6 +175,34 @@ def _tables_from(P, inp):
         else:
             r_src[c] = None
 
+    # ---- repeater lock sides (mirror sim.rep_locked term for term) ----
+    # ponytail: a repeater whose side is powered holds its last output
+    # (and an output looped to its own side latches on permanently).
+    # side() lacks torch (comparators ignore torch sides per sim); lock
+    # sides count lit torches too, so a dedicated spec with ("t", cell).
+    def rside(cell, t):
+        if cell in lever:
+            return ("l", lever[cell])
+        if cell in rblk:
+            return ("r",)
+        if cell in torch:
+            return ("t", cell)
+        if cell in rep:
+            return ("r", cell) if back(cell, t) else None
+        if cell in comp:
+            return ("k", cell) if back(cell, t) else None
+        if cell in dust:
+            return ("d", cell)
+        if cell in pwr:
+            return ("c", cell)
+        return None
+
+    r_side = {}
+    for c in rep:
+        d = rep[c]
+        r_side[c] = (rside((c[0] + d[1], c[1], c[2] + d[0]), c),
+                     rside((c[0] - d[1], c[1], c[2] - d[0]), c))
+
     # ---- comparator: rear input, two sides, mode ----------------------
     def side(cell, t):
         if cell in lever:
@@ -262,6 +290,17 @@ def _tables_from(P, inp):
             out.append(("t", t))
         wake[c] = out
 
+    # ponytail: repeater lock sides wake their repeater (mirrors sim's
+    # wake fix: a side lighting mid-run must re-evaluate, or a lock
+    # engages/releases silently stale). Static neighbors (lever/rblk)
+    # never emit, so their edges cost nothing.
+    for c in rep:
+        d = rep[c]
+        for s in ((c[0] + d[1], c[1], c[2] + d[0]),
+                  (c[0] - d[1], c[1], c[2] - d[0])):
+            if ("r", c) not in wake.get(s, ()):
+                wake.setdefault(s, []).append(("r", c))
+
     # ---- lamp arms -----------------------------------------------------
     l_arm, l_cob, l_torch, l_lev, l_rblk, l_up = {}, {}, {}, {}, {}, {}
     for cell in lampnet:
@@ -285,7 +324,8 @@ def _tables_from(P, inp):
             "d_below": d_below, "d_dirs": d_dirs,
             "c_dust": c_dust, "c_rep": c_rep, "c_torch": c_torch,
             "c_lev": c_lev, "c_rblk": c_rblk, "c_up": c_up,
-            "r_src": r_src, "k_rear": k_rear, "k_side": k_side,
+            "r_src": r_src, "r_side": r_side, "k_rear": k_rear,
+            "k_side": k_side,
             "k_mode": k_mode, "t_att": t_att, "t_dead": t_dead,
             "wake": wake, "l_arm": l_arm, "l_cob": l_cob, "l_torch": l_torch,
             "l_lev": l_lev, "l_rblk": l_rblk, "l_up": l_up,
@@ -407,6 +447,13 @@ def _cob_state_s(c, st, pw, tl, ron, vec):
 
 
 def _rep_on_s(c, st, pw, pb, tl, ron, con, vec):
+    # ponytail: side-lock (mirrors sim.rep_val): a powered side holds
+    # the last output instead of following the input. ron starts False
+    # here exactly as in sim (power-on locked stays off).
+    s0, s1 = st["r_side"][c]
+    for s in (s0, s1):
+        if s is not None and _lev_s(s, pw, pb, tl, ron, con, vec) >= 1:
+            return bool(ron.get(c, False))
     s = st["r_src"][c]
     if s is None:
         return False

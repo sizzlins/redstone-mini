@@ -2010,3 +2010,40 @@ varies run to run: 268 vs 324 blocks measured on deck0).
    (quilt) build pastes again.
 5. evo_add2 (add2fat 100-eval) was still running at session start;
    check `done best=` before trusting old evo numbers.
+
+## Evening 2026-10-03: repeater side-lock modeled (user lesson) + glass ladder canary
+
+User (in game): glass staircases conduct UP but never DOWN in Java;
+and a repeater feeding its own side sticks ON permanently. Both
+verified against the sim before touching it:
+
+- Glass ladder: sim already models exactly this (dust_lvl DN term
+  accepts any solid rest incl. glass = climb; UP term still needs
+  opaque cobble = no down-feed on glass). Measured probe: glass
+  UP 10 / DOWN 0, cobble UP 10 / DOWN 10. No physics change; the
+  recipe is now a canary (`glass ok` line covers tower + down-block).
+  stack3d shafts already ride this (glass pillars).
+- Lock: sim did NOT model it (fresh A=1,B=1 read 1, vanilla locks 0;
+  no "lock" anywhere in sim/simvec). Real vanilla-parity gap.
+  Implemented: sim.rep_locked (side terms mirror comp_in sides +
+  lit torch) + rep_val hold-last (power-on locked stays off) + wake
+  on behind-or-beside (sides were deaf: late lock/unlock read stale).
+  simvec mirror: r_side specs (+torch variant), _rep_on_s hold,
+  side wake edges. Canaries: fresh-1,1 freezes off; output→own-side
+  latches on across sim_sequence phases.
+
+Gates, all green: sim suite (incl. 2 new lock canaries), diff_engine
+ALL IDENTICAL (ref/live/scalar), compose_check 144/322/224/214,
+nonhier 6/7 bit-identical (144/322/224/214/2925/5499; alu1 RED is the
+known pillar fault, proven byte-identical pre/post lock by stash A/B
+on alu1_current.pkl: same 4 Y vectors), chainmix 11497 + mux4 20239
+fresh recompose+verify green, stack3d re-verified 8/8 (2464 blocks,
+identical geometry) under the locking sim.
+NOT re-run (needs quiet machine; GA still grinding add2fat):
+alu4glass7 1024v (timed out at 900s under GA+game load; prior green
+289s pre-lock) and cpu4retry 128v. Queued, not skipped.
+
+Lesson for the router: side-lit diodes are now load-bearing truth,
+not decoration. stack3d vias already keep foreign dust off diode
+sides (clear()); same-net side dust self-follows (settles +1 tick,
+verified). No new exposure class.

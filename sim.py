@@ -260,7 +260,13 @@ def _run_vec(vec, init, ctx, until=None, target_hits=None):
                 sched(now, "c", m)
             elif m in rep:
                 d = rep[m]
-                if (m[0] - d[0], m[1], m[2] - d[1]) == c:
+                # ponytail: wake on behind (input) OR beside (lock side).
+                # Sides used to be deaf: a side lighting mid-run never
+                # re-evaluated the repeater, so a lock engaged late (or
+                # released) read stale until an input change arrived.
+                if (m[0] - d[0], m[1], m[2] - d[1]) == c or \
+                   (m[0] + d[1], m[1], m[2] + d[0]) == c or \
+                   (m[0] - d[1], m[1], m[2] - d[0]) == c:
                     sched(now, "r", m)
             elif m in comp:
                 sched(now, "k", m)
@@ -438,6 +444,45 @@ def _run_vec(vec, init, ctx, until=None, target_hits=None):
                 return True
         return False
 
+    def rep_locked(c):
+        """Repeater side-lock (wiki): powered sides freeze the output.
+
+        A repeater whose side is powered holds its last output instead
+        of following its input -- and an output looped back to its own
+        side latches ON permanently (measured in game: user report).
+        Side terms mirror comp_in's side scan (same physics, boolean):
+        dust/lever/rblk/torch/repeater/comparator/target-solid. Glass
+        never powers, slabs read through pbs like stone.
+        """
+        d = rep[c]
+        for sx, sz in ((d[1], d[0]), (-d[1], -d[0])):
+            s = (c[0] + sx, c[1], c[2] + sz)
+            if s in dust and pw.get(s, 0) >= 1:
+                return True
+            if s in pwr and pbs.get(s, False):
+                return True
+            if s in lever and vec.get(lever[s], False):
+                return True
+            if s in rblk:
+                return True
+            if s in torch and tl.get(s, False) and torch[s] != c:
+                return True
+            if s in rep:
+                rd = rep[s]
+                if ron.get(s, False) and (s[0] + rd[0], s[1], s[2] + rd[1]) == c:
+                    return True
+            if s in comp:
+                sd = comp[s]
+                if (s[0] - sd["rear"][0], s[1], s[2] - sd["rear"][1]) == c \
+                        and con.get(s, 0) >= 1:
+                    return True
+        return False
+
+    def rep_val(c):
+        # locked: hold last output (ron starts False: power-on locked
+        # stays off, matching vanilla). Unlocked: follow the input.
+        return ron.get(c, False) if rep_locked(c) else rep_on(c)
+
     def comp_in(c):
         d = comp[c]
         rx, rz = d["rear"]
@@ -578,7 +623,7 @@ def _run_vec(vec, init, ctx, until=None, target_hits=None):
                     continue
                 if rq:
                     c = rq.pop()
-                    v = rep_on(c)
+                    v = rep_val(c)
                     if ron.get(c, False) != v:
                         ron[c] = v
                         _box(c)
@@ -742,12 +787,12 @@ def _run_vec(vec, init, ctx, until=None, target_hits=None):
                     _trace.append((now, "T", c, v))
                 mark(); wake(now, c)
         elif kind == "r":
-            if rep_on(c) != ron.get(c, False) and c not in rsched:
+            if rep_val(c) != ron.get(c, False) and c not in rsched:
                 rsched.add(c)
                 sched(now + repdelay.get(c, 1), "R", c)
         elif kind == "R":
             rsched.discard(c)
-            v = rep_on(c)
+            v = rep_val(c)
             if ron.get(c, False) != v:
                 ron[c] = v
                 mark(); wake(now, c)
@@ -1318,6 +1363,33 @@ if __name__ == "__main__":
     _lg, _, _, _, _, _ = _run_vec({"A": 1}, None, _lp)
     assert _lg.get("B", False) is True, _lg
     print("slab ok: carries power, feeds dust on top, lid never cuts")
+    # ponytail: repeater side-lock (wiki, user-measured in game).
+    # Powered sides freeze the output: a fresh A=1,B=1 run locks OFF
+    # (was off at power-on); an output looped back to its own side
+    # latches ON permanently (input drops, side holds itself).
+    _lk = [(0, 1, 0, "minecraft:lever"), (1, 1, 0, W_),
+           (2, 1, 0, "minecraft:repeater[facing=west,delay=1]"),
+           (3, 1, 0, W_), (4, 1, 0, W_), (5, 1, 0, W_),
+           (6, 1, 0, "minecraft:redstone_lamp"),
+           (0, 1, 3, "minecraft:lever"), (1, 1, 3, W_), (2, 1, 3, W_),
+           (2, 1, 2, W_), (2, 1, 1, W_)]
+    _lp2, _lio2 = _hand(_lk, {(0, 0): "A", (0, 3): "B"}, {(6, 0): "Y"})
+    for _vv, _want in (({"A": 0, "B": 0}, False), ({"A": 0, "B": 1}, False),
+                       ({"A": 1, "B": 1}, False), ({"A": 1, "B": 0}, True)):
+        _lg2, _, _, _, _, _ = _run_vec(_vv, None, _lp2)
+        assert bool(_lg2.get("Y", False)) is _want, (_vv, _lg2)
+    print("lock ok: side-lit repeater freezes (fresh 1,1 stays off)")
+    _sl = [(0, 1, 0, "minecraft:lever"), (1, 1, 0, W_),
+           (2, 1, 0, "minecraft:repeater[facing=west,delay=1]"),
+           (3, 1, 0, W_), (4, 1, 0, W_), (5, 1, 0, W_),
+           (6, 1, 0, "minecraft:redstone_lamp"),
+           (3, 1, 1, W_), (2, 1, 1, W_)]
+    _sio = {"levers": {(0, 0): "A"}, "lamps": {(6, 0): "Y"}, "nets": {}}
+    sim_sequence({"inputs": ["A"], "outputs": ["Y"],
+                  "gates": [{"out": "Y", "op": "AND", "args": ["A", "A"]}]},
+                 _sl, _sio,
+                 [({"A": 1}, {"Y": 1}), ({"A": 0}, {"Y": 1})])
+    print("lock ok: output looped to its own side latches on permanently")
     # ponytail: Target-block oracle (wiki Target, verified against that page
     # before modeling). A target is opaque conductive when idle, redirects
     # adjacent dust even before a hit, and only becomes a source for the hit
