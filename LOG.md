@@ -1895,3 +1895,17 @@ two-stage gate earns its keep; equiv is necessary, never sufficient.
 SOP-form adder (91-gate minterm mesh) does NOT route in 10 min: starting
 points must be near-routable. Queued: add2fat (19 gates, equiv-proven)
 100-eval run detached.
+
+### insulate() post-pass + alu1 repaired (same session)
+
+Generalized the 7-pillar fix into `scratch/pillars.py:insulate()` (any
+pkl in/out: sim-dark dust-on-cobble y>=2 with torch/dust feed, no
+attached torch; tile bodies excluded after the 579-swap broke tile
+attaches on alu4). alu1: 3 torch-pillars -> `scratch/alu1glass.pkl`,
+sim-verify 32/32 x3 runs, block count identical (13300), exported
+`build_alu1glass.*`. Full nonhier suite: 6/7 green with counts
+bit-identical to the handoff record (example 144/322/224/214, micro1
+2925, ctrl_decode 5499); alu1 RED is the fixed sim catching the same
+pillar class (repaired via glass, not a regression). Lesson: recolor
+(safe, post-compose) vs repillar (changes conduction, verify-gated)
+are different operations with different gates; never blanket-swap.
