@@ -1,6 +1,7 @@
 # redstone-mini
 
-logic recipe, big or small -> Minecraft redstone 3D model -> build.schem export to minecraft
+Logic recipe, big or small → Minecraft redstone 3D model → `build.schem`
+export to Minecraft.
 <img width="1705" height="800" alt="image" src="https://github.com/user-attachments/assets/509e07ee-2981-4f95-8d9d-2a1e05836f38" />
 
 ## Use
@@ -28,14 +29,18 @@ Gates are real torch builds (wiki textbook: NOT/NOR = dust into block + torch,
 AND = inverted inputs into NOR, OR = joined wires). A built-in short checker
 rejects any layout where two nets touch — bad builds fail loudly, never silently.
 
-8-bit adder (first ALU slice, ripple-carry from the same gates):
+Big banded builds (a 4-bit ALU, a CPU slice) route in bands, stitch, and verify
+every input vector against the logical oracle:
+
 ```bash
-python redstone_mini.py --alu8
-# opens: build_alu8.html + build_alu8.mcfunction (datapack only — first run:
-# gamerule maxCommandChainLength 200000)
-# The adder is ~75k setblocks of real torch gates (preview stays fast).
+python scratch/hier_verify.py recipes/alu4.txt   # bands + stitch + 1024/1024
+python scratch/hier_verify.py recipes/alu1.txt   # bands + stitch + 32/32
 ```
+
+Current state: **alu4 green 1024/1024** (71,560 blocks), **alu1 hier green 32/32**.
+Verification is dual-engine: the tick-stepped sim (`sim.py`, which models repeater
+delays, torch burnout and settling — timing included) plus `cmc`, an independent
+implementation that must agree per cell, not just per lamp.
 
 Preview `build.html` streams real textures from the upstream
 `PrismarineJS/minecraft-assets` pack (needs internet, falls back to flat colors offline).
-Torches add a tick of delay each; the compiler doesn't model timing yet.
