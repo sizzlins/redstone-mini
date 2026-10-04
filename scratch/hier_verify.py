@@ -54,9 +54,14 @@ def main():
     if run([py, "scratch/hier_stitch.py", cache, src, stitchsecs], 300,
            {"REDSTONE_HIERDUMP2": merge}):
         return 1
-    # verify_par stages itself (2 chunks/call); loop until it claims VERIFY OK
-    per_call, rounds = 2, 12
-    if nchunks:
+    # verify_par stages itself. per_call=0 means "every pending chunk": worker
+    # count alone sets the parallelism, so each worker builds simvec's tables
+    # ONCE for its whole group instead of once per chunk (measured 7.78s and
+    # 103 MB per build on alu4 -- 16 chunk-spawns wasted 126s rebuilding
+    # constant tables). The loop below is now a safety net, not the unit of
+    # work: one call normally finishes the sweep.
+    per_call, rounds = 0, 12
+    if nchunks and per_call > 0:
         rounds = max(12, (int(nchunks) + per_call - 1) // per_call + 2)
     for _ in range(rounds):
         args = [py, "scratch/verify_par.py", merge, src,

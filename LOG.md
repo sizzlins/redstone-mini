@@ -3192,3 +3192,51 @@ NOT YET CHANGED. Next step is the sim.py + simvec.py fix (mirrored, per the
 hard mirror requirement), gated by the full cold-start chain plus a full
 forced re-sweep, because a physics change must be paid for with evidence.
 Recorded here first so the finding survives whatever happens next.
+
+## 2026-10-05 (session 2) -- Opt A1: verify_par grouped chunks. 1.33x on the 1024-vector sweep
+
+Root cause from FINDING 2, acted on. `verify_par` spawned one process PER
+CHUNK, so each child parsed and rebuilt simvec's constant tables (7.78s,
+103 MB on alu4). 16 chunks = 16 identical rebuilds = 126s thrown away on~543s
+of real work. And `per_call` capped a call at 4 chunks (hier_verify passed 2),
+so a worker could never be handed two chunks -- grouping could not even pay.
+
+Change: a child owns a GROUP of chunks (`jobs`), and since simvec._tables
+memoises on the parsed context, one build serves the whole group. `per_call<=0`
+now means "every pending chunk" so worker count alone sets parallelism; the
+staged top-up loop in hier_verify stays as a safety net, not the unit of work.
+
+Measured A/B, same build bytes (alu4merge.pkl), same cold cache (fresh pkl path
+=> fresh fingerprint), same workers, all 16 chunks, 1024 vectors:
+
+    workers=4    OLD 181.6s   NEW 117.4s   (grouping only helps at >=2 chunks/w)
+    workers=8    OLD 156.5s   NEW 117.4s
+    workers=12              NEW 130.0s
+    workers=16              NEW 108.7s
+
+**1.33x at 8 workers (156.5s -> 117.4s)**, and the verdict set is IDENTICAL:
+the same 4 chunks (2, 6, 10, 14) with the same mismatches (Y2 / Y2 / Y2+Y3 /
+Y2+Y3+COUT). That identity is the correctness argument -- a faster scheduler
+that moved the failure set would be worthless as a gate.
+
+Worker curve says the DEFAULT IS ALREADY RIGHT: hier_verify passes 16, and 16
+is the best measured point (108.7s). 12 measuring worse than 8 (130.0 vs117.4)
+is grouping imbalance plus noise, not a reason to change anything. No default
+changed. Effective parallelism at 8 workers is only~5x, not 8x -- the memory
+ceiling from FINDING 2, still there, still the next thing to attack.
+
+Correctness of the new scheduler, all three paths exercised:
+- green path: 8 chunks over 3 workers -> VERIFY OK 32 vectors (alu1, 8.0s)
+- RED path: 16 chunks/16 workers on the unstitched alu4 merge -> VERIFY RED,
+  4 bad chunks, exit 1. A failed chunk is cached as its mismatch text, never
+  as "green", so a rerun redoes exactly the work that did not happen.
+- inside hier_verify: HIER_NCHUNKS=8 forces a fresh chunk namespace ->
+  VERIFY OK 32 vectors, exit 0, 38.1s (was 51.2s over 8 staged calls).
+
+Gates after the change: compose ok; compose_check 144/322/224/214 identical;
+nonhier 6/6 exit 0; diff_engine ALL IDENTICAL; hier_verify alu1 VERIFY OK
+32/32 exit 0. hier_verify alu4 still exits 1 at SMOKE Y2 -- that is FINDING 1
+(the ins_target swap is out of band), unchanged and still true.
+
+Nothing under an engine-fingerprint file was touched (verify_par.py and
+hier_verify.py are scratch/), so no verify cache was voided.
