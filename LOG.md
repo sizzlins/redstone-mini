@@ -3552,3 +3552,68 @@ simvec.py is an ENGINE file, so this voided every verify cache: the 1024/1024
 above is a genuine cold re-verification on the new engine, not a cache read.
 The event logs being byte-identical is the strongest evidence available -- it
 means the rewrite did not merely agree on the answer, it took the same path.
+
+## 2026-10-05 (session 2, later) -- THREE OF MY OWN NUMBERS WERE MEASUREMENT ARTIFACTS
+
+Rewriting my own claims before they mislead the next agent. `diagnose`
+discipline applied to my own harness, which is the only harness that matters.
+
+### 1. The table-build "regression" (7.78s -> 8.60s) does not exist
+
+`scratch/tbl_probe.py` measures build time UNDER `tracemalloc`, which traces
+every allocation and inflates it by more than an order of magnitude. The
+original 7.78s baseline was inflated the same way, so the "+10%" was
+tracemalloc-vs-tracemalloc and still wrong. Measured properly
+(`scratch/build_ab.py`, no tracer, best of 3):
+
+    OLD tuple tables   0.395s      NEW int tables   0.353s   -> 1.12x FASTER
+
+So FINDING 2's headline "7.78s to build" was wrong too: it is 0.40s. The
+MEMORY numbers from the same tool are still valid (tracemalloc's heap figures
+are not inflated, only its clock). FINDING 2's real content is the 112 MB, the
+per-chunk rebuild, and the fact that 112 MB x 16 workers is the box's whole
+RAM -- not the 7.78s.
+
+### 2. Opt A1's "1.33x" was noise
+
+Re-ran old scheduler vs new scheduler, SAME engine, cold cache each, workers=8,
+16 chunks, twice each:
+
+    old  82.6s   new  77.7s
+    old 119.2s   new  98.5s
+
+The spread WITHIN each variant (36s) is larger than the difference BETWEEN
+them (5-21s). The earlier 156.5s -> 117.4s pair was one sample of that noise.
+
+Why the effect is small, measured: per-spawn cost is spawn 0.05s + import
+sim/simvec 0.15s + unpickle blocks 0.1s + _parse_build 0.09s + _tables_from
+0.40s = ~0.8s. A1 saves 8 spawns out of 16, in two waves, so ~1s of wall, not
+39s. Correct expectation all along: ~1-5%. A1 stays (it is correct, tested,
+mildly positive, and it makes worker count the only parallelism knob) but it is
+NOT a 1.33x win and must not be cited as one.
+
+### 3. The engine win is 2.1x, not 1.62x
+
+1.62x came from `prof_scalar 5`, i.e. vector indices 0-4 -- the EASY end of the
+distribution, exactly the trap `bench_scalar`'s spread mode was written to
+avoid and I then walked into. Interleaved same-process A/B over 6 SPREAD
+vectors, three consecutive runs:
+
+    2.19x / 2.10x / 2.10x     (~2.1x, and reproducible)
+
+Interleaving in one process is the instrument to trust: same build, same
+cache, same machine state, alternating engines. That is why `tbl_diff.py`
+exists and why it is the gate for every engine change from here.
+
+### 4. Methodology finding (the reusable part)
+
+Single-run wall-clock A/B on this box is NOT a measurement. It has a ~36s
+spread on an 80s run -- 20 logical cores, a resident Minecraft server, and a
+second agent committing to the same tree. Rules for this repo, learned the hard
+way:
+
+- engine/physics change -> `scratch/tbl_diff.py` interleaved, spread indices,
+  several runs, and require IDENTICAL as the price of the speedup.
+- wall-clock change -> best-of-N with N>=3, and interleave the variants.
+- NEVER measure timing under tracemalloc.
+- a speedup claimed from one run of each variant is a hypothesis, not a result.
