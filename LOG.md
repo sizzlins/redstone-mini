@@ -3779,3 +3779,75 @@ map is SPARSE (absent = 0) and I compared an absent key against cmc's dense 0.
 One-line fix (absent means 0). The same trap is documented in verify2.py's diff
 and in the 10/4 LOG's "wire[power=N] is an exact match" note -- third time this
 project has been bitten by sparse-vs-dense power maps.
+
+## 2026-05 (session 2, later still) -- WHY 16 WORKERS RUN A VECTOR 3.3x SLOWER: it is the BOX
+
+Follow-up to the retracted numbers, and the reason not to spend the rest of the
+night on parallel tuning.
+
+### The measurement that started it
+
+Per-vector cost of a 64-vector chunk, read off the verify_par progress lines,
+at three worker counts (sorted ids, new engine, one cold sweep each):
+
+    workers=4     sweep 107.2s   0.377s per vector
+    workers=8     sweep  64.7s   0.481s per vector
+    workers=16    sweep  54.3s   0.775s per vector
+
+against 0.233s for a lone worker (bench_scalar, warm tables, best of 3). So 16
+workers buy 4.9x, not 16x: each worker's vector costs 3.3x more than it does
+alone. That is the handoff's old "8 concurrent children run 2.1x slower each"
+finally explained -- it was never scheduling.
+
+### Three hypotheses, tested, only one survived
+
+1. **Neighbour locality.** ids came from `sorted((x,y,z))`, which lays the
+   field out along x, so a cell's eight physical neighbours sit thousands of
+   ids apart and every wake edge is a random access into 31 MB. Fix: Z-order
+   (Morton) the ids -- a PURE RELABELLING, invisible to the physics because
+   every table is id-indexed (tbl_diff IDENTICAL, event logs identical).
+   RESULT: barely moved it. Per-vector 0.377 -> 0.361 (4 workers), 0.481 ->
+   0.447 (8), 0.775 -> 0.766 (16). Kept anyway -- consistently never worse,
+   1-7% better under concurrency -- but it is NOT the answer, and the
+   hypothesis was wrong.
+2. **Cyclic GC.** The tables are ~2M container objects, so every gen2 pass
+   chases pointers through DRAM. Fix: `gc.freeze()` + `gc.disable()` in the
+   worker. RESULT: 82,808 tracked objects (not millions), ZERO gen2
+   collections during a run, and disabling GC gave exactly 1.00x. Dead end,
+   rejected in ten minutes. Logged because it is the obvious next guess.
+3. **The machine.** i7-13650HX = 14 physical cores / 20 logical
+   (hyperthreaded, so ~1.3x not 2x), AND `Get-Process` shows TWO OpenCode
+   processes (the co-tenant agent) plus a 466 MB java Minecraft server, plus
+   chrome/steam/webview. THIS is the ceiling. ~4.9x aggregate on 16 workers is
+   what a 14-core shared box gives.
+
+### Consequence for the rest of the night
+
+Stop tuning parallelism; it is bounded by the co-tenant and by hyperthreading,
+not by this code. Spend the remaining effort on SINGLE-CORE work, which also
+helps under contention. The worker sweep on the new engine plateaus at ~52-54s
+for the full 1024-vector alu4 sweep at 16-20 workers; 32 chunks is worse (more
+pipe traffic, more cache writes), so `nchunks=16` stays.
+
+### And the measurement trap, hit twice in one sitting
+
+The `if v:` guards on the eight dust classes looked like a clear 14% regression
+(2.19s -> 2.50s absolute) and I reverted them. By INTERLEAVED RATIO the same
+two configurations were 2.19x vs 2.14x -- the guards were ~2% BETTER, i.e.
+noise, because the absolute baseline itself had drifted 20% when the co-tenant
+changed the machine's load. On this box: interleaved ratio only, always; never
+compare a number from now against a number from ten minutes ago. The guards
+stay out (simpler code wins a tie) and the reason is recorded in simvec.py so
+nobody re-runs the experiment wrong.
+
+### State committed here
+
+Z-order ids (semantics-free, 1-7% better under concurrency, never worse),
+event logs still identical, and the dead-end GC and locality hypotheses
+recorded so they are not re-derived.
+
+Gates re-run on this engine: simvec self-check (bit-identical to sim._run_vec),
+all sim.py canaries, diff_engine ALL IDENTICAL, compose_check 144/322/224/214,
+nonhier 6/6, tbl_equiv EQUIVALENT except the 5 intended l_arm reductions,
+hier_verify alu1 VERIFY OK 32/32 exit 0 (41.8s), alu4 VERIFY OK 1024/1024
+exit 0 (54.9s, cold).

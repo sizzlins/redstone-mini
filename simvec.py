@@ -42,6 +42,45 @@ def _pre(blocks, io, inp):
     return _tables_from(_parse_build(blocks, io), inp)
 
 
+def _spread21(v):
+    """Interleave 21 bits of v into every other bit position (Z-order)."""
+    v &= 0x1FFFFF
+    v = (v | (v << 32)) & 0x1F00000000FFFF
+    v = (v | (v << 16)) & 0x1F0000FF0000FF
+    v = (v | (v << 8)) & 0x100F00F00F00F00F
+    v = (v | (v << 4)) & 0x10C30C30C30C30C3
+    v = (v | (v << 2)) & 0x1249249249249249
+    return v
+
+
+def _morton_order(cells):
+    """Z-order the cells, so a cell's neighbours land NEAR it in id space.
+
+    ponytail: this is a pure RELABELLING. Every table is id-indexed, so the
+    physics cannot see it -- scratch/tbl_diff.py proves the two engines
+    bit-identical across it, and the event logs stay identical. It exists
+    because ids from sorted((x,y,z)) put a cell's eight physically-adjacent
+    neighbours thousands of ids apart, so every wake edge was a random access
+    into a 31 MB table. Measured cost of that, per vector: 0.233s alone,
+    0.377s with 4 workers, 0.775s with 16 -- a 3.3x inflation from
+    concurrency alone, which capped effective parallelism at ~4.8x on 16
+    workers and was the single largest remaining loss. Interleaving the bits
+    of x/y/z puts a cell and its 3x3x3 neighbourhood within a few hundred ids
+    of each other, so the wake walk is a scan, not a scatter.
+
+    Only DETERMINISM is required, not Morton-ness: this is a locality
+    heuristic, so a coordinate past 21 bits merely loses locality and the
+    ordering stays a valid total order. Two workers must still agree on the
+    ids, which is why the key is a pure function of the cell.
+    """
+    ox = min(c[0] for c in cells)
+    oy = min(c[1] for c in cells)
+    oz = min(c[2] for c in cells)
+    return sorted(cells, key=lambda c: (_spread21(c[0] - ox)
+                                        | (_spread21(c[1] - oy) << 1)
+                                        | (_spread21(c[2] - oz) << 2)))
+
+
 def _tables_from(P, inp):
     """Precompute every static query the physics asks, once per build.
 
@@ -94,8 +133,10 @@ def _tables_from(P, inp):
         return (c[0] - cd["rear"][0], c[1], c[2] - cd["rear"][1]) == t
 
     # ---- cell ids: one dense int per cell the tables can name -----------
-    # sorted() so the ids are a deterministic function of the build: two
-    # workers must build byte-identical tables or a hash check would flap.
+    # Z-order, not sorted(): both are deterministic functions of the build (so
+    # two workers always agree on the ids), but sorting lays the field out along
+    # x and leaves a cell's eight neighbours thousands of ids apart, which
+    # costs 3.3x under concurrency. See _morton_order.
     uni = set()
     for d in (dust, pwr, rep, comp, torch, lampnet, lever, rblk, glass, slab,
               target, attach_rev, leveratt):
@@ -109,7 +150,7 @@ def _tables_from(P, inp):
             uni.add(a)
     for v in attach_rev.values():
         uni |= set(v)
-    cell = sorted(uni)
+    cell = _morton_order(uni)
     nid = len(cell)
     cid = {c: i for i, c in enumerate(cell)}
 
@@ -547,6 +588,15 @@ def _dust_lvl_s(c, st, pw, pbs, tl, ron, con, vec):
         return 15
     if st["d_rblk"][c]:
         return 15
+    # NOT DONE, and the reason is worth keeping: guarding each class with
+    # `if v:` to skip the iterator setup for empty ones looks free and is not.
+    # Measured by interleaved ratio it was 2.19x vs 2.14x -- i.e. a ~2% win,
+    # inside the run-to-run spread, so it was left out for the simpler code.
+    # The trap that nearly made me revert it the other way: comparing ABSOLUTE
+    # times said 2.19s -> 2.50s, which looks like a 14% regression. Both
+    # engines had drifted 20% slower between runs because the co-tenant agent
+    # changed the machine's load. On this box only the interleaved ratio means
+    # anything.
     for m in st["d_cob"][c]:
         if pbs[m]:
             return 15
@@ -561,9 +611,9 @@ def _dust_lvl_s(c, st, pw, pbs, tl, ron, con, vec):
             return 15
     lv = 0
     for m in st["d_dust"][c]:
-        v = pw[m] - 1
-        if v > lv:
-            lv = v
+        x = pw[m] - 1
+        if x > lv:
+            lv = x
     # ponytail: OR, do not override -- mirrors the sim.py comparator-front
     # fix. A dust cell in front of a comparator is driven by the comparator AND
     # by anything else adjacent (vanilla ORs every contribution to a cell). The
@@ -571,17 +621,17 @@ def _dust_lvl_s(c, st, pw, pbs, tl, ron, con, vec):
     # comparator was off, so sim and simvec had to be changed together or
     # diff_engine would diverge.
     for m in st["d_comp"][c]:
-        v = con[m]
-        if v > lv:
-            lv = v
+        x = con[m]
+        if x > lv:
+            lv = x
     for m in st["d_cup"][c]:
-        v = pw[m] - 1
-        if v > lv:
-            lv = v
+        x = pw[m] - 1
+        if x > lv:
+            lv = x
     for m in st["d_cdn"][c]:
-        v = pw[m] - 1
-        if v > lv:
-            lv = v
+        x = pw[m] - 1
+        if x > lv:
+            lv = x
     return lv
 
 
@@ -592,6 +642,9 @@ def _cob_state_s(c, st, pw, tl, ron, vec):
     # dust/up terms need a full scan.
     if st["c_rblk"][c]:
         return True, True
+    # Left unguarded for the same measured reason as in _dust_lvl_s: the
+    # `if v:` variant was ~2% by interleaved ratio, i.e. noise, so the simpler
+    # form ships.
     for m in st["c_torch"][c]:
         if tl[m]:
             return True, True
