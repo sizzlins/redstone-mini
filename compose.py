@@ -1307,21 +1307,50 @@ def _compose_once(recipe):
             out = [n for n in out if not _cross(n)] + [n for n in out if _cross(n)]
         # _ORDER selects gates-first (proven) vs inputs-first (inputs get
         # clean ground; gates route around lanes). Set by compose()'s retry.
+        # ponytail: inputs honor precede too (mini topo, same tie-break).
+        # Input-vs-input seals used to be unblameable (blame refused non-gate
+        # nets outright): band fields where lanes seal lanes (measured:
+        # alu4 band 0 OP1 sealed by B0/A0/OP0 runs, no single gate owner,
+        # no restart ever fired) died on rung 1 forever. With no input
+        # precede edges this is exactly sorted() as before, so green
+        # geometry never moves; a failed input only ever gains earlier
+        # restarts that die loud today.
+        _inps = sorted(n for n in netspec if n in inps)
+        _ipreds = {}
+        for e, l in precede:
+            if e in _inps and l in _inps:
+                _ipreds.setdefault(l, set()).add(e)
+        _ipend, _iout = list(_inps), []
+        while _ipend:
+            _rdy = [n for n in _ipend
+                    if all(p in _iout for p in _ipreds.get(n, ()))]
+            if not _rdy:
+                raise RuntimeError(f"compose: order cycle in {sorted(precede)}")
+            _rdy.sort(key=_tie)
+            _iout.append(_rdy[0])
+            _ipend.remove(_rdy[0])
         if _ORDER == "inputs_first":
-            return sorted(n for n in netspec if n in inps) + out
-        return out + sorted(n for n in netspec if n in inps)
+            return _iout + out
+        return out + _iout
 
     def _blame(failed, ordered, stub_wires):
         # top foreign wired-net owner on the failed net's driver+load
         # pockets (y=1 BFS: solid/foreign-wire/foreign-ring/foreign-rep/
         # guard/sup/adacency; hops span singles, pockets are the seal).
-        # Must be reorderable (a gate net), earlier this attempt (later nets
-        # cast no shadow), and ROUTED (its wires postdate the placement-end
-        # snapshot — tile stubs never move, so blaming them burns restarts:
-        # alu1 O blamed m2/m3 stubs 5x). Inputs fail loud (lanes positional).
+        # Must be reorderable (a gate net, or an input whose lanes can go
+        # in any order), earlier this attempt (later nets cast no shadow),
+        # and ROUTED (its wires postdate the placement-end snapshot --
+        # tile stubs never move, so blaming them burns restarts:
+        # alu1 O blamed m2/m3 stubs 5x).
         # None if the seal is tile geometry.
         from collections import deque, Counter
-        if failed not in gate_nets:
+        # ponytail: inputs blame too (failed AND owners). Lane-vs-lane seals
+        # were invisible: blame refused non-gate nets, so a field where lanes
+        # seal lanes never restarted. Same guards as gate nets (routed runs
+        # only, never stubs; reorderable; earlier this attempt). Displacement
+        # still refuses inputs (it rips wires; lanes only reorder) -- the
+        # caller raises loud on an input order cycle, same as today.
+        if failed not in gate_nets and failed not in inps:
             return None
         seen = set()
         q = deque()
@@ -1377,12 +1406,12 @@ def _compose_once(recipe):
             # ponytail: the owner's SEALING cells must postdate the snapshot.
             # A net with runs elsewhere but only stubs on the seal (alu1 O
             # vs AB) is tile geometry, not order — blaming it burns restarts.
-            if (owner in gate_nets and owner != failed
+            if ((owner in gate_nets or owner in inps) and owner != failed
                     and owner in ordered[:cut]
                     and (owner, failed) not in precede
                     and any(c not in stub_wires for c in seals.get(owner, ()))):
                 return owner
-        return None
+            return None
 
     def _displace(failed, owner, death):
         """Move the sealer's wire instead of reordering (cycle-breaker).

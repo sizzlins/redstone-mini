@@ -2556,3 +2556,7 @@ freeze this pattern (verified unit) for XOR/AND/FA assembly.
 ## Night 2026-10-04 (alu4 bands: b1/b2 green, b0 parked)
 
 b1 SIM MISMATCH traced to A0B0 boundary stuck lit (y=3 flight over torch zone); DODGED via inputs_first (7518). b2 green via long jogs (6957). b0 OP1 port (4,12) in sealed pocket: 8 approaches failed (sidestep/astar, reorder, seeds, NOFLAT, maze, TERR, IN-order, arg-swap-useless). PARKED with precise TODO (placement reachability gate vs lane keep-out). Method: PYTHONHASHSEED=0 for deterministic forensics. Full trace: MORNING-REPORT.md.
+
+## Night 2026-10-04 (blame covers input seals; alu4 b1/b2 green, b0 parked)
+
+alu4 bands 1 (7518) and 2 (6957) green via existing ladder diversity (inputs_first/long jogs) -- no code. Band 0 OP1 port in sealed pocket: bulk of session. Root-caused to lane-vs-lane seals (99 wire vs 8 solid) that blame could not see (refused non-gate nets). Fix: inputs blame + input precede order (green-neutral by construction, suite bit-identical). 10 approaches on b0 failed (sidestep/astar, reorder, seeds, NOFLAT, maze, TERR, IN-order, arg-swap-useless); parked with precise TODO (placement reachability gate vs lane keep-out). Probes force-added: sidestep/banddiag/jmap/boxmap/srcmax/maze_one/one_ladder_ext. Method: PYTHONHASHSEED=0 for deterministic forensics.
