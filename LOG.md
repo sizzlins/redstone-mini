@@ -2552,3 +2552,7 @@ smaller (every cell load-bearing). This is a MACHINE discovery (527
 blind constructions, sim-verified), not a hand design: the first
 torchless gate with no torch material anywhere. Staged plan unblocked:
 freeze this pattern (verified unit) for XOR/AND/FA assembly.
+
+## Night 2026-10-04 (alu4 bands: b1/b2 green, b0 parked)
+
+b1 SIM MISMATCH traced to A0B0 boundary stuck lit (y=3 flight over torch zone); DODGED via inputs_first (7518). b2 green via long jogs (6957). b0 OP1 port (4,12) in sealed pocket: 8 approaches failed (sidestep/astar, reorder, seeds, NOFLAT, maze, TERR, IN-order, arg-swap-useless). PARKED with precise TODO (placement reachability gate vs lane keep-out). Method: PYTHONHASHSEED=0 for deterministic forensics. Full trace: MORNING-REPORT.md.
