@@ -3240,3 +3240,78 @@ nonhier 6/6 exit 0; diff_engine ALL IDENTICAL; hier_verify alu1 VERIFY OK
 
 Nothing under an engine-fingerprint file was touched (verify_par.py and
 hier_verify.py are scratch/), so no verify cache was voided.
+
+---- FINDING 3, the semantics, read out of the independent engine ----
+Read-only, D:\put gitrepos here\cmc\src\core\redstone\engine.js:132-136:
+
+  case BLOCK.LEVER:
+    if (leverOn(n.meta)) {
+      const [sx, sy, sz] = DIRS[leverAttach(n.meta) || DIR_DOWN];
+      if (nx + sx === x && ny + sy === y && nz + sz === z) p = 15;
+    }
+
+So cmc's lever is:
+  - ON iff the BLOCKSTATE says powered=true. No vector, no pin concept.
+  - a SINGLE-CELL directional source: exactly the one cell along its attach
+    face, enforced by the nx+sx===x guard. Not a neighbour-powering block.
+(engine.js:201 and :389 agree: component power is leverOn(meta) ? 15 : 0.)
+
+That is vanilla, and it also kills the tempting shortcut. Treating a powered
+non-pin lever as a redstone block WOULD be wrong in general: an rblk powers
+its adjacent sides as well, a lever does not. In not_full.pkl the lever has no
+adjacent dust so the shortcut happens to give the right answer there, which
+is exactly how a shortcut like that survives long enough to cause damage.
+
+THE FAITHFUL FIX, for whoever takes it (NOT applied tonight, see below):
+sim and simvec both need a constant-ON lever as a source category that is
+directional and single-cell, powered from the blockstate rather than from
+`vec`. It cannot be `rblk` (over-powers sides) and cannot be `torch` (sim's
+torches carry burnout logic a lever does not have). In sim.py the natural
+home is the branch ladder beside `elif rear in rblk: rl = 15` in comp_in, plus
+the matching dust_lvl term; in simvec it is the code/payload ladder at
+simvec.py:92 where LEVER is code 2 with payload = pin key -- the payload is
+the blindness, since a non-pin lever's payload is a coordinate that is never
+a key in the vector. Both files must move together (the mirror requirement is
+hard: diff_engine diverges otherwise).
+
+WHY NOT TONIGHT, stated plainly rather than as a shrug: this is shared core,
+the mirror is mandatory, the faithful model needs a new source category in two
+engines, and there is no vanilla oracle in this environment to adjudicate --
+the 10/4 finding was that the live rig cannot serve as one. Changing sim until
+it agrees with the only other implementation available, with a known
+directional subtlety, is the sim-overfit trap this whole verification layer
+was built to catch. The finding stands on its own as evidence and costs
+nothing; a wrong physics change costs the 21 green builds.
+
+------------------------------------------------------------
+THE BANK PATH IS NOW GATED (10/4 handoff next step 3)
+------------------------------------------------------------
+scratch/export_bank.py runs scratch/verify2.py --diff-all FIRST -- our sim AND
+cmc, per cell -- and refuses to write anything unless both engines pass every
+vector AND the per-cell differential is empty. Before this, export ran on a
+sim-green alone, which is exactly the condition under which a build can
+overfit the simulator.
+
+The gate is a subprocess under a hard timeout and its exit code is CHECKED, not
+discarded (opt agent's hier_verify bug: a RED stage discarded, and the stale
+merge.pkl certified green instead).
+
+Recipe resolution: the pkl's own 'recipe' field if present, else auto-match by
+io pin NAMES against recipes/*.txt -- the same rule sweep.py uses, because
+scoring a build against the wrong netlist is how alu4_build.pkl came to look
+like a physics failure. If neither resolves, the gate REFUSES rather than
+guessing (--recipe PATH overrides).
+
+--force is the operator's escape hatch and it is not silent: it writes
+build_<label>.UNGATED.txt next to the export saying the build was never gated.
+That is the difference between an override and a hole.
+
+BOTH DIRECTIONS TESTED, because a gate only ever seen passing is untested:
+  red   scratch/not_full.pkl  -> SIM ok=False CMC ok=True DIFF 7/10 cells,
+          "REFUSING TO EXPORT", exit 1, and NO export files written. The gate
+          re-derived Finding 3 independently.
+  green scratch/compact_add2/best.pkl -> SIM ok=True CMC ok=True,
+          DIFF 0/25872 cells over 16 vectors, all three formats written,
+          exit 0.
+Test artifacts left in place (never delete): build_testgreen.{mcfunction,
+schem,html}.
