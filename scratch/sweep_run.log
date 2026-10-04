@@ -1,0 +1,85 @@
+sweeping 98 pkls against 33 recipes (max_vectors=4 diff=True)
+alu1_avtest                        alu1.txt                   CACHED sim=True  cmc=True  cells 0/25528 rep 0/3700
+alu1_current                       alu1.txt                   CACHED sim=False cmc=False cells 0/22412 rep 0/3216
+alu1_final_merged                  alu1.txt                   CACHED sim=True  cmc=True  cells 0/25528 rep 0/3700
+alu1_gap_merged                    alu1.txt                   CACHED sim=True  cmc=True  cells 0/25528 rep 0/3700
+alu1_self_merged                   alu1.txt                   CACHED sim=True  cmc=True  cells 0/41584 rep 0/5996
+alu1glass                          alu1.txt                   CACHED sim=True  cmc=True  cells 0/22412 rep 0/3216
+alu1merge                          alu1.txt                   CACHED sim=True  cmc=True  cells 0/25528 rep 0/3700
+alu1new_merged                     alu1.txt                   CACHED sim=True  cmc=True  cells 0/25528 rep 0/3700
+alu1new_nb                         alu1.txt                   CACHED sim=True  cmc=True  cells 0/23648 rep 0/3392
+alu4_av                            alu4.txt                   CACHED sim=False cmc=False cells 0/103260 rep 0/14764
+alu4_av2                           alu4.txt                   CACHED sim=True  cmc=True  cells 0/103260 rep 0/14764
+alu4_av7                           alu4.txt                   CACHED sim=True  cmc=True  cells 0/103260 rep 0/14764
+alu4_build                         alu4.txt                   CACHED sim=False cmc=False cells 0/58536 rep 0/8236
+alu4_tailA                         alu4.txt                   CACHED sim=True  cmc=True  cells 0/103260 rep 0/14764
+alu4_tp4                           alu4.txt                   CACHED sim=True  cmc=True  cells 0/103260 rep 0/14764
+alu4_tp5                           alu4.txt                   CACHED sim=True  cmc=True  cells 0/103260 rep 0/14764
+alu4ab                             alu4.txt                   CACHED sim=True  cmc=True  cells 0/122328 rep 0/17472
+alu4ab2                            alu4.txt                   CACHED sim=True  cmc=True  cells 0/122328 rep 0/17472
+alu4bank                           alu4.txt                   CACHED sim=False cmc=False cells 0/103260 rep 0/14764
+alu4bank2                          alu4.txt                   CACHED sim=False cmc=False cells 0/103260 rep 0/14764
+alu4bank_ins                       alu4.txt                   CACHED sim=False cmc=False cells 21619/103260 rep 3017/14764
+alu4ctrl                           alu4.txt                   CACHED sim=False cmc=False cells 0/58536 rep 0/8236
+alu4ctrl2                          alu4.txt                   CACHED sim=False cmc=False cells 0/58536 rep 0/8236
+alu4ctrl3                          alu4.txt                   CACHED sim=False cmc=False cells 0/58536 rep 0/8236
+alu4ctrl4                          alu4.txt                   CACHED sim=False cmc=False cells 0/58536 rep 0/8236
+alu4ctrl5                          alu4.txt                   CACHED sim=False cmc=False cells 0/58536 rep 0/8236
+alu4ctrl6                          alu4.txt                   CACHED sim=False cmc=False cells 0/58536 rep 0/8236
+alu4fix                            alu4.txt                   CACHED sim=True  cmc=True  cells 0/103900 rep 0/14824
+alu4fresh                          alu4.txt                   CACHED sim=False cmc=False cells 0/103260 rep 0/14764
+alu4glass7                         alu4.txt                   CACHED sim=True  cmc=True  cells 0/103260 rep 0/14764
+alu4merge                          alu4.txt                   CACHED sim=True  cmc=True  cells 0/122328 rep 0/17472
+alu4merge.preflip                  alu4.txt                   CACHED sim=True  cmc=True  cells 0/59184 rep 0/8420
+alu4mergeNEW                       alu4.txt                   CACHED sim=True  cmc=False 
+alu4mergeNEW4                      alu4.txt                   CACHED sim=True  cmc=False 
+alu4mergeNEW5                      alu4.txt                   CACHED sim=False cmc=False cells 0/58536 rep 0/8236
+alu4merge_g                        alu4.txt                   CACHED sim=True  cmc=True  cells 0/122328 rep 0/17472
+best                               add2.txt                   CACHED sim=True  cmc=True  cells 0/6468 rep 0/896
+cpu4bank                           cpu4.txt                   CACHED sim=False cmc=False cells 0/0 rep 0/0
+cpu4merge                          cpu4.txt                   CACHED sim=False cmc=False 
+cpu4merge2                         cpu4.txt                   CACHED sim=False cmc=True  cells 0/0 rep 0/0
+cpu4merge3                         cpu4.txt                   CACHED sim=False cmc=False 
+cpu4merge4                         cpu4.txt                   CACHED sim=False cmc=False cells 0/0 rep 0/0
+cpu4merge_nopurge                  cpu4.txt                   CACHED sim=False cmc=False 
+cpu4newctrl                        cpu4.txt                   CACHED sim=False cmc=False cells 0/0 rep 0/0
+cpu4retry_merge                    cpu4.txt                   sim=False cmc=True  cells 0/0 rep 0/0
+cpuhyp                             cpu4.txt                   sim=False cmc=False 
+cpunosr                            cpu4.txt                   sim=False cmc=False 
+not_full                           not1.txt                   sim=False cmc=True  cells 9/20 rep 0/0  DIFF
+
+==================================================================
+sweep done in 148s: 98 builds
+  green in BOTH engines : 21
+  per-cell DIFFERENCES  : 2  <-- investigate first
+  failing an engine     : 27
+  skipped (no build/recipe): 50
+   FAIL alu1_current.pkl               sim=False cmc=False 
+   FAIL alu4_av.pkl                    sim=False cmc=False 
+   FAIL alu4_build.pkl                 sim=False cmc=False 
+   FAIL alu4bank.pkl                   sim=False cmc=False 
+   FAIL alu4bank2.pkl                  sim=False cmc=False 
+   FAIL alu4bank_ins.pkl               sim=False cmc=False 
+   FAIL alu4ctrl.pkl                   sim=False cmc=False 
+   FAIL alu4ctrl2.pkl                  sim=False cmc=False 
+   FAIL alu4ctrl3.pkl                  sim=False cmc=False 
+   FAIL alu4ctrl4.pkl                  sim=False cmc=False 
+   FAIL alu4ctrl5.pkl                  sim=False cmc=False 
+   FAIL alu4ctrl6.pkl                  sim=False cmc=False 
+   FAIL alu4fresh.pkl                  sim=False cmc=False 
+   FAIL alu4mergeNEW.pkl               sim=True  cmc=False 
+   FAIL alu4mergeNEW4.pkl              sim=True  cmc=False 
+   FAIL alu4mergeNEW5.pkl              sim=False cmc=False 
+   FAIL cpu4bank.pkl                   sim=False cmc=False RuntimeError: TORCH BURNOUT at (664, 1, 233) (shipping red)
+   FAIL cpu4merge.pkl                  sim=False cmc=False RuntimeError: TORCH BURNOUT at (658, 1, 73) (shipping red)
+   FAIL cpu4merge2.pkl                 sim=False cmc=True  RuntimeError: TORCH BURNOUT at (658, 1, 133) (shipping red)
+   FAIL cpu4merge3.pkl                 sim=False cmc=False RuntimeError: TORCH BURNOUT at (658, 1, 133) (shipping red)
+   FAIL cpu4merge4.pkl                 sim=False cmc=False RuntimeError: TORCH BURNOUT at (658, 1, 133) (shipping red)
+   FAIL cpu4merge_nopurge.pkl          sim=False cmc=False RuntimeError: TORCH BURNOUT at (658, 1, 73) (shipping red)
+   FAIL cpu4newctrl.pkl                sim=False cmc=False RuntimeError: TORCH BURNOUT at (658, 1, 133) (shipping red)
+   FAIL cpu4retry_merge.pkl            sim=False cmc=True  RuntimeError: TORCH BURNOUT at (767, 1, 249) (shipping red)
+   FAIL cpuhyp.pkl                     sim=False cmc=False RuntimeError: TORCH BURNOUT at (658, 1, 73) (shipping red)
+   FAIL cpunosr.pkl                    sim=False cmc=False RuntimeError: TORCH BURNOUT at (658, 1, 73) (shipping red)
+   FAIL not_full.pkl                   sim=False cmc=True  
+   DIFF alu4bank_ins.pkl               21619/103260 cells, 3017/14764 repeaters
+   DIFF not_full.pkl                   9/20 cells, 0/0 repeaters

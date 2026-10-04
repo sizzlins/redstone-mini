@@ -1,30 +1,44 @@
 [
  {
-  "gate": "ok",
-  "gate_rc": 1,
-  "secs": 40.3,
-  "sim": false,
-  "cmc": false,
+  "status": "cached-unstamped",
+  "sim": true,
+  "cmc": true,
   "sim_raised": "",
-  "blocks": 60724,
-  "diff_cells": 21619,
-  "diff_total": 103260,
-  "diff_rep": 3017,
-  "diff_rep_total": 14764,
-  "pkl": "scratch/alu4bank_ins.pkl",
-  "recipe": "recipes\\alu4.txt",
+  "blocks": 15104,
+  "diff_cells": 0,
+  "diff_total": 25528,
+  "diff_rep": 0,
+  "diff_rep_total": 3700,
+  "pkl": "D:\\redstone-mini\\scratch\\alu1_avtest.pkl",
+  "recipe": "recipes\\alu1.txt",
   "inputs": [
-   "A0",
-   "A1",
-   "A2",
-   "A3",
-   "B0",
-   "B1",
-   "B2",
-   "B3",
+   "A",
+   "B",
+   "CIN",
    "OP0",
    "OP1"
   ],
-  "n_recipes": 3
+  "n_recipes": 1
+ },
+ {
+  "status": "cached-unstamped",
+  "sim": false,
+  "cmc": false,
+  "sim_raised": "",
+  "blocks": 13300,
+  "diff_cells": 0,
+  "diff_total": 22412,
+  "diff_rep": 0,
+  "diff_rep_total": 3216,
+  "pkl": "D:\\redstone-mini\\scratch\\alu1_current.pkl",
+  "recipe": "recipes\\alu1.txt",
+  "inputs": [
+   "A",
+   "B",
+   "CIN",
+   "OP0",
+   "OP1"
+  ],
+  "n_recipes": 1
  }
 ]

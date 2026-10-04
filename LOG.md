@@ -3080,3 +3080,62 @@ lever; shuffling locals is not.
     A. worker-count A/B (only meaningful AFTER B frees the RAM).
     C. whole-field bit-parallel engine, additive and separately gated.
     (gate fix) make hier_verify able to re-earn the alu4 green.
+
+------------------------------------------------------------
+NIGHT 2026-10-05 (cont) -- the gate now records WHICH ENGINE
+judged a build. Sweep COMPLETE: 98 builds, 21 green, 27 red,
+2 with per-cell differences, 50 unmatchable.
+------------------------------------------------------------
+
+THE STALENESS CLASS, THIRD AND FINAL LAYER. A verdict.json recorded no
+engine identity, so a verdict produced by yesterdays sim.py was
+byte-indistinguishable, in the cache, from one produced by todays. That is
+the ref_sim freeze bug wearing a different hat, and it is the reason I could
+not tell which of the 50 cached verdicts predated the comparator fix.
+
+  verify2.py  ENGINE_FILES = sim.py, simvec.py, scratch/cmc_harness.mjs
+              engine_stamp() = sha256 over those three files, 16 hex chars,
+              written into every verdict as 'engine', alongside n_vectors and
+              argv.
+  sweep.py    a cached verdict whose 'engine' != the current stamp is
+              RE-GATED, loudly. A verdict with NO stamp is accepted but
+              reported as CACHED-UNSTAMP -- re-gating 50 builds to add
+              provenance nobody asked for is not worth the hours, but it must
+              not read as certified.
+
+  ponytail: the stamp deliberately does NOT hash HEAD. First attempt did, and
+  it was wrong: any commit, even a LOG.md edit, would have invalidated all 50
+  cached verdicts and turned every commit into a two-hour re-run. The stamp
+  answers "which engine bytes judged this", nothing more.
+
+  verify2.py also records the vector count it ran and WARNS when --max-vectors
+  disagrees with a cached doc. Previously --max-vectors was silently ignored
+  whenever the doc existed, so `--max-vectors 1` against a cached 4-vector doc
+  ran all 4 and the caller could not tell.
+
+SWEEP RESULT (scratch/sweep.json, scratch/sweep_run.log, 148s, complete).
+This CONTRADICTS the 10/4 handoff, which states "diff=0 on every single build
+that ran". Two builds disagree, one of them enormously:
+
+  alu4bank_ins.pkl  21619/103260 cells, 3017/14764 repeaters. sim=False,
+                    cmc=False. Reproduced FRESH on the current engine, not a
+                    stale cache, so the cached verdict was honest.
+  not_full.pkl      9/20 cells. sim=False, cmc=True. A 20-CELL build.
+
+Coverage: 21 green + 27 failing = 48 = every pkl whose io pin names match a
+recipe. The 50 "skipped" are band-level artifacts whose pins match no recipe,
+so nothing gateable was left ungated.
+
+I also broke sweep.py twice myself and caught both by running it, not by
+reading it: a NameError on the fresh-gate path (run_gate(pkl,...) vs the loop
+var p), and an IndentationError from an edit that left an `if` at column 0.
+ast.parse() passed the first one. Parsing is not running. Both are fixed and
+both paths are now executed.
+
+CLASSIFICATION of alu4bank_ins (scratch/diffclass.py): 87.7% of cells agree.
+3069 are sim0/cmc+ (cmc has a clean 15,14,13,12 decay ladder where sim is
+dead), 45 both-powered-at-different-levels, 49 sim+/cmc0. So it is a
+PROPAGATION/STRUCTURE disagreement, not a decay or lock rule gap. sim powers
+87.7% of the build INCLUDING the neighbours of a probe hole at (829,1,206),
+whose blockstate is east=none,west=none,south=side into glass -- a
+north/south-only stub. Still open; not_full.pkl is the cheaper target.

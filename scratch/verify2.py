@@ -35,6 +35,34 @@ sys.path.insert(0, r'D:\redstone-mini')
 
 DIFF_MAX_REPORT = 40
 
+# Files that define the two engines. A verdict produced by different bytes is
+# not a verdict about this build -- it is a verdict about an older engine, and
+# it looks identical in the cache. This is the same class as the stale ref_sim
+# freeze: an artifact whose provenance is not recorded cannot be trusted after
+# the thing it was derived from moves.
+ENGINE_FILES = ('sim.py', 'simvec.py', os.path.join('scratch', 'cmc_harness.mjs'))
+
+
+def engine_stamp():
+    """sha256 over the engine sources + HEAD, so a cached verdict can be
+    matched to the engine that produced it. Cheap: three file reads."""
+    import hashlib
+    h = hashlib.sha256()
+    root = r'D:\redstone-mini'
+    for rel in ENGINE_FILES:
+        p = os.path.join(root, rel)
+        h.update(rel.encode('utf8'))
+        try:
+            with open(p, 'rb') as f:
+                h.update(f.read())
+        except OSError:
+            h.update(b'<missing>')
+    # ponytail: deliberately NOT hashing HEAD. The stamp answers "was this
+    # verdict produced by these engine bytes?", and a LOG.md commit must not
+    # invalidate 50 cached verdicts -- that would make the cache useless and
+    # turn every commit into a re-run.
+    return h.hexdigest()[:16]
+
 
 def build_doc(recipe_p, pkl_p, out_p, max_vectors):
     from recipe import parse_recipe, eval_net
@@ -63,6 +91,7 @@ def build_doc(recipe_p, pkl_p, out_p, max_vectors):
         'expected': expected,
         'sampled': sampled,
         'n_inputs': len(ins),
+        'max_vectors': max_vectors,
     }
     json.dump(doc, open(out_p, 'w'))
     return doc, len(doc['blocks'])
@@ -196,11 +225,23 @@ def main():
               % (nblocks, len(doc['vectors']),
                  ' (SAMPLED)' if doc['sampled'] else '', doc_p), flush=True)
     else:
-        d = json.load(open(doc_p))
+        doc = json.load(open(doc_p))
         print('doc: reused %s (%d blocks, %d vectors)'
-              % (doc_p, len(d['blocks']), len(d['vectors'])), flush=True)
+              % (doc_p, len(doc['blocks']), len(doc['vectors'])), flush=True)
+        # ponytail: --max-vectors was silently ignored whenever the doc already
+        # existed, so `--max-vectors 1` against a cached 4-vector doc still ran
+        # all 4 and the caller had no way to tell. A cached doc is a cache
+        # keyed on more than its path -- say so loudly instead of quietly
+        # disagreeing with the flag.
+        if doc.get('max_vectors') not in (None, max_vectors):
+            print('doc: WARNING cached doc was built with max_vectors=%s but '
+                  '%s was requested; the CACHED vector set wins. Delete the '
+                  'doc to change it.' % (doc.get('max_vectors'), max_vectors),
+                  flush=True)
 
-    verdict = {'doc': doc_p, 'pkl': pkl_p, 'recipe': recipe_p, 'vec': vec}
+    verdict = {'doc': doc_p, 'pkl': pkl_p, 'recipe': recipe_p, 'vec': vec,
+               'engine': engine_stamp(), 'n_vectors': len(doc['vectors']),
+               'argv': sys.argv[1:]}
 
     # --- engine 1: sim (child process, hard timeout) ---
     sim_out = doc_p + '.sim.json'

@@ -91,6 +91,17 @@ def row_from_verdict(v, doc):
     return r
 
 
+def engine_stamp():
+    """Current engine identity, from verify2 (single source of truth)."""
+    try:
+        if HERE not in sys.path:
+            sys.path.insert(0, HERE)
+        import verify2
+        return verify2.engine_stamp()
+    except Exception:                                        # noqa: BLE001
+        return None
+
+
 def load_verdict(doc):
     vp = doc + '.verdict.json'
     if os.path.exists(vp):
@@ -188,8 +199,12 @@ def main():
         pkls = sorted(set(glob.glob(os.path.join(HERE, '*.pkl'))
                           + glob.glob(os.path.join(HERE, '*', '*.pkl'))))
     recipes = candidate_recipes()
+    cur_stamp = engine_stamp()
     print('sweeping %d pkls against %d recipes (max_vectors=%d diff=%s)'
           % (len(pkls), len(recipes), max_vectors, diff), flush=True)
+    print('engine stamp: %s%s' % (cur_stamp,
+          '' if cur_stamp else '  (UNAVAILABLE -- cached verdicts cannot be '
+                               'checked for staleness)'), flush=True)
     rows = []
     t_start = time.time()
     for p in pkls:
@@ -214,30 +229,49 @@ def main():
         if skip_done and os.path.exists(doc + '.verdict.json'):
             r = {'status': 'cached'}
             v = load_verdict(doc)
-            # Rehydrate from the cached verdict. Previously this wrote a bare
-            # {'status': 'cached'} with NO sim/cmc/diff fields, so a resumed run
-            # produced a sweep.json that looked complete and reported zero
-            # differences for every build -- because it had no numbers at all,
-            # not because there were none. That is the worst possible failure
-            # for a gate: it reads as a clean sweep.
-            if v is not None:
-                r.update(row_from_verdict(v, doc))
+            # A verdict from DIFFERENT engine bytes is not a verdict about this
+            # build, and in the cache it is indistinguishable from a current one
+            # -- the stale ref_sim freeze all over again. Re-gate instead.
+            # An UNSTAMPED verdict (written before stamping existed) is accepted
+            # but flagged: re-gating 50 builds to add provenance nobody asked
+            # for is not worth the hours, but it must not read as certified.
+            if v and v.get('engine') and cur_stamp and v['engine'] != cur_stamp:
+                print('%-34s %-26s STALE VERDICT (engine %s != %s), re-gating'
+                      % (tag, os.path.basename(recipe)[:26], v['engine'],
+                         cur_stamp), flush=True)
             else:
-                r['status'] = 'cached-unreadable'
-            rows.append(r)
-            rows[-1].update({'pkl': p, 'recipe': os.path.relpath(recipe, ROOT),
-                             'inputs': ins, 'n_recipes': len(match)})
-            flush(out_p, rows)
-            print('%-34s %-26s CACHED sim=%-5s cmc=%-5s %s'
-                  % (tag, os.path.basename(recipe)[:26], r.get('sim'),
-                     r.get('cmc'),
-                     ('cells %s/%s rep %s/%s' % (r.get('diff_cells'),
-                                                 r.get('diff_total'),
-                                                 r.get('diff_rep'),
-                                                 r.get('diff_rep_total')))
-                     if 'diff_cells' in r else ''), flush=True)
-            continue
+                # Rehydrate from the cached verdict. Previously this wrote a bare
+                # {'status': 'cached'} with NO sim/cmc/diff fields, so a resumed
+                # run produced a sweep.json that looked complete and reported
+                # zero differences for every build -- because it carried no
+                # numbers at all, rather than because there were none. That is
+                # the worst possible failure for a gate: it reads as a clean
+                # sweep.
+                if v is not None:
+                    r.update(row_from_verdict(v, doc))
+                    if not v.get('engine'):
+                        r['status'] = 'cached-unstamped'
+                else:
+                    r['status'] = 'cached-unreadable'
+                rows.append(r)
+                rows[-1].update({'pkl': p,
+                                 'recipe': os.path.relpath(recipe, ROOT),
+                                 'inputs': ins, 'n_recipes': len(match)})
+                flush(out_p, rows)
+                print('%-34s %-26s %s sim=%-5s cmc=%-5s %s'
+                      % (tag, os.path.basename(recipe)[:26],
+                         r['status'].upper()[:14], r.get('sim'), r.get('cmc'),
+                         ('cells %s/%s rep %s/%s' % (r.get('diff_cells'),
+                                                     r.get('diff_total'),
+                                                     r.get('diff_rep'),
+                                                     r.get('diff_rep_total')))
+                      if 'diff_cells' in r else ''), flush=True)
+                continue
         if cached_only:
+            # never clobber a live sweep's summary: two writers to one out_p
+            # means whichever flushed last wins, silently
+            out_p = out_p if '--out' in args else os.path.join(
+                HERE, 'sweep_cached.json')
             rows.append({'pkl': p, 'status': 'not-gated',
                          'inputs': ins, 'outputs': outs})
             flush(out_p, rows)
