@@ -81,7 +81,15 @@ def row_from_verdict(v, doc):
     r = {'sim': v.get('sim', {}).get('ok'),
          'cmc': v.get('cmc', {}).get('ok'),
          'sim_raised': (v.get('sim', {}).get('raised') or '')[:60],
-         'blocks': len(json.load(open(doc))['blocks'])}
+         'blocks': len(json.load(open(doc))['blocks']),
+         # Coverage, because a sampled green is not an exhaustive green. The
+         # 10/4 sweep reported "0 diff" on alu4 at 4 of 1024 vectors while a
+         # 64-vector run found 49814/1957248 -- the row must say what it
+         # covered, or the next reader repeats the mistake.
+         'n_vectors': v.get('n_vectors'),
+         'vectors_sampled': json.load(open(doc)).get('sampled'),
+         'engine': v.get('engine'),
+         'cmc_stage': v.get('cmc', {}).get('stage')}
     d = v.get('diff')
     if d:
         r['diff_cells'] = d.get('mismatches')

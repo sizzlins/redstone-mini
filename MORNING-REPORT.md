@@ -215,3 +215,35 @@ touched. Their `5e2a25a` rewrite already deleted one latent crash I was about
 to log. The `coldstart --quick` gate ran green against the tree with those
 uncommitted edits present -- but treat engine-sensitive numbers as provisional
 until they commit.
+
+## CORRECTION (same night) -- my "0 diff" on alu4 was a sampling artifact
+
+The optimisation agent ran `verify2 --diff-all` on `alu4merge_g.pkl` at
+**64 vectors** and found **dust 49814/1957248 cells and 7280/279552 repeaters
+differing**. I reproduced it to the digit:
+
+    DUAL-ENGINE VERDICT: FAIL   (sim=True cmc=True diff=49814/1957248 cells)
+
+My sweep ran **4 vectors** and found 0/122328. Both numbers are true; mine
+covered 4 of 1024 vectors. The divergence lives on vectors I never sampled,
+in one contiguous region (their words: x 1082..1095, y 1..3, z 167..183,
+a ladder sim reads 12..15 and cmc reads 0 -- the *opposite* sign to the
+comparator-front bug). **Both engines still pass functionally**, so the lamps
+agree and the divergence is internal wire state -- the sim-overfit class.
+
+They proved it predates tonight (the authority engine gives identical numbers
+to the digit; `sim.py` byte-identical to HEAD). I am not re-proving that; I
+reproduced the headline number and it matches.
+
+What this costs my claims above:
+- "0 per-cell diff" for the 12 alu4 builds holds **only at 4 vectors**.
+  The sweep rows now carry `n_vectors`, `vectors_sampled`, `engine` and
+  `cmc_stage` so a sampled green cannot read as exhaustive again.
+- The alu4 1024/1024 lamp claim stands (both engines pass; verified).
+- The per-cell story for alu4 is OPEN, not closed.
+
+Worth stating plainly: this is the second time tonight a "clean" result
+turned out to be a coverage artifact (the first was the resumed `CACHED` rows
+with no numbers). The pattern is that a gate which *looks* exhaustive but is
+sampled will be read as exhaustive. Making coverage a visible field is the
+durable fix.

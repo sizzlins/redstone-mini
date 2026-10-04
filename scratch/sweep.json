@@ -1,13 +1,268 @@
 [
  {
-  "gate": "ok",
-  "gate_rc": 1,
-  "secs": 5.9,
+  "status": "cached-unstamped",
   "sim": true,
+  "cmc": true,
+  "sim_raised": "",
+  "blocks": 15104,
+  "n_vectors": null,
+  "vectors_sampled": true,
+  "engine": null,
+  "cmc_stage": null,
+  "diff_cells": 0,
+  "diff_total": 25528,
+  "diff_rep": 0,
+  "diff_rep_total": 3700,
+  "pkl": "D:\\redstone-mini\\scratch\\alu1_avtest.pkl",
+  "recipe": "recipes\\alu1.txt",
+  "inputs": [
+   "A",
+   "B",
+   "CIN",
+   "OP0",
+   "OP1"
+  ],
+  "n_recipes": 1
+ },
+ {
+  "status": "cached-unstamped",
+  "sim": false,
   "cmc": false,
   "sim_raised": "",
-  "blocks": 41031,
-  "pkl": "scratch/alu4mergeNEW.pkl",
+  "blocks": 13300,
+  "n_vectors": null,
+  "vectors_sampled": true,
+  "engine": null,
+  "cmc_stage": null,
+  "diff_cells": 0,
+  "diff_total": 22412,
+  "diff_rep": 0,
+  "diff_rep_total": 3216,
+  "pkl": "D:\\redstone-mini\\scratch\\alu1_current.pkl",
+  "recipe": "recipes\\alu1.txt",
+  "inputs": [
+   "A",
+   "B",
+   "CIN",
+   "OP0",
+   "OP1"
+  ],
+  "n_recipes": 1
+ },
+ {
+  "pkl": "D:\\redstone-mini\\scratch\\alu1_final.pkl",
+  "status": "not-a-build"
+ },
+ {
+  "status": "cached-unstamped",
+  "sim": true,
+  "cmc": true,
+  "sim_raised": "",
+  "blocks": 15104,
+  "n_vectors": null,
+  "vectors_sampled": true,
+  "engine": null,
+  "cmc_stage": null,
+  "diff_cells": 0,
+  "diff_total": 25528,
+  "diff_rep": 0,
+  "diff_rep_total": 3700,
+  "pkl": "D:\\redstone-mini\\scratch\\alu1_final_merged.pkl",
+  "recipe": "recipes\\alu1.txt",
+  "inputs": [
+   "A",
+   "B",
+   "CIN",
+   "OP0",
+   "OP1"
+  ],
+  "n_recipes": 1
+ },
+ {
+  "pkl": "D:\\redstone-mini\\scratch\\alu1_gap.pkl",
+  "status": "not-a-build"
+ },
+ {
+  "status": "cached-unstamped",
+  "sim": true,
+  "cmc": true,
+  "sim_raised": "",
+  "blocks": 15104,
+  "n_vectors": null,
+  "vectors_sampled": true,
+  "engine": null,
+  "cmc_stage": null,
+  "diff_cells": 0,
+  "diff_total": 25528,
+  "diff_rep": 0,
+  "diff_rep_total": 3700,
+  "pkl": "D:\\redstone-mini\\scratch\\alu1_gap_merged.pkl",
+  "recipe": "recipes\\alu1.txt",
+  "inputs": [
+   "A",
+   "B",
+   "CIN",
+   "OP0",
+   "OP1"
+  ],
+  "n_recipes": 1
+ },
+ {
+  "pkl": "D:\\redstone-mini\\scratch\\alu1_self_bands.pkl",
+  "status": "not-a-build"
+ },
+ {
+  "status": "cached-unstamped",
+  "sim": true,
+  "cmc": true,
+  "sim_raised": "",
+  "blocks": 24393,
+  "n_vectors": null,
+  "vectors_sampled": true,
+  "engine": null,
+  "cmc_stage": null,
+  "diff_cells": 0,
+  "diff_total": 41584,
+  "diff_rep": 0,
+  "diff_rep_total": 5996,
+  "pkl": "D:\\redstone-mini\\scratch\\alu1_self_merged.pkl",
+  "recipe": "recipes\\alu1.txt",
+  "inputs": [
+   "A",
+   "B",
+   "CIN",
+   "OP0",
+   "OP1"
+  ],
+  "n_recipes": 1
+ },
+ {
+  "pkl": "D:\\redstone-mini\\scratch\\alu1_states.pkl",
+  "status": "not-a-build"
+ },
+ {
+  "pkl": "D:\\redstone-mini\\scratch\\alu1bands.pkl",
+  "status": "not-a-build"
+ },
+ {
+  "status": "cached-unstamped",
+  "sim": true,
+  "cmc": true,
+  "sim_raised": "",
+  "blocks": 13300,
+  "n_vectors": null,
+  "vectors_sampled": true,
+  "engine": null,
+  "cmc_stage": null,
+  "diff_cells": 0,
+  "diff_total": 22412,
+  "diff_rep": 0,
+  "diff_rep_total": 3216,
+  "pkl": "D:\\redstone-mini\\scratch\\alu1glass.pkl",
+  "recipe": "recipes\\alu1.txt",
+  "inputs": [
+   "A",
+   "B",
+   "CIN",
+   "OP0",
+   "OP1"
+  ],
+  "n_recipes": 1
+ },
+ {
+  "status": "cached-unstamped",
+  "sim": true,
+  "cmc": true,
+  "sim_raised": "",
+  "blocks": 15104,
+  "n_vectors": null,
+  "vectors_sampled": true,
+  "engine": null,
+  "cmc_stage": null,
+  "diff_cells": 0,
+  "diff_total": 25528,
+  "diff_rep": 0,
+  "diff_rep_total": 3700,
+  "pkl": "D:\\redstone-mini\\scratch\\alu1merge.pkl",
+  "recipe": "recipes\\alu1.txt",
+  "inputs": [
+   "A",
+   "B",
+   "CIN",
+   "OP0",
+   "OP1"
+  ],
+  "n_recipes": 1
+ },
+ {
+  "pkl": "D:\\redstone-mini\\scratch\\alu1new_bands.pkl",
+  "status": "not-a-build"
+ },
+ {
+  "status": "cached-unstamped",
+  "sim": true,
+  "cmc": true,
+  "sim_raised": "",
+  "blocks": 15104,
+  "n_vectors": null,
+  "vectors_sampled": true,
+  "engine": null,
+  "cmc_stage": null,
+  "diff_cells": 0,
+  "diff_total": 25528,
+  "diff_rep": 0,
+  "diff_rep_total": 3700,
+  "pkl": "D:\\redstone-mini\\scratch\\alu1new_merged.pkl",
+  "recipe": "recipes\\alu1.txt",
+  "inputs": [
+   "A",
+   "B",
+   "CIN",
+   "OP0",
+   "OP1"
+  ],
+  "n_recipes": 1
+ },
+ {
+  "status": "cached-unstamped",
+  "sim": true,
+  "cmc": true,
+  "sim_raised": "",
+  "blocks": 13996,
+  "n_vectors": null,
+  "vectors_sampled": true,
+  "engine": null,
+  "cmc_stage": null,
+  "diff_cells": 0,
+  "diff_total": 23648,
+  "diff_rep": 0,
+  "diff_rep_total": 3392,
+  "pkl": "D:\\redstone-mini\\scratch\\alu1new_nb.pkl",
+  "recipe": "recipes\\alu1.txt",
+  "inputs": [
+   "A",
+   "B",
+   "CIN",
+   "OP0",
+   "OP1"
+  ],
+  "n_recipes": 1
+ },
+ {
+  "status": "cached-unstamped",
+  "sim": false,
+  "cmc": false,
+  "sim_raised": "",
+  "blocks": 60724,
+  "n_vectors": null,
+  "vectors_sampled": true,
+  "engine": null,
+  "cmc_stage": null,
+  "diff_cells": 0,
+  "diff_total": 103260,
+  "diff_rep": 0,
+  "diff_rep_total": 14764,
+  "pkl": "D:\\redstone-mini\\scratch\\alu4_av.pkl",
   "recipe": "recipes\\alu4.txt",
   "inputs": [
    "A0",
@@ -24,14 +279,20 @@
   "n_recipes": 3
  },
  {
-  "gate": "ok",
-  "gate_rc": 1,
-  "secs": 5.7,
+  "status": "cached-unstamped",
   "sim": true,
-  "cmc": false,
+  "cmc": true,
   "sim_raised": "",
-  "blocks": 41031,
-  "pkl": "scratch/alu4mergeNEW4.pkl",
+  "blocks": 60724,
+  "n_vectors": null,
+  "vectors_sampled": true,
+  "engine": null,
+  "cmc_stage": null,
+  "diff_cells": 0,
+  "diff_total": 103260,
+  "diff_rep": 0,
+  "diff_rep_total": 14764,
+  "pkl": "D:\\redstone-mini\\scratch\\alu4_av2.pkl",
   "recipe": "recipes\\alu4.txt",
   "inputs": [
    "A0",
@@ -46,5 +307,1222 @@
    "OP1"
   ],
   "n_recipes": 3
+ },
+ {
+  "status": "cached-unstamped",
+  "sim": true,
+  "cmc": true,
+  "sim_raised": "",
+  "blocks": 60724,
+  "n_vectors": null,
+  "vectors_sampled": true,
+  "engine": null,
+  "cmc_stage": null,
+  "diff_cells": 0,
+  "diff_total": 103260,
+  "diff_rep": 0,
+  "diff_rep_total": 14764,
+  "pkl": "D:\\redstone-mini\\scratch\\alu4_av7.pkl",
+  "recipe": "recipes\\alu4.txt",
+  "inputs": [
+   "A0",
+   "A1",
+   "A2",
+   "A3",
+   "B0",
+   "B1",
+   "B2",
+   "B3",
+   "OP0",
+   "OP1"
+  ],
+  "n_recipes": 3
+ },
+ {
+  "status": "cached-unstamped",
+  "sim": false,
+  "cmc": false,
+  "sim_raised": "",
+  "blocks": 35082,
+  "n_vectors": null,
+  "vectors_sampled": true,
+  "engine": null,
+  "cmc_stage": null,
+  "diff_cells": 0,
+  "diff_total": 58536,
+  "diff_rep": 0,
+  "diff_rep_total": 8236,
+  "pkl": "D:\\redstone-mini\\scratch\\alu4_build.pkl",
+  "recipe": "recipes\\alu4.txt",
+  "inputs": [
+   "A0",
+   "A1",
+   "A2",
+   "A3",
+   "B0",
+   "B1",
+   "B2",
+   "B3",
+   "OP0",
+   "OP1"
+  ],
+  "n_recipes": 3
+ },
+ {
+  "pkl": "D:\\redstone-mini\\scratch\\alu4_states.pkl",
+  "status": "not-a-build"
+ },
+ {
+  "status": "cached-unstamped",
+  "sim": true,
+  "cmc": true,
+  "sim_raised": "",
+  "blocks": 60724,
+  "n_vectors": null,
+  "vectors_sampled": true,
+  "engine": null,
+  "cmc_stage": null,
+  "diff_cells": 0,
+  "diff_total": 103260,
+  "diff_rep": 0,
+  "diff_rep_total": 14764,
+  "pkl": "D:\\redstone-mini\\scratch\\alu4_tailA.pkl",
+  "recipe": "recipes\\alu4.txt",
+  "inputs": [
+   "A0",
+   "A1",
+   "A2",
+   "A3",
+   "B0",
+   "B1",
+   "B2",
+   "B3",
+   "OP0",
+   "OP1"
+  ],
+  "n_recipes": 3
+ },
+ {
+  "status": "cached-unstamped",
+  "sim": true,
+  "cmc": true,
+  "sim_raised": "",
+  "blocks": 60724,
+  "n_vectors": null,
+  "vectors_sampled": true,
+  "engine": null,
+  "cmc_stage": null,
+  "diff_cells": 0,
+  "diff_total": 103260,
+  "diff_rep": 0,
+  "diff_rep_total": 14764,
+  "pkl": "D:\\redstone-mini\\scratch\\alu4_tp4.pkl",
+  "recipe": "recipes\\alu4.txt",
+  "inputs": [
+   "A0",
+   "A1",
+   "A2",
+   "A3",
+   "B0",
+   "B1",
+   "B2",
+   "B3",
+   "OP0",
+   "OP1"
+  ],
+  "n_recipes": 3
+ },
+ {
+  "status": "cached-unstamped",
+  "sim": true,
+  "cmc": true,
+  "sim_raised": "",
+  "blocks": 60724,
+  "n_vectors": null,
+  "vectors_sampled": true,
+  "engine": null,
+  "cmc_stage": null,
+  "diff_cells": 0,
+  "diff_total": 103260,
+  "diff_rep": 0,
+  "diff_rep_total": 14764,
+  "pkl": "D:\\redstone-mini\\scratch\\alu4_tp5.pkl",
+  "recipe": "recipes\\alu4.txt",
+  "inputs": [
+   "A0",
+   "A1",
+   "A2",
+   "A3",
+   "B0",
+   "B1",
+   "B2",
+   "B3",
+   "OP0",
+   "OP1"
+  ],
+  "n_recipes": 3
+ },
+ {
+  "status": "cached-unstamped",
+  "sim": true,
+  "cmc": true,
+  "sim_raised": "",
+  "blocks": 71560,
+  "n_vectors": null,
+  "vectors_sampled": true,
+  "engine": null,
+  "cmc_stage": null,
+  "diff_cells": 0,
+  "diff_total": 122328,
+  "diff_rep": 0,
+  "diff_rep_total": 17472,
+  "pkl": "D:\\redstone-mini\\scratch\\alu4ab.pkl",
+  "recipe": "recipes\\alu4.txt",
+  "inputs": [
+   "A0",
+   "A1",
+   "A2",
+   "A3",
+   "B0",
+   "B1",
+   "B2",
+   "B3",
+   "OP0",
+   "OP1"
+  ],
+  "n_recipes": 3
+ },
+ {
+  "status": "cached-unstamped",
+  "sim": true,
+  "cmc": true,
+  "sim_raised": "",
+  "blocks": 71560,
+  "n_vectors": null,
+  "vectors_sampled": true,
+  "engine": null,
+  "cmc_stage": null,
+  "diff_cells": 0,
+  "diff_total": 122328,
+  "diff_rep": 0,
+  "diff_rep_total": 17472,
+  "pkl": "D:\\redstone-mini\\scratch\\alu4ab2.pkl",
+  "recipe": "recipes\\alu4.txt",
+  "inputs": [
+   "A0",
+   "A1",
+   "A2",
+   "A3",
+   "B0",
+   "B1",
+   "B2",
+   "B3",
+   "OP0",
+   "OP1"
+  ],
+  "n_recipes": 3
+ },
+ {
+  "pkl": "D:\\redstone-mini\\scratch\\alu4bands.pkl",
+  "status": "not-a-build"
+ },
+ {
+  "pkl": "D:\\redstone-mini\\scratch\\alu4bands.preflip.pkl",
+  "status": "not-a-build"
+ },
+ {
+  "pkl": "D:\\redstone-mini\\scratch\\alu4bands2.pkl",
+  "status": "not-a-build"
+ },
+ {
+  "pkl": "D:\\redstone-mini\\scratch\\alu4bands3.pkl",
+  "status": "not-a-build"
+ },
+ {
+  "pkl": "D:\\redstone-mini\\scratch\\alu4bandsBANK.pkl",
+  "status": "not-a-build"
+ },
+ {
+  "pkl": "D:\\redstone-mini\\scratch\\alu4bandsFIX.pkl",
+  "status": "not-a-build"
+ },
+ {
+  "pkl": "D:\\redstone-mini\\scratch\\alu4bandsNEW.pkl.pkl",
+  "status": "not-a-build"
+ },
+ {
+  "pkl": "D:\\redstone-mini\\scratch\\alu4bandsNEW2.pkl",
+  "status": "not-a-build"
+ },
+ {
+  "pkl": "D:\\redstone-mini\\scratch\\alu4bandsNEW3.pkl",
+  "status": "not-a-build"
+ },
+ {
+  "pkl": "D:\\redstone-mini\\scratch\\alu4bandsNEW5.pkl",
+  "status": "not-a-build"
+ },
+ {
+  "status": "cached-unstamped",
+  "sim": false,
+  "cmc": false,
+  "sim_raised": "",
+  "blocks": 60724,
+  "n_vectors": null,
+  "vectors_sampled": true,
+  "engine": null,
+  "cmc_stage": null,
+  "diff_cells": 0,
+  "diff_total": 103260,
+  "diff_rep": 0,
+  "diff_rep_total": 14764,
+  "pkl": "D:\\redstone-mini\\scratch\\alu4bank.pkl",
+  "recipe": "recipes\\alu4.txt",
+  "inputs": [
+   "A0",
+   "A1",
+   "A2",
+   "A3",
+   "B0",
+   "B1",
+   "B2",
+   "B3",
+   "OP0",
+   "OP1"
+  ],
+  "n_recipes": 3
+ },
+ {
+  "status": "cached-unstamped",
+  "sim": false,
+  "cmc": false,
+  "sim_raised": "",
+  "blocks": 60724,
+  "n_vectors": null,
+  "vectors_sampled": true,
+  "engine": null,
+  "cmc_stage": null,
+  "diff_cells": 0,
+  "diff_total": 103260,
+  "diff_rep": 0,
+  "diff_rep_total": 14764,
+  "pkl": "D:\\redstone-mini\\scratch\\alu4bank2.pkl",
+  "recipe": "recipes\\alu4.txt",
+  "inputs": [
+   "A0",
+   "A1",
+   "A2",
+   "A3",
+   "B0",
+   "B1",
+   "B2",
+   "B3",
+   "OP0",
+   "OP1"
+  ],
+  "n_recipes": 3
+ },
+ {
+  "status": "cached-unstamped",
+  "sim": false,
+  "cmc": false,
+  "sim_raised": "",
+  "blocks": 60724,
+  "n_vectors": null,
+  "vectors_sampled": true,
+  "engine": null,
+  "cmc_stage": null,
+  "diff_cells": 21619,
+  "diff_total": 103260,
+  "diff_rep": 3017,
+  "diff_rep_total": 14764,
+  "pkl": "D:\\redstone-mini\\scratch\\alu4bank_ins.pkl",
+  "recipe": "recipes\\alu4.txt",
+  "inputs": [
+   "A0",
+   "A1",
+   "A2",
+   "A3",
+   "B0",
+   "B1",
+   "B2",
+   "B3",
+   "OP0",
+   "OP1"
+  ],
+  "n_recipes": 3
+ },
+ {
+  "pkl": "D:\\redstone-mini\\scratch\\alu4bankfail.pkl",
+  "status": "not-a-build"
+ },
+ {
+  "pkl": "D:\\redstone-mini\\scratch\\alu4bankfail2.pkl",
+  "status": "not-a-build"
+ },
+ {
+  "pkl": "D:\\redstone-mini\\scratch\\alu4bankstates.pkl",
+  "status": "not-a-build"
+ },
+ {
+  "status": "cached-unstamped",
+  "sim": false,
+  "cmc": false,
+  "sim_raised": "",
+  "blocks": 35082,
+  "n_vectors": null,
+  "vectors_sampled": true,
+  "engine": null,
+  "cmc_stage": null,
+  "diff_cells": 0,
+  "diff_total": 58536,
+  "diff_rep": 0,
+  "diff_rep_total": 8236,
+  "pkl": "D:\\redstone-mini\\scratch\\alu4ctrl.pkl",
+  "recipe": "recipes\\alu4.txt",
+  "inputs": [
+   "A0",
+   "A1",
+   "A2",
+   "A3",
+   "B0",
+   "B1",
+   "B2",
+   "B3",
+   "OP0",
+   "OP1"
+  ],
+  "n_recipes": 3
+ },
+ {
+  "status": "cached-unstamped",
+  "sim": false,
+  "cmc": false,
+  "sim_raised": "",
+  "blocks": 35082,
+  "n_vectors": null,
+  "vectors_sampled": true,
+  "engine": null,
+  "cmc_stage": null,
+  "diff_cells": 0,
+  "diff_total": 58536,
+  "diff_rep": 0,
+  "diff_rep_total": 8236,
+  "pkl": "D:\\redstone-mini\\scratch\\alu4ctrl2.pkl",
+  "recipe": "recipes\\alu4.txt",
+  "inputs": [
+   "A0",
+   "A1",
+   "A2",
+   "A3",
+   "B0",
+   "B1",
+   "B2",
+   "B3",
+   "OP0",
+   "OP1"
+  ],
+  "n_recipes": 3
+ },
+ {
+  "status": "cached-unstamped",
+  "sim": false,
+  "cmc": false,
+  "sim_raised": "",
+  "blocks": 35082,
+  "n_vectors": null,
+  "vectors_sampled": true,
+  "engine": null,
+  "cmc_stage": null,
+  "diff_cells": 0,
+  "diff_total": 58536,
+  "diff_rep": 0,
+  "diff_rep_total": 8236,
+  "pkl": "D:\\redstone-mini\\scratch\\alu4ctrl3.pkl",
+  "recipe": "recipes\\alu4.txt",
+  "inputs": [
+   "A0",
+   "A1",
+   "A2",
+   "A3",
+   "B0",
+   "B1",
+   "B2",
+   "B3",
+   "OP0",
+   "OP1"
+  ],
+  "n_recipes": 3
+ },
+ {
+  "status": "cached-unstamped",
+  "sim": false,
+  "cmc": false,
+  "sim_raised": "",
+  "blocks": 35082,
+  "n_vectors": null,
+  "vectors_sampled": true,
+  "engine": null,
+  "cmc_stage": null,
+  "diff_cells": 0,
+  "diff_total": 58536,
+  "diff_rep": 0,
+  "diff_rep_total": 8236,
+  "pkl": "D:\\redstone-mini\\scratch\\alu4ctrl4.pkl",
+  "recipe": "recipes\\alu4.txt",
+  "inputs": [
+   "A0",
+   "A1",
+   "A2",
+   "A3",
+   "B0",
+   "B1",
+   "B2",
+   "B3",
+   "OP0",
+   "OP1"
+  ],
+  "n_recipes": 3
+ },
+ {
+  "status": "cached-unstamped",
+  "sim": false,
+  "cmc": false,
+  "sim_raised": "",
+  "blocks": 35082,
+  "n_vectors": null,
+  "vectors_sampled": true,
+  "engine": null,
+  "cmc_stage": null,
+  "diff_cells": 0,
+  "diff_total": 58536,
+  "diff_rep": 0,
+  "diff_rep_total": 8236,
+  "pkl": "D:\\redstone-mini\\scratch\\alu4ctrl5.pkl",
+  "recipe": "recipes\\alu4.txt",
+  "inputs": [
+   "A0",
+   "A1",
+   "A2",
+   "A3",
+   "B0",
+   "B1",
+   "B2",
+   "B3",
+   "OP0",
+   "OP1"
+  ],
+  "n_recipes": 3
+ },
+ {
+  "status": "cached-unstamped",
+  "sim": false,
+  "cmc": false,
+  "sim_raised": "",
+  "blocks": 35082,
+  "n_vectors": null,
+  "vectors_sampled": true,
+  "engine": null,
+  "cmc_stage": null,
+  "diff_cells": 0,
+  "diff_total": 58536,
+  "diff_rep": 0,
+  "diff_rep_total": 8236,
+  "pkl": "D:\\redstone-mini\\scratch\\alu4ctrl6.pkl",
+  "recipe": "recipes\\alu4.txt",
+  "inputs": [
+   "A0",
+   "A1",
+   "A2",
+   "A3",
+   "B0",
+   "B1",
+   "B2",
+   "B3",
+   "OP0",
+   "OP1"
+  ],
+  "n_recipes": 3
+ },
+ {
+  "pkl": "D:\\redstone-mini\\scratch\\alu4dump.pkl",
+  "status": "not-a-build"
+ },
+ {
+  "status": "cached-unstamped",
+  "sim": true,
+  "cmc": true,
+  "sim_raised": "",
+  "blocks": 61090,
+  "n_vectors": null,
+  "vectors_sampled": true,
+  "engine": null,
+  "cmc_stage": null,
+  "diff_cells": 0,
+  "diff_total": 103900,
+  "diff_rep": 0,
+  "diff_rep_total": 14824,
+  "pkl": "D:\\redstone-mini\\scratch\\alu4fix.pkl",
+  "recipe": "recipes\\alu4.txt",
+  "inputs": [
+   "A0",
+   "A1",
+   "A2",
+   "A3",
+   "B0",
+   "B1",
+   "B2",
+   "B3",
+   "OP0",
+   "OP1"
+  ],
+  "n_recipes": 3
+ },
+ {
+  "status": "cached-unstamped",
+  "sim": false,
+  "cmc": false,
+  "sim_raised": "",
+  "blocks": 60724,
+  "n_vectors": null,
+  "vectors_sampled": true,
+  "engine": null,
+  "cmc_stage": null,
+  "diff_cells": 0,
+  "diff_total": 103260,
+  "diff_rep": 0,
+  "diff_rep_total": 14764,
+  "pkl": "D:\\redstone-mini\\scratch\\alu4fresh.pkl",
+  "recipe": "recipes\\alu4.txt",
+  "inputs": [
+   "A0",
+   "A1",
+   "A2",
+   "A3",
+   "B0",
+   "B1",
+   "B2",
+   "B3",
+   "OP0",
+   "OP1"
+  ],
+  "n_recipes": 3
+ },
+ {
+  "status": "cached-unstamped",
+  "sim": true,
+  "cmc": true,
+  "sim_raised": "",
+  "blocks": 60724,
+  "n_vectors": null,
+  "vectors_sampled": true,
+  "engine": null,
+  "cmc_stage": null,
+  "diff_cells": 0,
+  "diff_total": 103260,
+  "diff_rep": 0,
+  "diff_rep_total": 14764,
+  "pkl": "D:\\redstone-mini\\scratch\\alu4glass7.pkl",
+  "recipe": "recipes\\alu4.txt",
+  "inputs": [
+   "A0",
+   "A1",
+   "A2",
+   "A3",
+   "B0",
+   "B1",
+   "B2",
+   "B3",
+   "OP0",
+   "OP1"
+  ],
+  "n_recipes": 3
+ },
+ {
+  "status": "cached-unstamped",
+  "sim": true,
+  "cmc": true,
+  "sim_raised": "",
+  "blocks": 71560,
+  "n_vectors": null,
+  "vectors_sampled": true,
+  "engine": null,
+  "cmc_stage": null,
+  "diff_cells": 0,
+  "diff_total": 122328,
+  "diff_rep": 0,
+  "diff_rep_total": 17472,
+  "pkl": "D:\\redstone-mini\\scratch\\alu4merge.pkl",
+  "recipe": "recipes\\alu4.txt",
+  "inputs": [
+   "A0",
+   "A1",
+   "A2",
+   "A3",
+   "B0",
+   "B1",
+   "B2",
+   "B3",
+   "OP0",
+   "OP1"
+  ],
+  "n_recipes": 3
+ },
+ {
+  "status": "cached-unstamped",
+  "sim": true,
+  "cmc": true,
+  "sim_raised": "",
+  "blocks": 35516,
+  "n_vectors": null,
+  "vectors_sampled": true,
+  "engine": null,
+  "cmc_stage": null,
+  "diff_cells": 0,
+  "diff_total": 59184,
+  "diff_rep": 0,
+  "diff_rep_total": 8420,
+  "pkl": "D:\\redstone-mini\\scratch\\alu4merge.preflip.pkl",
+  "recipe": "recipes\\alu4.txt",
+  "inputs": [
+   "A0",
+   "A1",
+   "A2",
+   "A3",
+   "B0",
+   "B1",
+   "B2",
+   "B3",
+   "OP0",
+   "OP1"
+  ],
+  "n_recipes": 3
+ },
+ {
+  "pkl": "D:\\redstone-mini\\scratch\\alu4mergeNEW.pkl",
+  "status": "not-gated",
+  "inputs": [
+   "A0",
+   "A1",
+   "A2",
+   "A3",
+   "B0",
+   "B1",
+   "B2",
+   "B3",
+   "OP0",
+   "OP1"
+  ],
+  "outputs": [
+   "COUT",
+   "Y0",
+   "Y1",
+   "Y2",
+   "Y3"
+  ]
+ },
+ {
+  "pkl": "D:\\redstone-mini\\scratch\\alu4mergeNEW4.pkl",
+  "status": "not-gated",
+  "inputs": [
+   "A0",
+   "A1",
+   "A2",
+   "A3",
+   "B0",
+   "B1",
+   "B2",
+   "B3",
+   "OP0",
+   "OP1"
+  ],
+  "outputs": [
+   "COUT",
+   "Y0",
+   "Y1",
+   "Y2",
+   "Y3"
+  ]
+ },
+ {
+  "status": "cached-unstamped",
+  "sim": false,
+  "cmc": false,
+  "sim_raised": "",
+  "blocks": 35082,
+  "n_vectors": null,
+  "vectors_sampled": true,
+  "engine": null,
+  "cmc_stage": null,
+  "diff_cells": 0,
+  "diff_total": 58536,
+  "diff_rep": 0,
+  "diff_rep_total": 8236,
+  "pkl": "D:\\redstone-mini\\scratch\\alu4mergeNEW5.pkl",
+  "recipe": "recipes\\alu4.txt",
+  "inputs": [
+   "A0",
+   "A1",
+   "A2",
+   "A3",
+   "B0",
+   "B1",
+   "B2",
+   "B3",
+   "OP0",
+   "OP1"
+  ],
+  "n_recipes": 3
+ },
+ {
+  "status": "cached-unstamped",
+  "sim": true,
+  "cmc": true,
+  "sim_raised": "",
+  "blocks": 71560,
+  "n_vectors": null,
+  "vectors_sampled": true,
+  "engine": null,
+  "cmc_stage": null,
+  "diff_cells": 0,
+  "diff_total": 122328,
+  "diff_rep": 0,
+  "diff_rep_total": 17472,
+  "pkl": "D:\\redstone-mini\\scratch\\alu4merge_g.pkl",
+  "recipe": "recipes\\alu4.txt",
+  "inputs": [
+   "A0",
+   "A1",
+   "A2",
+   "A3",
+   "B0",
+   "B1",
+   "B2",
+   "B3",
+   "OP0",
+   "OP1"
+  ],
+  "n_recipes": 3
+ },
+ {
+  "pkl": "D:\\redstone-mini\\scratch\\alu4states.pkl",
+  "status": "not-a-build"
+ },
+ {
+  "pkl": "D:\\redstone-mini\\scratch\\bankfail.pkl",
+  "status": "not-a-build"
+ },
+ {
+  "pkl": "D:\\redstone-mini\\scratch\\bankfail3.pkl",
+  "status": "not-a-build"
+ },
+ {
+  "pkl": "D:\\redstone-mini\\scratch\\bankfail4.pkl",
+  "status": "not-a-build"
+ },
+ {
+  "status": "cached-unstamped",
+  "sim": true,
+  "cmc": true,
+  "sim_raised": "",
+  "blocks": 3730,
+  "n_vectors": null,
+  "vectors_sampled": true,
+  "engine": null,
+  "cmc_stage": null,
+  "diff_cells": 0,
+  "diff_total": 6468,
+  "diff_rep": 0,
+  "diff_rep_total": 896,
+  "pkl": "D:\\redstone-mini\\scratch\\compact_add2\\best.pkl",
+  "recipe": "recipes\\add2.txt",
+  "inputs": [
+   "A0",
+   "A1",
+   "B0",
+   "B1"
+  ],
+  "n_recipes": 1
+ },
+ {
+  "pkl": "D:\\redstone-mini\\scratch\\cpu4bands.pkl",
+  "status": "not-a-build"
+ },
+ {
+  "pkl": "D:\\redstone-mini\\scratch\\cpu4bands2.pkl",
+  "status": "not-a-build"
+ },
+ {
+  "pkl": "D:\\redstone-mini\\scratch\\cpu4bands3.pkl",
+  "status": "not-a-build"
+ },
+ {
+  "pkl": "D:\\redstone-mini\\scratch\\cpu4bandsBANK.pkl",
+  "status": "not-a-build"
+ },
+ {
+  "status": "cached-unstamped",
+  "sim": false,
+  "cmc": false,
+  "sim_raised": "RuntimeError: TORCH BURNOUT at (664, 1, 233) (shipping red)",
+  "blocks": 101031,
+  "n_vectors": null,
+  "vectors_sampled": true,
+  "engine": null,
+  "cmc_stage": null,
+  "diff_cells": 0,
+  "diff_total": 0,
+  "diff_rep": 0,
+  "diff_rep_total": 0,
+  "pkl": "D:\\redstone-mini\\scratch\\cpu4bank.pkl",
+  "recipe": "recipes\\cpu4.txt",
+  "inputs": [
+   "D0",
+   "D1",
+   "D2",
+   "D3",
+   "OPC0",
+   "OPC1",
+   "OPC2"
+  ],
+  "n_recipes": 2
+ },
+ {
+  "status": "cached-unstamped",
+  "sim": false,
+  "cmc": false,
+  "sim_raised": "RuntimeError: TORCH BURNOUT at (658, 1, 73) (shipping red)",
+  "blocks": 76444,
+  "n_vectors": null,
+  "vectors_sampled": true,
+  "engine": null,
+  "cmc_stage": null,
+  "pkl": "D:\\redstone-mini\\scratch\\cpu4merge.pkl",
+  "recipe": "recipes\\cpu4.txt",
+  "inputs": [
+   "D0",
+   "D1",
+   "D2",
+   "D3",
+   "OPC0",
+   "OPC1",
+   "OPC2"
+  ],
+  "n_recipes": 2
+ },
+ {
+  "status": "cached-unstamped",
+  "sim": false,
+  "cmc": true,
+  "sim_raised": "RuntimeError: TORCH BURNOUT at (658, 1, 133) (shipping red)",
+  "blocks": 72055,
+  "n_vectors": null,
+  "vectors_sampled": true,
+  "engine": null,
+  "cmc_stage": null,
+  "diff_cells": 0,
+  "diff_total": 0,
+  "diff_rep": 0,
+  "diff_rep_total": 0,
+  "pkl": "D:\\redstone-mini\\scratch\\cpu4merge2.pkl",
+  "recipe": "recipes\\cpu4.txt",
+  "inputs": [
+   "D0",
+   "D1",
+   "D2",
+   "D3",
+   "OPC0",
+   "OPC1",
+   "OPC2"
+  ],
+  "n_recipes": 2
+ },
+ {
+  "status": "cached-unstamped",
+  "sim": false,
+  "cmc": false,
+  "sim_raised": "RuntimeError: TORCH BURNOUT at (658, 1, 133) (shipping red)",
+  "blocks": 74473,
+  "n_vectors": null,
+  "vectors_sampled": true,
+  "engine": null,
+  "cmc_stage": null,
+  "pkl": "D:\\redstone-mini\\scratch\\cpu4merge3.pkl",
+  "recipe": "recipes\\cpu4.txt",
+  "inputs": [
+   "D0",
+   "D1",
+   "D2",
+   "D3",
+   "OPC0",
+   "OPC1",
+   "OPC2"
+  ],
+  "n_recipes": 2
+ },
+ {
+  "status": "cached-unstamped",
+  "sim": false,
+  "cmc": false,
+  "sim_raised": "RuntimeError: TORCH BURNOUT at (658, 1, 133) (shipping red)",
+  "blocks": 72055,
+  "n_vectors": null,
+  "vectors_sampled": true,
+  "engine": null,
+  "cmc_stage": null,
+  "diff_cells": 0,
+  "diff_total": 0,
+  "diff_rep": 0,
+  "diff_rep_total": 0,
+  "pkl": "D:\\redstone-mini\\scratch\\cpu4merge4.pkl",
+  "recipe": "recipes\\cpu4.txt",
+  "inputs": [
+   "D0",
+   "D1",
+   "D2",
+   "D3",
+   "OPC0",
+   "OPC1",
+   "OPC2"
+  ],
+  "n_recipes": 2
+ },
+ {
+  "status": "cached-unstamped",
+  "sim": false,
+  "cmc": false,
+  "sim_raised": "RuntimeError: TORCH BURNOUT at (658, 1, 73) (shipping red)",
+  "blocks": 76444,
+  "n_vectors": null,
+  "vectors_sampled": true,
+  "engine": null,
+  "cmc_stage": null,
+  "pkl": "D:\\redstone-mini\\scratch\\cpu4merge_nopurge.pkl",
+  "recipe": "recipes\\cpu4.txt",
+  "inputs": [
+   "D0",
+   "D1",
+   "D2",
+   "D3",
+   "OPC0",
+   "OPC1",
+   "OPC2"
+  ],
+  "n_recipes": 2
+ },
+ {
+  "status": "cached-unstamped",
+  "sim": false,
+  "cmc": false,
+  "sim_raised": "RuntimeError: TORCH BURNOUT at (658, 1, 133) (shipping red)",
+  "blocks": 73589,
+  "n_vectors": null,
+  "vectors_sampled": true,
+  "engine": null,
+  "cmc_stage": null,
+  "diff_cells": 0,
+  "diff_total": 0,
+  "diff_rep": 0,
+  "diff_rep_total": 0,
+  "pkl": "D:\\redstone-mini\\scratch\\cpu4newctrl.pkl",
+  "recipe": "recipes\\cpu4.txt",
+  "inputs": [
+   "D0",
+   "D1",
+   "D2",
+   "D3",
+   "OPC0",
+   "OPC1",
+   "OPC2"
+  ],
+  "n_recipes": 2
+ },
+ {
+  "pkl": "D:\\redstone-mini\\scratch\\cpu4open.pkl",
+  "status": "not-a-build"
+ },
+ {
+  "pkl": "D:\\redstone-mini\\scratch\\cpu4retry_bands.pkl",
+  "status": "not-a-build"
+ },
+ {
+  "status": "cached-unstamped",
+  "sim": false,
+  "cmc": true,
+  "sim_raised": "RuntimeError: TORCH BURNOUT at (767, 1, 249) (shipping red)",
+  "blocks": 129953,
+  "n_vectors": null,
+  "vectors_sampled": true,
+  "engine": null,
+  "cmc_stage": null,
+  "diff_cells": 0,
+  "diff_total": 0,
+  "diff_rep": 0,
+  "diff_rep_total": 0,
+  "pkl": "D:\\redstone-mini\\scratch\\cpu4retry_merge.pkl",
+  "recipe": "recipes\\cpu4.txt",
+  "inputs": [
+   "D0",
+   "D1",
+   "D2",
+   "D3",
+   "OPC0",
+   "OPC1",
+   "OPC2"
+  ],
+  "n_recipes": 2
+ },
+ {
+  "pkl": "D:\\redstone-mini\\scratch\\cpu4ring.pkl",
+  "status": "not-a-build"
+ },
+ {
+  "pkl": "D:\\redstone-mini\\scratch\\cpu4states.pkl",
+  "status": "not-a-build"
+ },
+ {
+  "pkl": "D:\\redstone-mini\\scratch\\cpufail.pkl",
+  "status": "not-a-build"
+ },
+ {
+  "status": "cached-unstamped",
+  "sim": false,
+  "cmc": false,
+  "sim_raised": "RuntimeError: TORCH BURNOUT at (658, 1, 73) (shipping red)",
+  "blocks": 76445,
+  "n_vectors": null,
+  "vectors_sampled": true,
+  "engine": null,
+  "cmc_stage": null,
+  "pkl": "D:\\redstone-mini\\scratch\\cpuhyp.pkl",
+  "recipe": "recipes\\cpu4.txt",
+  "inputs": [
+   "D0",
+   "D1",
+   "D2",
+   "D3",
+   "OPC0",
+   "OPC1",
+   "OPC2"
+  ],
+  "n_recipes": 2
+ },
+ {
+  "pkl": "D:\\redstone-mini\\scratch\\cpum.pkl",
+  "status": "not-a-build"
+ },
+ {
+  "status": "cached-unstamped",
+  "sim": false,
+  "cmc": false,
+  "sim_raised": "RuntimeError: TORCH BURNOUT at (658, 1, 73) (shipping red)",
+  "blocks": 76444,
+  "n_vectors": null,
+  "vectors_sampled": true,
+  "engine": null,
+  "cmc_stage": null,
+  "pkl": "D:\\redstone-mini\\scratch\\cpunosr.pkl",
+  "recipe": "recipes\\cpu4.txt",
+  "inputs": [
+   "D0",
+   "D1",
+   "D2",
+   "D3",
+   "OPC0",
+   "OPC1",
+   "OPC2"
+  ],
+  "n_recipes": 2
+ },
+ {
+  "pkl": "D:\\redstone-mini\\scratch\\each_R0Q2.pkl",
+  "status": "not-a-build"
+ },
+ {
+  "pkl": "D:\\redstone-mini\\scratch\\each_R0Q3.pkl",
+  "status": "not-a-build"
+ },
+ {
+  "pkl": "D:\\redstone-mini\\scratch\\each_R1Q3.pkl",
+  "status": "not-a-build"
+ },
+ {
+  "pkl": "D:\\redstone-mini\\scratch\\evo_and\\best.pkl",
+  "status": "not-a-build"
+ },
+ {
+  "pkl": "D:\\redstone-mini\\scratch\\evo_fa1\\best.pkl",
+  "status": "not-a-build"
+ },
+ {
+  "pkl": "D:\\redstone-mini\\scratch\\evo_fa1b\\best.pkl",
+  "status": "not-a-build"
+ },
+ {
+  "pkl": "D:\\redstone-mini\\scratch\\evo_not\\best.pkl",
+  "status": "not-a-build"
+ },
+ {
+  "pkl": "D:\\redstone-mini\\scratch\\evo_xor2\\best.pkl",
+  "status": "not-a-build"
+ },
+ {
+  "pkl": "D:\\redstone-mini\\scratch\\evo_xor\\best.pkl",
+  "status": "not-a-build"
+ },
+ {
+  "pkl": "D:\\redstone-mini\\scratch\\m.pkl",
+  "status": "not-a-build"
+ },
+ {
+  "pkl": "D:\\redstone-mini\\scratch\\mazegreen.pkl",
+  "status": "not-a-build"
+ },
+ {
+  "pkl": "D:\\redstone-mini\\scratch\\mux4_new.pkl",
+  "status": "not-a-build"
+ },
+ {
+  "pkl": "D:\\redstone-mini\\scratch\\not_found.pkl",
+  "status": "not-a-build"
+ },
+ {
+  "status": "cached-unstamped",
+  "sim": false,
+  "cmc": true,
+  "sim_raised": "",
+  "blocks": 146,
+  "n_vectors": null,
+  "vectors_sampled": false,
+  "engine": null,
+  "cmc_stage": null,
+  "diff_cells": 9,
+  "diff_total": 20,
+  "diff_rep": 0,
+  "diff_rep_total": 0,
+  "pkl": "D:\\redstone-mini\\scratch\\not_full.pkl",
+  "recipe": "recipes\\not1.txt",
+  "inputs": [
+   "A"
+  ],
+  "n_recipes": 1
+ },
+ {
+  "pkl": "D:\\redstone-mini\\scratch\\stackfail.pkl",
+  "status": "no-recipe",
+  "inputs": [
+   "a",
+   "b",
+   "c"
+  ],
+  "outputs": [
+   "c2",
+   "t",
+   "y"
+  ]
+ },
+ {
+  "pkl": "D:\\redstone-mini\\scratch\\xor_miss3.pkl",
+  "status": "not-a-build"
  }
 ]
