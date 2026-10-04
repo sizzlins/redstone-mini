@@ -37,3 +37,10 @@ best.pkl saved after EVERY accept, so a killed run keeps its progress
 Hit-rate curve: 47 -> 29 -> 19 -> 11 -> 10 -> 10 -> 5. Still positive,
 clearly asymptotic. Wire tier still yielding; repeater/cobble/stone
 tiers still untouched. Promoted 4366 to build_add2opt.*.
+
+## Night 2026-10-04 (4): squeeze slice seed7
+
+    slice 300e seed7: 4366 -> 4350 (16 acc, 5%)
+    total: 4648 -> 4350 (-298, -6.4%, ~1860 evals)
+
+Hit rate holding at ~5%, all wire tier. Promoted 4350 to build_add2opt.*.
