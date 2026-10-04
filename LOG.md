@@ -3879,3 +3879,29 @@ Also: `scratch/evlog.py` now says what to do instead of crashing when
 simvec.py carries no instrumentation (the log line would cost an append per
 event, so it is not in the shipped engine). tbl_diff needs no instrumentation
 and is the gate.
+
+## 2026-10-05 (session 2) -- Opt D: sign-encoded ring items. 1.05x, and 268k fewer allocations per vector
+
+The wake append is the hottest line in the engine (268293 per vector) and it
+did `here.append(c2 << 1)` -- a fresh int every single time. Sign encoding
+removes that: a non-negative item is "re-evaluate this cell", a NEGATIVE item
+is "this cell's scheduled tick is firing", decoded `~item`. Ids are >= 0, so
+the two can never collide.
+
+So the common case is a plain reference to an int that ALREADY EXISTS in the
+table, and appending allocates nothing. Only the rare fire events (a few
+thousand per vector, not 268k) pay for `~c`. Seeding goes back to
+`b0.extend(dust_ids)`, which also drops 71542 int allocations per vector.
+
+    A/B vs the previous engine (null = 0.99x):  1.05x / 1.05x / 1.06x
+    vs the ORIGINAL tuple engine, alu4:         2.34x   IDENTICAL
+    vs the ORIGINAL tuple engine, alu1:         1.97x   IDENTICAL
+
+Cumulative engine position: ~2.34x the original table engine per vector, with
+tbl_diff reporting zero divergences across every spread vector tried.
+
+Gates: tbl_diff IDENTICAL both builds, simvec self-check, all sim.py canaries,
+compose, compose_check 144/322/224/214, nonhier 6/6, diff_engine ALL
+IDENTICAL, hier_verify alu1 VERIFY OK 32/32 exit 0 (41.0s), alu4 VERIFY OK
+1024/1024 exit 0 cold (46.6s -- the fastest cold sweep of the session, against
+52.4s for the same sweep right after the table rewrite).

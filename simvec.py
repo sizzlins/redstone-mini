@@ -823,30 +823,32 @@ def run_scalar(vec, ctx, init=None, until=None, tick_cap=None, step_cap=None,
     t_att = st["t_att"]
     t_dead = st["t_dead"]
 
-    # ponytail: a ring item is ONE int, `(cell_id << 1) | firing`. That packing
-    # is not a micro-optimisation, it is a correctness requirement found by
-    # diffing the two engines' event logs: a repeater with delay 0 schedules its
-    # fire into the CURRENT bucket, and its own re-evaluation can already be
-    # queued EARLIER in that same bucket. Both items are legitimately pending at
-    # once, and they mean different things. A tuple (kind, cell) said which; a
-    # single `fire[cell]` byte could not, because both items share the cell --
-    # the rewrite ran the FIRE branch for the eval item, repeaters came on one
-    # tick early, and every vector settled 1 tick sooner with the same final
-    # state. One int still beats one 2-tuple per event, and the low bit costs a
-    # shift and a mask.
+    # ponytail: a ring item is ONE int. Non-negative means "re-evaluate this
+    # cell"; NEGATIVE means "this cell's scheduled tick is firing", decoded as
+    # `~item`. The packing is not a micro-optimisation, it is a correctness
+    # requirement found by diffing the two engines' event logs: a repeater with
+    # delay 0 schedules its fire into the CURRENT bucket while its own
+    # re-evaluation is already queued EARLIER in that same bucket, so both items
+    # are legitimately pending at once and they mean different things. A tuple
+    # (kind, cell) said which; a single per-cell flag could not, because both
+    # items share the cell -- the rewrite ran the FIRE branch for the eval item,
+    # repeaters came on one tick early, and every vector settled a tick sooner
+    # with the same final state.
+    #
+    # Why negative and not `(id << 1) | firing`: wake appends are the hot path
+    # (268293 per vector) and `id << 1` allocates a fresh int every time.
+    # Sign encoding leaves the common case a plain reference to an int that
+    # already exists in the table, so appending allocates nothing; only the
+    # rare fire events (a few thousand per vector) pay for `~c`. Ids are >= 0,
+    # so the two can never collide.
     RING = 5
     buckets = [[] for _ in range(RING)]
     b0 = buckets[0]
-    for i in dust_ids:
-        b0.append(i << 1)
-    for i in st["pwr_ids"]:
-        b0.append(i << 1)
-    for i in torch_ids:
-        b0.append(i << 1)
-    for i in rep_ids:
-        b0.append(i << 1)
-    for i in comp_ids:
-        b0.append(i << 1)
+    b0.extend(dust_ids)
+    b0.extend(st["pwr_ids"])
+    b0.extend(torch_ids)
+    b0.extend(rep_ids)
+    b0.extend(comp_ids)
     alive = len(b0)
     # ponytail: one coalescing marker per ring slot, REUSED across ticks.
     # A fresh set() per bucket cost 268293 set-adds plus 268293 hashed
@@ -916,8 +918,12 @@ def run_scalar(vec, ctx, init=None, until=None, tick_cap=None, step_cap=None,
         here = buckets[i]
         qc = qmark[i]
         for it in items:
-            c = it >> 1
-            f = it & 1
+            if it >= 0:
+                c = it
+                f = 0
+            else:
+                c = ~it
+                f = 1
             qc[c] = 0
             steps += 1
             if steps - last_change > stall_cap:
@@ -938,7 +944,7 @@ def run_scalar(vec, ctx, init=None, until=None, tick_cap=None, step_cap=None,
                     for c2 in wake[c]:
                         if not qc[c2]:
                             qc[c2] = 1
-                            here.append(c2 << 1)
+                            here.append(c2)
                             alive += 1
             elif k == 1:                     # cobble / powerable solid
                 pwrd, strong = _cob_state_s(c, st, pw, tl, ron, vec)
@@ -953,7 +959,7 @@ def run_scalar(vec, ctx, init=None, until=None, tick_cap=None, step_cap=None,
                     for c2 in wake[c]:
                         if not qc[c2]:
                             qc[c2] = 1
-                            here.append(c2 << 1)
+                            here.append(c2)
                             alive += 1
             elif k == 2:                     # torch: re-evaluate, or fire
                 if f:
@@ -980,7 +986,7 @@ def run_scalar(vec, ctx, init=None, until=None, tick_cap=None, step_cap=None,
                         for c2 in wake[c]:
                             if not qc[c2]:
                                 qc[c2] = 1
-                                here.append(c2 << 1)
+                                here.append(c2)
                                 alive += 1
                 else:
                     if tsched[c] or t_dead[c]:
@@ -988,7 +994,7 @@ def run_scalar(vec, ctx, init=None, until=None, tick_cap=None, step_cap=None,
                     a = t_att[c]
                     if (not (pb[a] if a >= 0 else False)) != tl[c]:
                         tsched[c] = 1
-                        buckets[(now + 1) % RING].append((c << 1) | 1)
+                        buckets[(now + 1) % RING].append(~c)
                         alive += 1
             elif k == 4:                     # repeater: re-evaluate, or fire
                 if f:
@@ -1003,14 +1009,14 @@ def run_scalar(vec, ctx, init=None, until=None, tick_cap=None, step_cap=None,
                         for c2 in wake[c]:
                             if not qc[c2]:
                                 qc[c2] = 1
-                                here.append(c2 << 1)
+                                here.append(c2)
                                 alive += 1
                 else:
                     if rsched[c]:
                         continue
                     if _rep_on_s(c, st, pw, pb, tl, ron, con, vec) != ron[c]:
                         rsched[c] = 1
-                        buckets[(now + r_delay[c]) % RING].append((c << 1) | 1)
+                        buckets[(now + r_delay[c]) % RING].append(~c)
                         alive += 1
             else:                            # comparator: re-evaluate, or fire
                 if f:
@@ -1025,14 +1031,14 @@ def run_scalar(vec, ctx, init=None, until=None, tick_cap=None, step_cap=None,
                         for c2 in wake[c]:
                             if not qc[c2]:
                                 qc[c2] = 1
-                                here.append(c2 << 1)
+                                here.append(c2)
                                 alive += 1
                 else:
                     if ksched[c]:
                         continue
                     if _comp_out_s(c, st, pw, pbs, tl, ron, con, vec) != con[c]:
                         ksched[c] = 1
-                        buckets[(now + 1) % RING].append((c << 1) | 1)
+                        buckets[(now + 1) % RING].append(~c)
                         alive += 1
 
     lamps = {}
