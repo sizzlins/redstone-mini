@@ -32,9 +32,9 @@ self-check, `compose.py`, `compose_check`, `nonhier_suite` 6/6,
 
 ## 2. What I changed, with numbers
 
-Everything below is in `simvec.py`'s table engine and `scratch/verify_par.py`.
-The engine is **~2.65x** the original per vector, measured interleaved in one
-process so machine load cannot flatter it.
+Everything below is in `simvec.py`'s table engine, `scratch/verify_par.py`, and
+one env gate in `compose.py`. The engine is **~2.8x** the original per vector,
+measured interleaved in one process so machine load cannot flatter it.
 
 | # | change | measured |
 |---|---|---|
@@ -43,16 +43,27 @@ process so machine load cannot flatter it.
 | 3 | Coalescing marker: fresh `set()` per bucket → one reused bytearray per ring slot | **1.05x** (268k set-adds/vector gone) |
 | 4 | Sign-encoded ring items — a wake append is now a plain reference, no `<< 1` | **1.05x** (268k allocations/vector gone) |
 | 5 | **Exact wake map.** `wake` was geometric; only 45% of its edges are read by any relation | **1.11x**, 54.6% of the walk provably dead |
-| 6 | `verify_par`: a worker owns a *group* of chunks, so tables are built once per worker, not once per chunk | ~1–5% (see retracted #2) |
-| 7 | `REDSTONE_ASTAR_MARGIN` env gate (default **unchanged** at 64) | answers your queued question; 64 is load-bearing |
+| 6 | **Boolean edges wake only on a zero crossing.** 57.4% of edges only care *whether* a cell is lit, not how much | **1.06x**, `_cob_state_s` calls halved (149k→62k/vector) |
+| 7 | `verify_par`: a worker owns a *group* of chunks, so tables are built once per worker, not once per chunk | ~1–5% (see retracted #2) |
+| 8 | `REDSTONE_ASTAR_MARGIN` env gate (default **unchanged** at 64) | answers your queued question; 64 is load-bearing |
 
-Full 1024-vector alu4 sweep, 16 workers, cold: **108.7s → 35.9s**.
+Headline: **full 1024-vector alu4 sweep, 16 workers, cold: 108.7s → 35.7s (3.0x)**.
+Per worker: tables 112.5 MB → 40.6 MB, peak heap 230.8 MB → 75.6 MB.
+Python-level calls per 5 vectors: 11.52M → 1.72M (**6.7x fewer**).
 
-**Tried, measured, reverted** (so nobody re-derives them): cyclic-GC
+**Tried, measured, not banked** (so nobody re-derives them): cyclic-GC
 hypothesis (82808 tracked objects, 0 gen2 collections, `gc.disable()` = 1.00x);
 `if v:` guards on the dust classes (~2%, noise); amortising the stall check
-(1.00x); neighbour-locality via Morton was mostly *not* the parallelism answer;
-the pre-astar flood and bound-prune ideas from the previous session.
+(1.00x); reading each changed cell's state once instead of twice (1.00x);
+turning `_dust_lvl_s`/`_cob_state_s` into closures over `run_scalar`'s locals
+(~1.01x); neighbour-locality via Morton was mostly *not* the parallelism
+answer; the pre-astar flood and bound-prune ideas from the previous session.
+
+**Where the parallelism ceiling actually is:** per-vector cost goes 0.233s
+alone → 0.377s at 4 workers → 0.775s at 16. Aggregate saturates at ~4.9x on 16
+workers because the box is an i7-13650HX (14 physical / 20 logical,
+hyperthreaded) with a co-tenant agent and a Minecraft server resident. Parallel
+tuning is bounded by the machine, not by this code.
 
 ## 3. THE RED FLAG — alu4 vs cmc
 
@@ -105,14 +116,28 @@ I retracted these in `LOG.md` rather than leaving them to be cited:
    new 77.7/98.5s. The within-variant spread exceeds the difference. Real
    effect ~1–5%.
 3. **"Engine 1.62x."** That used vector indices 0–4, the easy end. Interleaved
-   over *spread* indices three times: 2.19x / 2.10x / 2.10x.
+   over *spread* indices three times: 2.19x / 2.10x / 2.10x. The final engine
+   measures 2.78–2.86x against the original on the same instrument.
 
 **Rule this box taught me:** single-run wall clock is not a measurement here
 (~36s spread on an 80s run — 14 physical cores, hyperthreaded, plus a
 co-tenant agent and a Minecraft server). Only interleaved same-process ratios
 mean anything. `scratch/tbl_diff.py` now takes a `REDSTONE_TBLDIFF_REF` so a
 micro-opt is A/B'd against the engine it replaces, and a byte-identical
-reference must read 1.00x before I trust it.
+reference must read 1.00x before I trust it. Two of my own probes (`tbl_equiv`,
+`wake_miss`) also had the target/reader direction inverted and reported
+confident nonsense until I fixed them — the engine had the same inversion once,
+and `REDSTONE_WAKE_EXACT=0` / `REDSTONE_WAKE_BOOL=0` / `REDSTONE_SERIES_VERIFY=1`
+are the escape hatches if anyone doubts any of it.
+
+### Tools I added (each says what it is for in its docstring)
+
+`tbl_diff.py` old-vs-new differ over all six returned values, on *spread*
+vector indices, with three deliberate fault injections so a differ that has
+never gone red is visibly untested · `tbl_equiv.py` exhaustive table
+equivalence · `wake_need.py` / `wake_miss.py` / `wake_split.py` the wake-map
+measurements · `tbl_probe.py` / `tbl_sizes.py` / `build_prof.py` memory and
+build cost · `tickdiff.py` first divergent tick · `evlog.py` event-stream diff.
 
 ## 5. What I need from you
 
