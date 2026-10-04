@@ -848,6 +848,15 @@ def run_scalar(vec, ctx, init=None, until=None, tick_cap=None, step_cap=None,
     for i in comp_ids:
         b0.append(i << 1)
     alive = len(b0)
+    # ponytail: one coalescing marker per ring slot, REUSED across ticks.
+    # A fresh set() per bucket cost 268293 set-adds plus 268293 hashed
+    # 3-tuple-ish lookups per vector; a bytearray index is a direct byte test.
+    # The mark is cleared when a cell is POPPED, which is exactly the old
+    # hset semantics (queued for this tick and not yet evaluated), so a cell
+    # evaluated earlier in the tick is re-queueable again -- and since every
+    # appended item is popped in the SAME tick, the slot is clean by the time
+    # the ring comes back around to it.
+    qmark = [bytearray(nid) for _ in range(RING)]
     now = steps = last_change = 0
     max_gap = 0
     stall_cap = max(stall, 3 * st["ncells"])
@@ -896,19 +905,20 @@ def run_scalar(vec, ctx, init=None, until=None, tick_cap=None, step_cap=None,
         alive -= len(items)
         # ponytail: coalesce same-tick re-queues. A cell woken five times in
         # one tick is evaluated five times and changes at most once, because it
-        # reads the LATEST state when it finally runs. `hset` holds exactly the
+        # reads the LATEST state when it finally runs. `qc` holds exactly the
         # items already queued for THIS tick and not yet evaluated, so dropping
         # a duplicate is free; a cell that has already been evaluated this tick
-        # is not in `hset` and gets re-queued normally. Insertion order is
-        # preserved (first occurrence wins), so the event sequence the physics
-        # sees is unchanged -- this removes work, not information. It is a set
-        # of ints now, so the membership test is a hash of a small int instead
-        # of a 3-tuple.
+        # has had its mark cleared and gets re-queued normally. Insertion order
+        # is preserved (first occurrence wins), so the event sequence the
+        # physics sees is unchanged -- this removes work, not information. It
+        # is a bytearray per ring slot, not a set, so the membership test is a
+        # byte load instead of a hash-table probe.
         here = buckets[i]
-        hset = set()
+        qc = qmark[i]
         for it in items:
             c = it >> 1
             f = it & 1
+            qc[c] = 0
             steps += 1
             if steps - last_change > stall_cap:
                 raise RuntimeError(
@@ -926,8 +936,8 @@ def run_scalar(vec, ctx, init=None, until=None, tick_cap=None, step_cap=None,
                         max_gap = g
                     last_change = steps
                     for c2 in wake[c]:
-                        if c2 not in hset:
-                            hset.add(c2)
+                        if not qc[c2]:
+                            qc[c2] = 1
                             here.append(c2 << 1)
                             alive += 1
             elif k == 1:                     # cobble / powerable solid
@@ -941,8 +951,8 @@ def run_scalar(vec, ctx, init=None, until=None, tick_cap=None, step_cap=None,
                         max_gap = g
                     last_change = steps
                     for c2 in wake[c]:
-                        if c2 not in hset:
-                            hset.add(c2)
+                        if not qc[c2]:
+                            qc[c2] = 1
                             here.append(c2 << 1)
                             alive += 1
             elif k == 2:                     # torch: re-evaluate, or fire
@@ -968,8 +978,8 @@ def run_scalar(vec, ctx, init=None, until=None, tick_cap=None, step_cap=None,
                             max_gap = g
                         last_change = steps
                         for c2 in wake[c]:
-                            if c2 not in hset:
-                                hset.add(c2)
+                            if not qc[c2]:
+                                qc[c2] = 1
                                 here.append(c2 << 1)
                                 alive += 1
                 else:
@@ -991,8 +1001,8 @@ def run_scalar(vec, ctx, init=None, until=None, tick_cap=None, step_cap=None,
                             max_gap = g
                         last_change = steps
                         for c2 in wake[c]:
-                            if c2 not in hset:
-                                hset.add(c2)
+                            if not qc[c2]:
+                                qc[c2] = 1
                                 here.append(c2 << 1)
                                 alive += 1
                 else:
@@ -1013,8 +1023,8 @@ def run_scalar(vec, ctx, init=None, until=None, tick_cap=None, step_cap=None,
                             max_gap = g
                         last_change = steps
                         for c2 in wake[c]:
-                            if c2 not in hset:
-                                hset.add(c2)
+                            if not qc[c2]:
+                                qc[c2] = 1
                                 here.append(c2 << 1)
                                 alive += 1
                 else:

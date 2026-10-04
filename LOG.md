@@ -3851,3 +3851,31 @@ all sim.py canaries, diff_engine ALL IDENTICAL, compose_check 144/322/224/214,
 nonhier 6/6, tbl_equiv EQUIVALENT except the 5 intended l_arm reductions,
 hier_verify alu1 VERIFY OK 32/32 exit 0 (41.8s), alu4 VERIFY OK 1024/1024
 exit 0 (54.9s, cold).
+
+## 2026-10-05 (session 2) -- Opt C: per-slot bytearray instead of a per-tick set. 1.05x, and a reusable A/B rig
+
+`tbl_diff.py` grew REDSTONE_TBLDIFF_REF so a MICRO-optimisation can be A/B'd
+against the engine it replaces, not only against the original tuple engine.
+Null check first: point it at a byte-identical copy and it must read 1.00x --
+it read 0.99x over three runs, so the instrument is honest before it is used.
+
+Change: the same-tick coalescing marker moves from a fresh `set()` per bucket
+to one REUSED bytearray per ring slot. The mark is cleared when a cell is
+popped, which is exactly the old `hset` semantics (queued for this tick and not
+yet evaluated), so a cell evaluated earlier in the tick is re-queueable again;
+and because every appended item is popped in the SAME tick, the slot is clean
+by the time the ring comes back to it. Measured cost removed: 268293 set-adds
+plus 268293 hash-probes per vector.
+
+    A/B vs the previous engine (null = 0.99x):  1.04x / 1.06x / 1.05x
+    vs the ORIGINAL tuple engine, alu4:         2.25x / 2.25x  IDENTICAL
+
+Gates: tbl_diff IDENTICAL on alu1 and alu4 spread vectors, simvec self-check,
+all sim.py canaries, compose, compose_check 144/322/224/214, nonhier 6/6,
+diff_engine ALL IDENTICAL, hier_verify alu1 VERIFY OK 32/32 exit 0 (42.7s),
+alu4 VERIFY OK 1024/1024 exit 0 cold (54.9s).
+
+Also: `scratch/evlog.py` now says what to do instead of crashing when
+simvec.py carries no instrumentation (the log line would cost an append per
+event, so it is not in the shipped engine). tbl_diff needs no instrumentation
+and is the gate.
