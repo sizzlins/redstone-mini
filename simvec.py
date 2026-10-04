@@ -471,6 +471,7 @@ def _tables_from(P, inp):
     # wake fix: a side lighting mid-run must re-evaluate, or a lock
     # engages/releases silently stale). Static neighbors (lever/rblk)
     # never emit, so their edges cost nothing.
+    lock_edges = []
     for c in rep:
         i = cid[c]
         d = rep[c]
@@ -485,6 +486,7 @@ def _tables_from(P, inp):
                 continue
             if i in wake[j]:
                 continue
+            lock_edges.append((j, i))
             if isinstance(wake[j], list):
                 wake[j].append(i)
             else:
@@ -520,6 +522,97 @@ def _tables_from(P, inp):
         up = (x, y + 1, z)
         if up in dust:
             l_up[i] = cid[up]
+
+    # ---- exact wake: drop edges no relation can ever read ----------------
+    # ponytail: `wake` above is GEOMETRIC -- every cell that changes wakes all
+    # ~26 cells around it, because geometry is where a dependency could hide.
+    # But run_scalar reads a cell variable only through the named relations
+    # below, so most of that walk is provably dead. Measured on alu4 with
+    # scratch/wake_need.py: 279376 geometric edges vs 126946 real
+    # dependencies -- **54.6% dead**, and ZERO of the real dependencies were
+    # missing from the geometric map, so the exact map is a strict SUBSET.
+    #
+    # Why subset + order-preserving makes this safe rather than hopeful:
+    #   - every dropped edge connects a change to a cell with NO relation to it,
+    #     so evaluating that cell was a no-op that could not append anything;
+    #   - survivors keep their original RELATIVE order, so the ring queue is a
+    #     subsequence of the old one, not a reordering.
+    # Together: same values, same tick counts. Verified, not assumed -- see the
+    # tbl_diff and 1024-vector entries in LOG.md.
+    #
+    # Completeness rests on one claim: run_scalar touches a cell variable ONLY
+    # through the tables enumerated here (plus a torch's attachment block).
+    # Miss a relation and the affected cell keeps a stale value, which every
+    # gate would show as a changed verdict -- diff_engine's 3-way agreement, the
+    # 1024-vector alu4 verify, the 32-vector alu1 verify, the nonhier suite.
+    # REDSTONE_WAKE_EXACT=0 restores the geometric map instantly if that is ever
+    # in doubt; it costs ~nothing to keep the switch.
+    if _os.environ.get("REDSTONE_WAKE_EXACT", "1") == "1":
+        SH = 24                      # packs (target, reader) into one int
+        pairs = set()
+        add = pairs.add
+
+        def _e(t, r):
+            if t >= 0:
+                add((t << SH) | r)
+
+        for i in range(nid):
+            k = kind[i]
+            if k == 0:               # dust READS these
+                for m in d_dust[i]:
+                    _e(m, i)
+                for m in d_cup[i]:
+                    _e(m, i)
+                for m in d_cdn[i]:
+                    _e(m, i)
+                for m in d_comp[i]:
+                    _e(m, i)
+                for m in d_cob[i]:
+                    _e(m, i)
+                for m in d_torch[i]:
+                    _e(m, i)
+                for m in d_rep[i]:
+                    _e(m, i)
+                _e(d_bt[i], i)
+                _e(d_bp[i], i)
+            elif k == 1:             # a powered solid READS these
+                for m in c_dust[i]:
+                    _e(m, i)
+                for m in c_torch[i]:
+                    _e(m, i)
+                for m in c_rep[i]:
+                    _e(m, i)
+                _e(c_up[i], i)
+            elif k == 4:             # a repeater READS its one input + sides
+                sp = r_src[i]
+                if sp is not None and sp[0] != 2:
+                    _e(sp[1], i)
+                s0, s1 = r_side[i]
+                if s0 is not None and s0[0] != 2:
+                    _e(s0[1], i)
+                if s1 is not None and s1[0] != 2:
+                    _e(s1[1], i)
+            elif k == 6:             # a comparator READS rear + two sides
+                sp = k_rear[i]
+                if sp is not None and sp[0] != 2:
+                    _e(sp[1], i)
+                s0, s1 = k_side[i]
+                if s0 is not None and s0[0] != 2:
+                    _e(s0[1], i)
+                if s1 is not None and s1[0] != 2:
+                    _e(s1[1], i)
+            elif k == 2:             # a torch READS its attachment block
+                _e(t_att[i], i)
+        for j, i in lock_edges:     # repeater lock sides (already exact)
+            add((j << SH) | i)
+        for i in range(nid):
+            w = wake[i]
+            if w:
+                # wake[i] is "cells to re-evaluate when cell i CHANGES", so i
+                # is the TARGET and m is the READER. Getting this backwards
+                # drops almost every edge and the engine settles in one tick
+                # with nothing lit -- it is the whole ballgame.
+                wake[i] = [m for m in w if ((i << SH) | m) in pairs]
 
     return {"cell": cell, "cid": cid, "nid": nid, "kind": kind,
             "dust_ids": dust_ids, "pwr_ids": pwr_ids, "torch_ids": torch_ids,

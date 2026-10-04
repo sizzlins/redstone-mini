@@ -3905,3 +3905,76 @@ compose, compose_check 144/322/224/214, nonhier 6/6, diff_engine ALL
 IDENTICAL, hier_verify alu1 VERIFY OK 32/32 exit 0 (41.0s), alu4 VERIFY OK
 1024/1024 exit 0 cold (46.6s -- the fastest cold sweep of the session, against
 52.4s for the same sweep right after the table rewrite).
+
+## 2026-10-05 (session 2) -- Opt E: the exact wake map. 1.11x, and 55% of the walk was dead
+
+The largest single structural win left, and the one that needed the most care.
+
+### Why it is safe (measured before it was built)
+
+`wake` is GEOMETRIC: a cell that changes wakes all ~26 cells around it, because
+geometry is where a dependency could hide. But run_scalar reads a cell variable
+only through NAMED relations. `scratch/wake_need.py` (new) builds the exact
+reverse-dependency map from the tables and compares:
+
+    alu4: 279376 geometric edges vs 126946 real dependencies -> **54.6% dead**
+          precise edges ABSENT from the geometric map: 0
+
+Zero absent is the load-bearing number: the exact map is a strict SUBSET, so
+filtering can only remove edges no table relation needs. Survivors keep their
+original RELATIVE ORDER, so the ring queue becomes a subsequence of the old one
+rather than a reordering, and a dropped cell was a no-op evaluation that could
+not have appended anything. Same values, same ticks.
+
+### The bug, and it was mine
+
+First run DIVERGED on every vector -- `ticks=1`, nothing lit. Two instruments:
+
+- `scratch/wake_miss.py` (new) rebuilds the map with the filter off and on and
+  GENERICALLY scans every table (not a hand-written second copy of the
+  enumeration -- that mistake is what hid it) for each dropped target.
+- `tickdiff` showed the whole tell: the engine settled in ONE tick, i.e. the
+  filter had dropped essentially every edge.
+
+The filter's membership test was INVERTED. `wake[i]` means "cells to re-evaluate
+when cell i CHANGES", so `i` is the TARGET and `m` is the READER; I had tested
+"does reader i depend on target m". One index. Both probe scripts
+(`wake_need`, `wake_miss`) had the direction right, which is exactly why they
+correctly reported the geometric map was complete while the engine was wrong.
+
+Two of my own probes were also wrong in this stretch, and both are now fixed:
+`tbl_equiv` compared the new engine's IDS against the old engine's CELL TUPLES
+(everything looked like an EXTRA), and it still compared wake for EQUALITY after
+the filter made a subset correct. It now checks subset, and `wake_miss` owns
+completeness.
+
+### Measured
+
+    edges            alu4 279376 -> 126946      alu1 59352 -> 26914 (45% kept)
+    A/B vs the geometric engine (null 0.99x):  1.12x / 1.10x / 1.11x
+    vs the ORIGINAL tuple engine, alu4:         2.65x   IDENTICAL
+    full 1024-vector alu4 sweep, 16 workers:    41.3s  (was 46.6s, was 52.4s)
+
+Less than the 54.6% edge cut suggests, because the surviving edges are not
+proportionally cheaper and the filter costs ~0.15s of table build.
+
+### Gates
+
+    tbl_diff            IDENTICAL, alu1 4 vectors and alu4 6 spread vectors
+    tbl_equiv           filter OFF: fully equivalent (only the 2 known l_arm
+                        diffs). filter ON: subset, no EXTRA edges.
+    simvec self-check   run_scalar bit-identical to sim._run_vec
+    sim.py              all 8 physics canaries ok
+    compose / check     ok; 144 / 322 / 224 / 214 identical
+    nonhier_suite       6/6 exit 0
+    diff_engine         ALL IDENTICAL (3-way vs the frozen authority)
+    hier_verify alu1    VERIFY OK 32/32 exit 0 (41.6s)
+    alu4                VERIFY OK 1024/1024 exit 0, cold (41.3s)
+    verify2 (cmc)       DUAL-ENGINE VERDICT: PASS -- sim vs cmc per cell on
+                        alu1: **0 / 204224 dust cells differ, 0 / 29600
+                        repeaters differ**
+
+That last one is the strongest evidence available in this repo and it is not
+ours: cmc is an independent implementation, so agreeing with it per cell cannot
+be an artifact of our own tables. REDSTONE_WAKE_EXACT=0 restores the geometric
+map instantly if anyone ever doubts the enumeration.
