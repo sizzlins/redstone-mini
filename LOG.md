@@ -81,3 +81,7 @@ alu1 VERIFY OK 32/32 (hier gate, BANK=1 default). recipes/alu1.txt promoted to 2
     Polite mode while prof_router lives: REDSTONE_SERIES_VERIFY=1 in my env only (no engine edits) -> my slices run 1 core, their wall-clock timings unskewed. Slower (~4s/eval), so 100-eval slices.
     repeater-completion slice (serial, polite): 4278 -> 4269 (9 acc/100e). Repeater tier nearly exhausted. Promoted.
     Other agent's profiler exited (no python left). Resuming full-parallel slices.
+
+## Night 2026-10-04 (opt pass: serial sim -43%)
+
+sim.py _run_vec: stall window + lever/trace env reads hoisted out of hot loop (4.6M len, ~170k environ.get gone); same-tick re-queue coalescing in sched() (simvec's proven pattern). Measured: 5.34s -> 3.04s / 16.75M -> 9.08M calls. redstone_mini.py skips the 2.2s demo preamble on custom runs. Exporters (0.58s), simvec, router measured clean, untouched. Gates: sim suite + diff_engine ALL IDENTICAL + nonhier bit-identical. Heap->buckets (~11%) and dirty-bit wake (~big) parked as TODOs -- reference-ordering risk.

@@ -43,6 +43,11 @@ _MAX_SECS = float(_os.environ.get("REDSTONE_MAX_SECS", "0") or 0)
 _BOUT_N = int(_os.environ.get("REDSTONE_BURNOUT", "8"))
 _BOUT_GRACE = int(_os.environ.get("REDSTONE_BURNOUT_GRACE", "60"))
 _BOUT = {}
+# ponytail: lever-power mode, read once like simvec's _LEVPOW. cob_state
+# asked the environment per cobble evaluated (367k calls for 3 vectors);
+# the value cannot change mid-run (nothing in the process sets it), so a
+# module constant is identical and drops ~170k environ lookups per run.
+_LEVPOW = _os.environ.get("REDSTONE_LEVER_POWER", "1") == "1"
 # ponytail: Target-block projectile clocks, redstone ticks (one is two game
 # ticks, the same conversion the torch-burnout comment uses). Wiki Target:
 # ordinary projectile hits emit for 8 game ticks; arrows and tridents emit
@@ -213,6 +218,14 @@ def _run_vec(vec, init, ctx, until=None, target_hits=None):
     # torch outputs flip 1 tick after their block changes, repeaters flip
     # after their delay=1..4 stage. Levels still drain phantom latches.
     import heapq as _hq
+    # ponytail: trace flag + stall window, read once. The environment was
+    # asked per value-change (237k wake calls for 3 vectors) and the stall
+    # window recomputed 5 len()s per EVENT (4.6M len calls); neither can
+    # change mid-run (nothing in the process sets env; the five sets are
+    # fixed for the run), so run-level locals are identical.
+    _trace_path = _os.environ.get("REDSTONE_TRACE")
+    _stall_cap = max(_STALL, 3 * (len(dust) + len(pwr) + len(torch)
+                                  + len(rep) + len(comp)))
     pw, pb, pbs = {}, {}, {}
     tl = {c: False for c in torch}
     ron = {c: False for c in rep}
@@ -228,6 +241,7 @@ def _run_vec(vec, init, ctx, until=None, target_hits=None):
         for c, v in init.get("o", {}).items():
             con[c] = v
     pending, tsched, rsched, ksched, seq, ticks, steps = [], set(), set(), set(), [0], [0], [0]
+    _pend = set()  # (tick, kind, cell) currently queued; see sched()
     last_change, max_gap = [0], [0]
     # ponytail: live Target-block emissions (wiki Target). A target is opaque
     # conductive even when idle, but only a projectile hit makes it emit; tg
@@ -247,6 +261,21 @@ def _run_vec(vec, init, ctx, until=None, target_hits=None):
     _traced = [0]
 
     def sched(tick, kind, cell):
+        # ponytail: same-tick re-queue coalescing (same pattern as
+        # simvec.run_scalar, which measured 23-30% fewer evaluations).
+        # A cell woken twice before it runs is evaluated twice and changes
+        # at most once per evaluation round -- but ONLY the redundant push
+        # is dropped here, never a needed eval: the key includes the tick,
+        # and a popped key is discarded, so a cell woken again AFTER it ran
+        # re-queues normally. Already-queued duplicates (B,A,B shapes) still
+        # evaluate in heap order; only the extra wake-push vanishes. The
+        # event sequence the physics sees is unchanged -- this removes
+        # queue churn, not information. Keys die with their pop (caps raise
+        # out of the loop), so the set tracks the heap exactly.
+        _pk = (tick, kind, cell)
+        if _pk in _pend:
+            return
+        _pend.add(_pk)
         seq[0] += 1
         _hq.heappush(pending, (tick, seq[0], kind, cell))
 
@@ -381,7 +410,7 @@ def _run_vec(vec, init, ctx, until=None, target_hits=None):
             # R0Q0's stitch dust at (1011,33) to 15 through (1012,33). Bare
             # bids (hand tests) keep legacy all-side power (attach None).
             if (m in lever and vec.get(lever[m], False)
-                    and _os.environ.get("REDSTONE_LEVER_POWER", "1") == "1"
+                    and _LEVPOW
                     and (leveratt.get(m) is None or leveratt.get(m) == c)):
                 pwrd, strong = True, True
             # ponytail: a lit torch powers adjacent blocks — except the one
@@ -415,7 +444,7 @@ def _run_vec(vec, init, ctx, until=None, target_hits=None):
         if dn in rblk:
             pwrd, strong = True, True
         if (dn in lever and vec.get(lever[dn], False)
-                and _os.environ.get("REDSTONE_LEVER_POWER", "1") == "1"
+                and _LEVPOW
                 and (leveratt.get(dn) is None or leveratt.get(dn) == c)):
             pwrd, strong = True, True
         return pwrd, strong
@@ -668,14 +697,13 @@ def _run_vec(vec, init, ctx, until=None, target_hits=None):
 
     while pending and (until is None or pending[0][0] <= until):
         now, _, kind, c = _hq.heappop(pending)
+        _pend.discard((now, kind, c))
         steps[0] += 1
         # ponytail: the stall cap scales with build size. It used to be a
         # flat 5000, which a 7000-block build trips during normal tick-0
         # startup (every cell evaluates once = 7000 steps with no change
         # yet). A wedged run processes cells over and over, so 3x the cell
         # count still catches it fast while letting big builds start up.
-        _stall_cap = max(_STALL, 3 * (len(dust) + len(pwr) + len(torch)
-                                     + len(rep) + len(comp)))
         if steps[0] - last_change[0] > _stall_cap:
             raise RuntimeError(
                 f"sim STALLED on {vec}: no value change for "
@@ -726,7 +754,7 @@ def _run_vec(vec, init, ctx, until=None, target_hits=None):
             if pw.get(c, 0) != v:
                 pw[c] = v
                 flips[c] = flips.get(c, 0) + 1
-                if _os.environ.get("REDSTONE_TRACE") and _traced[0] < 400:
+                if _trace_path and _traced[0] < 400:
                     _traced[0] += 1
                     _trace.append((now, "d", c, v))
                 mark(); wake(now, c)
@@ -782,7 +810,7 @@ def _run_vec(vec, init, ctx, until=None, target_hits=None):
                         raise RuntimeError(f"TORCH BURNOUT at {c} (shipping red)")
                 tl[c] = v
                 flips[c] = flips.get(c, 0) + 1
-                if _os.environ.get("REDSTONE_TRACE") and _traced[0] < 400:
+                if _trace_path and _traced[0] < 400:
                     _traced[0] += 1
                     _trace.append((now, "T", c, v))
                 mark(); wake(now, c)

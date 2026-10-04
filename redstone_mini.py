@@ -30,8 +30,12 @@ if __name__ == "__main__":
         i = sys.argv.index("--serve")
         serve(int(sys.argv[i + 1]) if i + 1 < len(sys.argv) else 8000)
         sys.exit(0)
-    demo()
-    if len(sys.argv) > 1:  # custom recipe file
+    # ponytail: the demo is the no-arg self-test, not a preamble. It used
+    # to run on EVERY invocation (2.2s: full compose+verify+export) even
+    # when a custom recipe followed and overwrote all three outputs.
+    if len(sys.argv) <= 1:
+        demo()
+    else:  # custom recipe file
         text = open(sys.argv[1]).read()
         r = parse_recipe(text)
         blocks, size, io, st = layout_retry(r, verify=True)
