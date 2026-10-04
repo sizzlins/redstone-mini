@@ -4208,3 +4208,64 @@ means changing the order rungs are tried, which changes which rung is chosen.
 `REDSTONE_ASTAR_MARGIN` (Opt F) is the one generation lever measured: the
 window is load-bearing, 16 breaks band 0. Left for whoever owns cpu4 and the
 GA agent's live files.
+
+## 2026-10-05 (session 2, last) -- worker count is settled, and the next lever I deliberately did NOT pull
+
+### Worker count: no change (and the measurement nearly lied again)
+
+14 workers looked 8% FASTER than 16 on a best-of-2 (36.6s vs 39.8s), and 14 is
+the PHYSICAL core count of this i7-13650HX, so it had a story attached. Best-of-5:
+
+    workers=14   36.6 39.9 38.2 39.9 36.1   min 36.1s
+    workers=16   39.8 39.8 37.2 36.3 36.8   min 36.3s
+
+A tie. `hier_verify`'s existing `workers=16` stays. This is the third time in
+this session that a single-or-double sample produced a confident wrong answer
+(the table-build "regression", the class guards, and now this), which is why
+every number above 2% is best-of-N.
+
+### The next real lever, with its design, left for whoever picks it up
+
+Level edges are now the bulk of the wake walk: 54024 of 126946 on alu4. They are
+the dust-decy relations (`d_dust`, `d_cup`, `d_cdn`) and comparator outputs
+(`d_comp`), where the reader wants the exact 0..15 -- so unlike the boolean
+edges they cannot be suppressed by a crossing test.
+
+The idea, and why it is correct: **track each dust cell's current argmax
+contributor.** In `_dust_lvl_s` the decay terms are a `max` over `d_dust`,
+`d_cup`, `d_cdn` and `d_comp`; record which term produced `lv` (one extra list
+`d_argmax` of length nid). Then on a change of cell `c`, a level reader `r` can
+be skipped iff
+
+    d_argmax[r] != c   and   new_c - 1 <= pw[r]
+
+-- `c` is not what is holding `r` up, and even if it were it could not exceed
+`r`'s current level, so `r`'s value cannot change and its own wake is pure work.
+Both conditions are needed: with only the first, a DROPPING argmax would be
+skipped and `r` would keep a stale value (exactly the bug class this repo has
+been bitten by twice). `cup`/`cdn`/`d_comp` terms must be folded into the same
+argmax, and the lamp arms read `pw` only after the loop so they need no edge.
+
+Ceiling: `_dust_lvl_s` is 32% of the engine at 133k calls/vector, so this is the
+largest single remaining item. Realistically it is worth less than the boolean
+suppression, because in a plain wire each cell's argmax IS its upstream
+neighbour and nothing is skipped -- the win is only at junctions, which a dense
+ALU has plenty of. So: measure it against `tbl_diff` (expect well under 1.1x)
+BEFORE believing it, and be suspicious if it reports much more.
+
+I did not start it. Three subtle order/semantics bugs in this engine already
+cost me most of this session (the delay-0 repeater, the inverted wake filter,
+and two of my own probes carrying the same inversion). Adding argmax tracking
+to the hottest helper on the last hours of a shift whose deliverable is a
+verified-green, paste-ready build is a bad trade: the expected gain is
+single-digit percent and the failure mode is a physics bug that every lamp-level
+gate can still miss.
+
+### Housekeeping
+
+Freed 182 MB of scratch: ~30 four-megabyte pkl copies from the A/B runs. The
+pre-existing large artifacts (alu4_states.pkl 224 MB, alu4bankstates.pkl 210 MB)
+are not mine and were left alone. Tools kept for the next session: `tbl_diff`,
+`tbl_equiv`, `tbl_probe`, `tbl_sizes`, `wake_need`, `wake_miss`, `wake_split`,
+`tickdiff`, `evlog`, `build_prof`, `gc_probe`, and `simvec_old` / `simvec_geo` /
+`simvec_prev` as A/B references.
