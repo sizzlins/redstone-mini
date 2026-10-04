@@ -46,3 +46,63 @@ closed: the sim was right, the build was wrong, the build is now right.
 Squeeze loop still running. No file overlap (my work: scratch probes +
   gitignored pkls + LOG/MORNING-REPORT appends). No collisions this
   session. Tree clean except the two protected `.bak` files.
+
+---
+
+# MORNING REPORT 2026-10-04 (squeeze agent, ~12:30)
+
+## DONE: 2-bit adder 13359 -> 3730 blocks (-72%), verified
+
+| stage | blocks | how |
+|---|---|---|
+| fattened seed (GA start) | 13359 | predeterministic padding for the GA |
+| GA best, eval 40 (stalled) | 6707 | random mutation, 17 gates |
+| after op_simplify | 4648 | exact algebra: X AND X->X, NOT NOT->X, dead sweep (17->8 gates) |
+| after level-3 block compaction | **3730** | 1000+ sim-gated single deletions, all tiers |
+
+Final artifact: `build_add2opt.{mcfunction,schem,html}` (8-gate ripple-carry,
+16/16 vectors green, support-audited 0 violations, extent 323x80x4).
+Acceptance re-run this morning: recipe-identical, sim green, audit clean.
+
+## What I need from you (human)
+
+1. **Game paste of build_add2opt.schem** (16 vectors: 00+0..11+1 x cin... full
+   4-bit input space is 16 combos; lamp check S0 S1 COUT). The compactor
+   optimizes against the sim; one paste closes the loop. Non-negotiable
+   before this replaces any banked adder.
+2. **LOG merge decision**: notes/LOG-history-2026-10-04.md (other agent
+   recovered full history after mutual overwrites). I stayed append-only;
+   nothing of mine needs rescuing, but read their file before assuming
+   LOG.md is complete.
+3. **Footprint call**: count-squeeze is DONE (criterion met 4x over), but
+   width/depth (323x80) is placement-pinned: min-x=lever pins, max-x=east
+   wire trunk, z-extremes=live wire. Shrinking the box = tighter compose
+   spread / pin packing = router lane. I left evidence + ask at
+   notes/to-opt-agent.md. Say whether to pursue with them or bank 3730.
+
+## What still fails / known gaps
+
+- evo_add2 GA never resumed (memo fingerprinted, best.txt=8-gate seed ready;
+  resume command: `python scratch/evolve.py recipes/add2fat.txt
+  scratch/evo_add2 100 2` -- but the netlist is already minimal, so the GA
+  has nothing left to find there; only useful for NEW recipes).
+- Pair-deletion moves not implemented (singles exhausted; adjacent-pair
+  probe is the obvious next 1-3% if you want it -- ~20 lines in compact.py).
+- alu1glass sim-red x12 (lock ambiguity) predates me tonight; untouched,
+  other agent + your game check own it.
+- My piggyback lesson, twice learned: scripts that call sim_verify MUST
+  have the `__main__` guard (spawn re-imports), and the sim is BLIND to
+  structural support (242/300 poisoned stone deletions, caught by static
+  audit before promotion -- full story in LOG.md Night (6)). Both are now
+  enforced in compact.py (guard + _load_bearing pre-filter, FN=0 validated).
+
+## Coordination state
+
+- Other agent (router/optimization): truce held all night. Paused heavy
+  slices during their prof_router timing run; ran serial 1-core meanwhile.
+  Their engine changes are semantics-preserving per their note; my loop is
+  drift-resilient by construction. Their files (hier_*, simvec.py) and
+  processes never touched. Open thread: my notes/to-opt-agent.md footprint
+  ask; their notes/to-ga-agent.md (all three points acked in LOG.md).
+- No strays: no python processes of mine remain (verified pattern each kill
+  by command-line match before touching anything).
