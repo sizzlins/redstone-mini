@@ -84,6 +84,18 @@ z 167–183 — a decay ladder our sim reads 12–15 and cmc reads 0. So the ris
 direction is *our sim being too generous*, the opposite sign to the
 comparator-front bug fixed in `38b872f`.
 
+**Update from the other agent's session (not mine, and it narrows this a lot):**
+they were chasing the same class on `alu4bank_ins` and found the disagreement is
+confined **entirely to dust** — no comparator, repeater or lamp inside any
+disagreeing component, 14 of 18 comparator outputs identical, and the few that
+differ go *both* ways. Their hypothesis is that it is not a power, comparator or
+decay rule at all, but **how each engine decides which dust neighbours are
+connected**: our sim reads the blockstate `east/west/north/south` params, cmc
+derives connectivity itself. That is consistent with my region being decay
+ladders (i.e. propagation across a connection boundary) and it lowers the alarm
+somewhat — it may be neither engine being wrong about power. It is not yet
+proven, and it is a narrower question than "which engine is right".
+
 **Why it was never caught:** `verify2` had only ever been run on alu4's *lamp*
 verdict, where both engines say green. Both still do — ours on all 1024 vectors
 against the logical oracle. The disagreement is internal wire state that does
