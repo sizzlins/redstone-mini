@@ -2532,3 +2532,7 @@ dust along L-paths between live dust and lamp-adjacent cells (approach
 ## Night 2026-10-04 (opt: footprint cache; survey says stop)
 
 tiles.footprint @lru_cache (callers audited read-only). Marginal on clean placements (28/112 micro1), pays on retries. Full re-profile this pass: router 0.3s, checkers 0.10s, ok() squeezed, sim lean, exporters fine -- nothing left above ~1% except parked structural items. Gates green, compose_check bit-identical.
+
+## Night 2026-10-04 (opt: full_state cache; full-read audit done)
+
+Read every runtime file. Last duplicate-string pattern: export.full_state @lru_cache (60703/21 hits). Ranked list: shipped (caches, serial -43%, coalescing, fast paths, demo skip, fp, chunks) vs rejected-with-proof (dirty-bit, heap, max->if, dust_points, pool persistence, doomed-search, SWAR, Rust) vs open-needs-hands (_streets flip, tail measurement, paste). Nothing left above ~1%.

@@ -1,6 +1,7 @@
 """Export: mcfunction, schem, textured HTML preview."""
 
 import base64
+import functools
 import json
 
 from core import base
@@ -74,6 +75,10 @@ _DEFAULT_PROPS = {
 }
 
 
+# ponytail: bids repeat massively across blocks (palette of dozens);
+# completing the same partial state 70k times per export is pure waste.
+# Same pattern as core.base/footprint caches. Pure function: safe.
+@functools.lru_cache(maxsize=None)
 def full_state(bid):
     """Complete a partial blockstate with vanilla defaults (see above)."""
     base_, sep, rest = bid.partition("[")
