@@ -2540,3 +2540,15 @@ Read every runtime file. Last duplicate-string pattern: export.full_state @lru_c
 ## Night 2026-10-04 (tail evidence: no tail; work-stealing closed)
 
 Fresh 1024v alu4 verify, 16 chunks x 64v, per-chunk times 383-445s (max/min 1.2x, mean 419s) -- uniform, no stragglers. Old 105-vs-468s skew was contention artifact, not structure. Verdict: finer chunks / work-stealing cannot help (tail ~= mean at any granularity; only adds spawn overhead). Case closed with numbers; HIER_NCHUNKS stays opt-in. (Side bonus: fresh-copy 16/16 green = alu4 re-verified on current engine.)
+
+## Night 2026-10-04 (13): machine-discovered torchless NOT (SOLVED 2/2)
+
+enum_not (approach #11: exhaustive BFS-construction over tight bounds)
+SOLVED after bounds expansion (pins 2-apart strangled routing; wider
+pins x1..7/z0..7 + lamp z=6: 527 candidates, hit). The discovered NOT
+(12 cells, width 3): subtract-comparator + lever-ON rear + A side tap
++ 7-dust output route to lamp. 3000-eval minimization found nothing
+smaller (every cell load-bearing). This is a MACHINE discovery (527
+blind constructions, sim-verified), not a hand design: the first
+torchless gate with no torch material anywhere. Staged plan unblocked:
+freeze this pattern (verified unit) for XOR/AND/FA assembly.
