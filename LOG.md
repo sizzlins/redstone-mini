@@ -91,3 +91,4 @@ sim.py _run_vec: stall window + lever/trace env reads hoisted out of hot loop (4
 ## Night 2026-10-04 (opt 2: serial fast path 26x + fork-bomb lesson)
 
 verify_par skips the spawn pool for tiny sweeps (<=8 vectors AND <=100k cell-vectors): 0.26s -> 0.01s on example_and. Same _serial_shard the pool runs. Threshold is tight on purpose so slow-vector builds still fan out. LESSON (mine, paid in full): probe without __main__ guard + spawn pool = fork bomb (hundreds of procs). Rule already in handoff; now enforced by example. ab_pool.py fixed + guarded. Gates: simvec self-check + diff_engine ALL IDENTICAL.
+    confirm slice 300e seed13: 4260 -> 4260 (0 acc). Wire tier exhausted at single-deletion level (5,4,0). Tier sweeps next: cobble, torch, comparator, stone-sample.
