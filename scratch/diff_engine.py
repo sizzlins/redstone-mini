@@ -117,6 +117,38 @@ def main():
         vec = {i2[j]: (k >> j) & 1 for j in range(len(i2))}
         allok &= case(b2, io2, vec, "small vec%d" % k)
 
+    print("== side-lock diode (dust side powers before input arrives) ==",
+          flush=True)
+    # ponytail: the sampled builds had no side-powered repeaters, so the
+    # lock rule gated vacuously (flagged twice in LOG; the 2026-10-04
+    # broad-vs-narrow rewrite proved the gap was load-bearing). This build
+    # parks a diode with lever-direct side dust (t0) and a delay-4 repeater
+    # in its input path: the side is powered whole-run while the input
+    # arrives late. Asserts tri-engine EXACT agreement (lamps, levels,
+    # torch/repeater states, ticks) -- never vanilla truth (that needs the
+    # game); any future lock/wake drift in ANY engine fails loud here.
+    # Hand-placed (no router): lever A -> dust -> delay-4 booster (clear
+    # sides) -> 2 dust -> diode (delay 1) -> 2 dust -> lamp Y; lever B ->
+    # 1 dust directly beside the diode. 4 vectors.
+    _lb = [(0, 1, 0, "minecraft:lever[face=floor,facing=north]"),
+           (1, 1, 0, "minecraft:redstone_wire"),
+           (2, 1, 0, "minecraft:repeater[facing=west,delay=4]"),
+           (3, 1, 0, "minecraft:redstone_wire"),
+           (4, 1, 0, "minecraft:redstone_wire"),
+           (5, 1, 0, "minecraft:repeater[facing=west,delay=1]"),
+           (6, 1, 0, "minecraft:redstone_wire"),
+           (7, 1, 0, "minecraft:redstone_wire"),
+           (8, 1, 0, "minecraft:redstone_lamp"),
+           (5, 1, 2, "minecraft:lever[face=floor,facing=north]"),
+           (5, 1, 1, "minecraft:redstone_wire")]
+    _ln = {(1, 1, 0): "a", (3, 1, 0): "a", (4, 1, 0): "a",
+           (6, 1, 0): "a", (7, 1, 0): "a", (5, 1, 1): "s"}
+    _lio = {"levers": {(0, 0): "a", (5, 2): "b"},
+            "lamps": {(8, 0): "y"}, "nets": _ln}
+    for _bits in ((0, 0), (0, 1), (1, 0), (1, 1)):
+        allok &= case(_lb, _lio, {"a": _bits[0], "b": _bits[1]},
+                      "lock a%db%d" % _bits)
+
     print("\n%s" % ("ALL IDENTICAL" if allok else "DIFFERENCES FOUND"), flush=True)
     return 0 if allok else 1
 

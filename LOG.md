@@ -2488,3 +2488,7 @@ Gates, all green: sim suite (3 lock canaries), diff_engine ALL
 IDENTICAL, compose_check 144/322/224/214, nonhier 6/7 bit-identical
 (alu1 = known pillar fault, untouched), chainmix 11497, mux4 20239,
 stack3d 8/8. alu4/cpu4 full re-verifies NOT re-run (long; queued).
+
+## Night 2026-10-04 (diff_engine: side-lock diode suite)
+
+Sampled builds had no side-powered repeaters, so the lock rule gated vacuously (flagged twice). Added hand-placed suite: diode with lever-direct side dust + delay-4 input repeater, 4 vectors, tri-engine exact agreement. Probed broad-vs-narrow first: no divergence reachable (dust is instant in-tick, so path length can't stagger; delay element required; final shape agrees under all rules incl. frozen broad ref). Suite passes 4/4; guards future lock/wake drift in ANY engine. Asserts agreement only, never vanilla truth (needs game).
