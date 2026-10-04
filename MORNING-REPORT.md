@@ -42,3 +42,42 @@ Still grinding (`evo_blocks.py` modified in worktree, left alone).
 `recipes/fa1.txt` is theirs (untouched). No file overlap (my paths:
 probes + LOG + this report). No collisions. Tree clean except the two
 protected `.bak` files.
+
+---
+
+# MORNING REPORT 2026-10-04, part 2 (torchless-FA agent, end of night)
+
+## Status: NOT solved, XOR/AND/FA open (honest, read this before continuing)
+
+**Banked and green:** torchless NOT (subtract-comparator + lever-ON rear
++ A side + routed output, 12 cells, 2/2 sim-verified, minimized). Files:
+`scratch/not_found.pkl`, `scratch/evo_not/best.txt`, enumerators
+`scratch/enum_{not,and,xor}.py`, evolver `scratch/evo_blocks.py`,
+oracle `recipes/fa1.txt`. Full regression green after all engine work
+(suite, diff ALL IDENTICAL, compose_check + nonhier bit-identical,
+add2opt 3730 + alu1glass re-verified).
+
+**Do not repeat:** blind atomic sampling (~80k evals, best FA 10/16 --
+CIN-routing with no logic), single-compare AND (arithmetically
+impossible, both modes fail single-sided vectors -- I lost 10 turns to
+this, truth-table every "obvious" gate), loose-region enumeration
+(attenuation + collisions), unguarded isolation (84-100% merge rates).
+
+**Exact next steps, in order** (all analysis done, just implement+run):
+1. Two-termini lamp XOR: branch outputs to SEPARATE lamp-adjacent dust
+   (kills the merge route entirely; ~4 routes instead of 6). Highest
+   expected value.
+2. De Morgan assembly from frozen NOTs via evolution (routing-only;
+   logic proven, pins need L-shaped feeds for perpendicular rear/side).
+3. If both fail: the dual-subtract architecture may need 3D (y=2
+   channels double space, pillar support required) -- biggest build,
+   last resort.
+
+**Needs you (human):** game paste of build_add2opt.schem (still open
+from last night); LOG merge decision (unchanged); footprint call
+(unchanged, notes/to-opt-agent.md).
+
+**Hands off:** `M compose.py` in workdir is the other agent's router
+work (not mine, never touched, not committed). Their processes came
+and went all night; no kills exchanged, no file collisions. My strays:
+none (verified by command-line match every time).
