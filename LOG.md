@@ -2908,3 +2908,89 @@ THE GATE WAS LYING (found by diff_engine, worth reading twice):
   to another engine -- and they all passed on this session's changes.
 
 
+
+============================================================
+NIGHT 2026-10-05 (new GA/squeeze session) -- the freeze was
+LOSSY, not stale. Three encoding traps in one night.
+============================================================
+
+STARTING POINT. Read handoff-ga-agent.md, to-ga-agent.md (Note 5),
+handoff-opt agent.md, to-opt-agent.md (Notes 3+4), verify2.py, sweep.py.
+Two warnings in the handoff I had to re-derive rather than trust:
+"ref_sim's baseline is the opt agent's verbatim freeze" and "MORNING-
+REPORT.md is stale". First is TRUE (proved below). Second is true.
+
+----------------------------------------------------------------
+FINDING 1 -- mkref.py corrupts the freeze on EVERY run (FIXED)
+----------------------------------------------------------------
+symptom: scratch/refcheck.py reported scratch/ref_sim.py's body as
+  NOT byte-identical to HEAD:sim.py, so the gate looked stale.
+
+Three separate traps had to be eliminated before that meant anything:
+
+  T1. mkref.py PREPENDS a docstring header, so ref_sim.py can never
+      hash-equal sim.py even when the body is verbatim. A blob-hash
+      comparison is meaningless by construction.
+  T2. core.autocrlf=true (system gitconfig, C:/Program Files/Git/etc/
+      gitconfig) -- a worktree file's bytes never equal the blob's.
+  T3. MINE, and the real one: `subprocess(text=True)` decodes with the
+      WINDOWS LOCALE (cp1252), not UTF-8. sim.py contains em-dashes and
+      +/- signs, so every re-freeze mangled them and re-encoded the
+      mojibake as UTF-8. The freeze was lossy BY CONSTRUCTION, and it
+      compounded -- the freeze was regenerated twice on 10/4.
+
+codepoint proof (scratch/refbytes.py), HEAD clean, freeze corrupt:
+  HEAD:sim.py L16   one char  0x2014      (em-dash)
+  ref_sim.py  L16   0xe2 0x20ac 0x201d   (a-quote, the mojibake)
+  HEAD:sim.py L393  one char  0xb1        (+/-)
+  ref_sim.py  L393  0xc2 0xb1            (A-+-)
+
+fix: encoding="utf-8", errors="strict" on the decode, newline="" on the
+write. One kwarg plus one kwarg. Body is now byte-identical to the blob.
+
+IMPACT, honestly scoped: all 30 differing lines were inside # comments
+or inside ONE log-message f-string. Zero redstone behaviour differed.
+diff_engine imports both modules and compares six returned quantities,
+which comments cannot touch -- so every earlier ALL IDENTICAL claim
+STANDS. What was broken is the artifact's diffability and its honesty
+as a reference, plus a trap that re-arms itself on every re-freeze.
+Re-proved anyway rather than argued: diff_engine ALL IDENTICAL 16/16,
+exit 0, after the re-freeze.
+
+LESSON for the next agent: the opt agent wrote in mkref.py "a gate that
+cries wolf is worse than no gate". Their fix (verbatim HEAD) was right
+and the omission hazard is genuinely gone -- but VERBATIM is not the
+same as BYTE-FAITHFUL. A freeze is only as good as the encoding of the
+command that wrote it.
+
+----------------------------------------------------------------
+FINDING 2 -- a CLAIM I made and had to retract (recorded on purpose)
+----------------------------------------------------------------
+I first told the operator "ref_sim.py blob != HEAD:sim.py blob, so the
+baseline is neither 470c84c nor HEAD, the agent is wrong, re-run mkref".
+That was wrong, on T1+T2 above, and it would have sent the next session
+re-freezing a freeze that was already correct. Three separate agents then
+each asserted something about these bytes without decoding one of them:
+me (hash compare), the GA agent (could neither confirm nor dismiss),
+the opt agent ("it contains dust_lvl/cob_state so it is not the partial
+extraction" -- true, and irrelevant to whether it was byte-faithful).
+Only refdrift.py + refbytes.py settled it, because they print codepoints
+instead of glyphs. Printed output is not evidence; decoded bytes are.
+
+----------------------------------------------------------------
+NEW GATES (scratch/, gitignored, force-added)
+----------------------------------------------------------------
+  refdrift.py  is the freeze corrupt, and is it comment-only or CODE?
+              0 changed lines + equal ast.dump() = healthy. Exit 1
+              otherwise. This is the regression test for FINDING 1: it
+              failed (30 lines, AST differs) before the fix and passes
+              (0 lines, AST equal) after.
+  refcheck.py  freeze + worktree sim.py vs HEAD, same question.
+  refbytes.py  codepoint-level attribution of any drift, plus the
+              sim.py commit history. This is the diagnostic that ended
+              the hunt; refdrift is the cheap daily gate.
+  Verify a freeze with refdrift.py, not with a hash comparison.
+
+NEW RULE, worth a pre-commit hook eventually: after ANY commit touching
+sim.py or simvec.py, run mkref.py THEN refdrift.py. mkref alone cannot
+tell you it worked, because it writes whatever it was handed.

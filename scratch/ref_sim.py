@@ -22,10 +22,10 @@ from recipe import eval_gate, eval_net
 # ponytail: settling budget. A dense build is ~10x the cells of a small one and
 # legitimately needs more ticks (a 40-cell boosted run alone costs 40), so the
 # old fixed 500 ticks / 20000 steps expired mid-convergence and got reported as
-# "sim not settling" â€” which reads as a router fault and is not one. Measured:
+# "sim not settling" — which reads as a router fault and is not one. Measured:
 # micro1 converges at 5000/300000 in 0.4s; the 34k-block hier alu4 needs
 # 20000 ticks for its slowest vectors (they RED at 5000 as "not settling"
-# then settle in 1s at 20000 â€” slow convergence, no loop: empty loop list,
+# then settle in 1s at 20000 — slow convergence, no loop: empty loop list,
 # huge max_gap). Ceilings only: greens settle long before them either way, and
 # true oscillators never settle at any cap, so verdicts only gain true greens.
 _TICK_CAP = int(_os.environ.get("REDSTONE_SIM_TICKS", "20000"))
@@ -352,7 +352,7 @@ def _run_vec(vec, init, ctx, until=None, target_hits=None):
         lv = 0
         # ponytail: dust directly ABOVE a lit torch reads 15 (wiki; the code
         # comment at the standing-torch parser admitted this gap and asked
-        # for it gated on a canary â€” the canary is below in __main__).
+        # for it gated on a canary — the canary is below in __main__).
         # Never exercised by our tiles (nothing stacks on a torch) so zero
         # behavior change for every green build; verified by the fleet gate.
         _below = (c[0], c[1] - 1, c[2])
@@ -399,17 +399,17 @@ def _run_vec(vec, init, ctx, until=None, target_hits=None):
                     # 9 of 16 vectors, sim=0 vs cmc=14. Minimal reproducer
                     # and canary: scratch/motif.py, "comp-side-dust-src".
                     lv = max(lv, con.get(m, 0))
-            # ponytail: chip layers. Dust links Â±1 level iff the upper dust
+            # ponytail: chip layers. Dust links ±1 level iff the upper dust
             # sits on a conductive block and no lid covers the lower wire.
             # Direct stacks never link (no support, no link).
             # Glass/slab refinement (wiki, verified against the dust page):
             # the UP term (this cell reads the higher dust = power flowing
-            # DOWN) still needs the upper on opaque conductive â€” upper dust
+            # DOWN) still needs the upper on opaque conductive — upper dust
             # on glass/slab never feeds down, so `in cob` stays. The DN term
             # (this cell reads the lower dust = power flowing UP onto this
             # cell) accepts any solid rest (cob/slab/glass): dust climbs over
             # glass. Lids cut only when opaque in both terms, so glass/slab
-            # lids never appear â€” transparent never cuts the diagonal.
+            # lids never appear — transparent never cuts the diagonal.
             up = (c[0] + dx, c[1] + 1, c[2] + dz)
             if up in dust and (c[0] + dx, c[1], c[2] + dz) in cob \
                     and (c[0], c[1] + 1, c[2]) not in cob:
@@ -430,7 +430,7 @@ def _run_vec(vec, init, ctx, until=None, target_hits=None):
         for dx, dz in DIRS:
             m = (c[0] + dx, c[1], c[2] + dz)
             # ponytail: dust powers a side block only when POINTING at it
-            # (dust_points, the one shared table) â€” a wire merely running past
+            # (dust_points, the one shared table) — a wire merely running past
             # does not. Dust on top still counts (below), no shape condition.
             # Direction is dust->block (negated neighbour offset); the old
             # sign mirrored corner/T sensing (symmetric shapes can't tell).
@@ -443,18 +443,18 @@ def _run_vec(vec, init, ctx, until=None, target_hits=None):
             # powered directly, see dust_lvl). Floor levers attach below,
             # wall to the faced-away side, ceiling above. The old term
             # powered EVERY side block, so a floor input lever lit adjacent
-            # foreign cobble â€” measured: D3's floor lever at (1012,34) drove
+            # foreign cobble — measured: D3's floor lever at (1012,34) drove
             # R0Q0's stitch dust at (1011,33) to 15 through (1012,33). Bare
             # bids (hand tests) keep legacy all-side power (attach None).
             if (m in lever and vec.get(lever[m], False)
                     and _LEVPOW
                     and (leveratt.get(m) is None or leveratt.get(m) == c)):
                 pwrd, strong = True, True
-            # ponytail: a lit torch powers adjacent blocks â€” except the one
+            # ponytail: a lit torch powers adjacent blocks — except the one
             # it is attached to (wiki; the same host exception the torch rule
             # itself uses, via torch[m] != c). Without this, dust sitting on
             # cobble whose only power is a neighboring torch reads lit (dust
-            # above torch, done above) while its support reads dark â€” a split
+            # above torch, done above) while its support reads dark — a split
             # model of one vanilla fact. Canary below in __main__.
             if m in torch and tl.get(m, False) and torch[m] != c:
                 pwrd, strong = True, True
@@ -602,7 +602,7 @@ def _run_vec(vec, init, ctx, until=None, target_hits=None):
             sched(at, "F", c)
 
     if init and init.get("_solve"):
-        # ponytail: glitch-free power-on. Every gate output torch starts OFF,        # so at tick 1 each fires once before its inputs arrive â€” a 1-2 tick
+        # ponytail: glitch-free power-on. Every gate output torch starts OFF,        # so at tick 1 each fires once before its inputs arrive — a 1-2 tick
         # pulse on EVERY combinational output. Harmless for DAG logic (it
         # settles), but a boosted S/R run delivers that pulse to an idle
         # latch at T~9 (measured: R1_S1 spikes to 10, the seeded hold-0
@@ -615,7 +615,7 @@ def _run_vec(vec, init, ctx, until=None, target_hits=None):
         # path).
         # ponytail: repeaters belong IN the fixpoint. They used to be frozen
         # OFF on the theory that their delay is a real transient the loop must
-        # play out â€” but a frozen booster makes every cell BEYOND it read dark
+        # play out — but a frozen booster makes every cell BEYOND it read dark
         # at tick 0, so the fixpoint was not the quiescent state, it was a
         # half-powered one. Every downstream gate then emitted a phantom pulse
         # as the boosters came up (measured on cpu4: OPC1 read 96/903 at tick 0
@@ -623,7 +623,7 @@ def _run_vec(vec, init, ctx, until=None, target_hits=None):
         # REGW glitch at T~28 that reached R0_S1 at T~120 and latched R0Q1/R0Q3
         # to 1 on a no-write vector). The delay is real, but a booster's
         # SETTLED value is a function of its input, so iterating it converges to
-        # exactly what the circuit settles to â€” which is the whole point.
+        # exactly what the circuit settles to — which is the whole point.
         _pins = set(init.get("t", {}))
 
         def _presolve(with_rep):
@@ -712,7 +712,7 @@ def _run_vec(vec, init, ctx, until=None, target_hits=None):
             # ponytail: no fixpoint WITH boosters means a real oscillator (or a
             # net that only settles by ringing). Fall back to the booster-free
             # pre-solve so the tick loop still runs and reports the CHURN SET,
-            # which names the loop â€” a bare "did not converge" here would throw
+            # which names the loop — a bare "did not converge" here would throw
             # that diagnosis away.
             _presolve(False)
 
@@ -740,10 +740,10 @@ def _run_vec(vec, init, ctx, until=None, target_hits=None):
             raise RuntimeError(
                 f"sim STALLED on {vec}: no value change for "
                 f"{steps[0] - last_change[0]} steps at tick {now} "
-                f"({steps[0]} steps run) â€” wedged, not oscillating")
+                f"({steps[0]} steps run) — wedged, not oscillating")
         if now > _TICK_CAP or steps[0] > _STEP_CAP:
             # ponytail: name the OSCILLATOR, not the leftovers. `live` is
-            # whatever happened to be lit at timeout â€” on a ring oscillator
+            # whatever happened to be lit at timeout — on a ring oscillator
             # that is an ordinary powered run (a monotone decay gradient),
             # which names nothing. `churn` is the cells that kept changing
             # after everything else settled, i.e. the loop's own members.
@@ -796,7 +796,7 @@ def _run_vec(vec, init, ctx, until=None, target_hits=None):
                 pb[c], pbs[c] = v, s
                 # ponytail: blocks count as churn too. A torch's attach block
                 # IS a cobble, so without this the loop's block members were
-                # structurally invisible to the churn set â€” the indicator could
+                # structurally invisible to the churn set — the indicator could
                 # not contain a real cycle, let alone name its edge.
                 flips[c] = flips.get(c, 0) + 1
                 mark(); wake(now, c)
@@ -811,7 +811,7 @@ def _run_vec(vec, init, ctx, until=None, target_hits=None):
             # reads its support as dark and stays lit (vanilla: it is off).
             v = not (pb.get(torch[c], False) or torch[c] in rblk)
             if tl.get(c, False) != v:
-                # ponytail: vanilla burnout â€” a torch forced OFF more than
+                # ponytail: vanilla burnout — a torch forced OFF more than
                 # eight times in 60 game ticks (= 30 sim ticks: delay-4 settles
                 # at tick 4, so 1 sim tick is 1 redstone tick) dies dark. OFF
                 # transitions only: a healthy settle flips a few times total,
@@ -970,7 +970,7 @@ def _parse_build(blocks, io):
         elif b in ("minecraft:cobblestone", "minecraft:stone"):
             # ponytail: stone pads (finish_assembly, y=0 under every y=1
             # component) join cob. Pads are unpowered lumps, so this changes
-            # no value anywhere â€” but slope-support, loop-flood and lid sets
+            # no value anywhere — but slope-support, loop-flood and lid sets
             # all derive cob from blocks, and leaving pads out meant the sim
             # disagreed with vanilla about what is support. Deliberately NOT
             # extended to _loop_rep/flood cobble (those assume powered when
@@ -1096,7 +1096,7 @@ def _check_supports(P):
     y==1 rides the world/stone floor (finish_assembly pads it), so only
     y!=1 is judged. Below must be cobble/stone, glass, slab or
     redstone_block (all placement-valid in vanilla). Without
-    this a trenched repeater sim-greens and then fails to paste â€” the sim
+    this a trenched repeater sim-greens and then fails to paste — the sim
     modeled power but never support. Zero behavior change for green builds
     (their y>=2 cells already ride stamped pillars).
     """
@@ -1199,7 +1199,7 @@ def sim_verify(recipe, blocks, io, seed=7, quiet=False, collect=False):
         exp = eval_net(recipe, vec)
         if latchouts and not any(exp.get(a, False) for a in latchargs):
             continue  # undefined power-on: hold needs history (real hardware
-            # too â€” reset first). The sequence proof covers hold properly.
+            # too — reset first). The sequence proof covers hold properly.
         got, live, tlive, nticks, rlive, _conc = _run_vec(vec, _hold, P)
         maxticks = max(maxticks, nticks)
         for net in recipe["outputs"]:
@@ -1271,7 +1271,7 @@ def sim_pulse(recipe, blocks, io, schedule):
 
 
 if __name__ == "__main__":
-    # ponytail: one runnable check â€” delay-4 chain must settle at exactly tick 4.
+    # ponytail: one runnable check — delay-4 chain must settle at exactly tick 4.
     _blocks = [(1, 1, 0, "minecraft:repeater[facing=west,delay=4]"),
                (2, 1, 0, "minecraft:redstone_wire"),
                (3, 1, 0, "minecraft:redstone_lamp")]
@@ -1285,7 +1285,7 @@ if __name__ == "__main__":
     assert _tk == 4, _tk
     assert _st["vectors"]["0"]["lamps"] == {"3,1,0": 0}, _st["vectors"]["0"]
     print("tick ok: delay-4 settles at tick 4")
-    # ponytail: timed-press proof â€” stone-20 press lights through delay-4,
+    # ponytail: timed-press proof — stone-20 press lights through delay-4,
     # release holds 1 tick (repeater delay) then drops dark with the dust.
     _pb = [(0, 1, 0, "minecraft:lever")] + _blocks
     _pio = {"levers": {(0, 0): "a"}, "lamps": {(3, 0): "y"}, "nets": {}}
@@ -1344,7 +1344,7 @@ if __name__ == "__main__":
     _hp = _parse_build(_hb, _hio)
     assert _run_vec({"S": 0, "R": 0}, _latch_hold_seed(_hb, _hio),
                      _hp)[0].get("Q", True) is False, "idle latch must hold 0"
-    # ponytail: gate-fed latch, EVERY seed â€” a lever-fed latch proves the tile,
+    # ponytail: gate-fed latch, EVERY seed — a lever-fed latch proves the tile,
     # gate-fed proves arrival level too. Killed two classes: dust+repeater
     # double-stamped on the S-row cell (seeds 4/5 held set across hold) and a
     # route through the repeater cell (seed 1 never fed the load). One layout
@@ -1651,7 +1651,7 @@ if __name__ == "__main__":
     # ponytail: corner pointing is directional (wiki: a corner powers where it
     # points, not the mirror side). cob_state once read (dx,dz) block->dust
     # instead of dust->block, which symmetric shapes (line/end/cross) cannot
-    # tell apart â€” the whole suite stayed green around the bug. Corner N+E
+    # tell apart — the whole suite stayed green around the bug. Corner N+E
     # with a block south: block dark, torch on it stays ON.
     _mb = [(1, 1, 0, W_), (1, 1, -1, W_), (2, 1, 0, W_),
            (1, 1, 1, "minecraft:cobblestone"),
@@ -1711,7 +1711,7 @@ if __name__ == "__main__":
         "unpowered lever must not light the pedestal"
     # ponytail: a FLOOR lever powers only the block it stands on. The old
     # all-sides term let a floor input lever strongly power foreign cobble
-    # beside it, and any dust on THAT read lit â€” measured on cpu4: D3's floor
+    # beside it, and any dust on THAT read lit — measured on cpu4: D3's floor
     # lever drove a register-stitch run to 15 and forced R0Q2 high whenever
     # D3 was set. Assert the negative so the term can never widen again.
     _lf = [(0, 0, 0, CB), (0, 1, 0, "minecraft:lever[face=floor,facing=north,powered=false]"),
@@ -1720,7 +1720,7 @@ if __name__ == "__main__":
     assert _run_vec({"a": 1}, None, _lpf)[0].get("y", False) is False, \
         "floor lever must not power the block beside it"
     # ponytail: dust directly above a torch (wiki: powered in vanilla; the
-    # parser comment asked for this term gated on a canary â€” this is it).
+    # parser comment asked for this term gated on a canary — this is it).
     # Standing torch on dark cobble (lit) lights dust above; powered support
     # (torch off) leaves it dark. Asserted on dust levels directly (a lamp
     # beside would add pointing-shape noise to a physics canary).
@@ -1737,7 +1737,7 @@ if __name__ == "__main__":
     _tp3, _ = _hand(_tb3, {}, {})
     assert _run_vec({}, None, _tp3)[1].get((0, 2, 0), 0) == 15, \
         "torch beside cobble must power it (dust on top lights)"
-    # ponytail: host exception â€” a wall torch does NOT power the block it is
+    # ponytail: host exception — a wall torch does NOT power the block it is
     # attached to. Torch at (1,1,0) facing west attaches east to (2,1,0):
     # dust on top of the host stays dark, while dust on top of the western
     # neighbour cobble (0,1,0) lights.
@@ -1807,14 +1807,14 @@ if __name__ == "__main__":
     # The canary must not depend on any recipe staying red: this check used
     # alu1 on the belief that compose refuses it, and it went stale the moment
     # alu1 went green (layout_retry returned a verified build, assert fired).
-    # Force the precondition instead â€” a composer that always fails â€” so the
+    # Force the precondition instead — a composer that always fails — so the
     # seed-loop budget guard is what is actually under test, in microseconds.
     _dense = parse_recipe(open("recipes/alu1.txt").read())
     _save, _MAX_SECS = _MAX_SECS, 1e-9
     _real = compose
     try:
         # ponytail: patch THIS module's from-import binding (layout_retry
-        # reads the sim-module global, not compose.compose â€” patching the
+        # reads the sim-module global, not compose.compose — patching the
         # attribute on the compose module is a silent no-op, measured).
         def _nope(_r):
             raise RuntimeError("compose: no ground for canary: (0,0)->(1,1)")
