@@ -1,69 +1,48 @@
-# MORNING REPORT — autonomous opt + verify session 2026-10-04
+# MORNING REPORT — autonomous session 2026-10-04 (alu4 Y2 fault fixed)
 
-## DONE (this session)
+## DONE: alu4 verifies 1024/1024
 
-1. **Serial fast path for tiny sweeps** (`simvec.py`): `verify_par`
-   skips the spawn pool when `<=8 vectors AND <=100k cell-vectors`
-   (0.26s -> 0.01s on example_and, 26x). Same `_serial_shard` the pool
-   runs (latch fallback + fail-fast intact). `REDSTONE_SERIAL_CELLVEC`
-   overrides. Threshold deliberately tight so slow-vector builds still
-   fan out.
-2. **Parse once per worker** (`simvec.py`): `_serial_shard` re-parsed the
-   whole build per shard (64 shards = 64 parses); now cached per worker
-   via `_parse_build_ctx`, reset in `_init_worker` (without the reset,
-   sequential verifies in one process simulate builds 2-4 with build 1's
-   tables -- caught by inspection, gated by compose_check's 4-build run).
-3. **Band-cache fingerprint** (`hier_bands.py` writes `__fp__`,
-   `hier_stitch.py` refuses mismatch LOUD): stale band caches cost a full
-   session once; engine has since moved twice. Proven: old cache refused
-   (`built under engine None`), fresh climb green.
-4. **alu1 re-verified end-to-end** from the promoted recipe with all of
-   the above in place: stamped bands -> MERGE 15104 -> smoke 4/4 ->
-   **VERIFY OK 32/32**. alu1 stays green.
+**What now builds:** `build_alu4bank.*` re-exported from a 5-pillar
+glass-swap repair of the banked merge: **VERIFY OK: 1024 vectors, 16
+chunks green** (staged verify_par, ~30 min). Block count identical
+(60724), 10 levers still one column. The October pillar-feed saga is
+closed: the sim was right, the build was wrong, the build is now right.
 
-## Measured, no action (with numbers)
+## The fault and the fix (short version; full trace in LOG)
 
-- **Dirty-bit wake: pivoted, not implemented.** 73% of evals find no
-  change (880k evals / 238k wakes), so headroom exists -- but the
-  wake->eval term info has nowhere cheap to ride in CPython (side-channel
-  dict ops ~= the term-checks saved; heap-tuple widening collides with
-  coalescing). Same lesson as SWAR: don't outsmart, de-fat. Full analysis
-  in LOG. Next sim wins: none cheap remain (dict.get/max are the work).
-- **Router/exporters/simvec loop**: no env-in-hot-loop, copies are
-  failure-path-only and second-order. Untouched.
-- **OP0 y=3 orphan**: CLOSED. The 66 lit cells belonged to a superseded
-  merge iteration (re-stitched 3x during the night); the cells don't exist
-  in either verified merge (0 lit). Not a checker hole.
-- **Rust/C++**: assessed with numbers, recommended against (see LOG):
-  10-20x physics -> 3-5x end-to-end (Amdahl: spawn/IPC, stragglers,
-  pre-roll, untouched router), vs dual-implementation drift on physics
-  that changed 3x this week + Windows toolchain + undebuggable core.
-  Cython-before-Rust if ever; revisit when physics stabilizes AND
-  physics >80% of end-to-end after driver fixes.
+- **Fault:** torch-topped cobble pillars inject parasitic power into dust
+  above them (below-neighbour feed the old sim never modeled). On all-off:
+  Y2 stuck lit (1570 lit-should-be-dark dust cells, whole runs hot).
+- **Blanket insulate() FAILED** (tried first): swapping all 579 fed
+  pillars went 2/4 -> 4/4 red -- most fed pillars carry LEGITIMATE
+  vertical conduction; glass kills it. Discarded; original pkl untouched.
+- **Targeted fix:** settled-state forensics (lit dust + dark logic ->
+  torch-fed pillar under it, restricted to the failing output's fanin):
+  4 pillars for Y2 (`612,2,221 612,2,224 851,2,189 963,2,208`), 1 more
+  for residual COUT (`1855,2,231`). 5 swaps -> smoke 4/4 -> 1024/1024.
+- **Reproduce:** `python scratch/ins_target.py scratch/alu4bank.pkl
+  <out.pkl> 612,2,221 612,2,224 851,2,189 963,2,208 1855,2,231`
+  then `hier_stitch.py` smoke + `verify_par.py`. Tools:
+  `scratch/y2trace.py` (fanin forensics), `scratch/ins_target.py`.
+- **Exported:** `build_alu4bank.{mcfunction,schem,html}` (static HTML;
+  1024-vector interactive states not collected -- ~20 min, optional).
+  Game `build.schem` NOT touched (needs your paste).
 
-## What still fails / needs hands
+## Not done / open
 
-1. **alu4bank.pkl smoke 2/4 RED (Y2, COUT) -- PRE-EXISTING, not a
-   regression.** Fault shape matches the documented pillar-feed saga
-   exactly (Y2 stuck lit on all-off, elevated runs hot; LOG-history
-   "Finding: Y2 stuck lit"). The bank predates the below-feeds physics
-   fix; the fixed sim correctly flags it. Fix = re-route off
-   torch-topped pillars (separate phase, as logged in October).
-   cpu4retry_merge.pkl smokes 4/4 GREEN under the current engine.
-2. **LOG.md sharing**: GA agent rewrote it wholesale again tonight
-   (history + my entries wiped from worktree/HEAD twice). Recovery in
-   git (`notes/LOG-history-2026-10-04.md`) + my trace in
-   `notes/alu1-green-2026-10-04.md` + commit messages. Still needs your
-   merge decision; I keep entries to short appends.
-3. **Work-stealing pool** (straggler tail on big verifies): deferred for
-   lack of tail evidence on current builds; implement only with a measured
-   skewed tail in hand.
+1. Generalizing the fix (verify-driven insulation: swap torch-fed
+   pillars whose dust is dark on ALL vectors -- provably safe, unlike
+   blanket) is designed but unbuilt. Current fix is 5 merge-space
+   coordinates; a re-merge invalidates positions. TODO with the design
+   in LOG.
+2. Subset-minimization of the 5 swaps skipped deliberately: each subset
+   would need its own 1024-verify (9 x 30 min); the set is proven safe
+   as a whole, minimality is aesthetic.
+3. LOG.md sharing: unchanged situation, still needs your merge decision
+   (history in git + `notes/LOG-history-2026-10-04.md`).
 
 ## GA agent status (observed, not touched)
 
-Squeeze loop still running (`compact.py`, add2opt 43xx). My commits are
-engine/scratch-gate paths only; their files untouched. One incident,
-mine: an unguarded probe + spawn pool fork-bombed (hundreds of procs);
-killed only my orphans by command-line match, their `compact.py`
-verified untouched, probe fixed+guarded, rule re-learned. No other
-collisions. Tree clean except the two protected `.bak` files.
+Squeeze loop still running. No file overlap (my work: scratch probes +
+  gitignored pkls + LOG/MORNING-REPORT appends). No collisions this
+  session. Tree clean except the two protected `.bak` files.

@@ -182,3 +182,8 @@ router lane. Coordinating via notes/to-opt-agent.md (evidence + ask,
 no files touched), continuing count-squeeze in my lane.
     wire slice seed16: 2/300 (3747->3745). Wire streak post-salvage: 4,0,2 -- exhausted for the third time. Promoted 3745. Final tier re-sweeps next (repeater/cobble/stone, geometry changed since their sweeps), then DONE check.
     repeater re-sweep: 5/300 (3745->3740). Promoted.
+
+## Night 2026-10-04 (alu4 Y2 fixed: 5 pillars, 1024/1024)
+
+Banked merge smoked 2/4 red (Y2 stuck lit, documented pillar-feed fault). Blanket insulate() FAILED (579 swaps, 2/4->4/4 red -- kills legit conduction; discarded). Targeted forensics (lit+dark-logic dust -> torch-fed pillar, in failing-output fanin): 4 pillars fixed Y2, 1 more fixed residual COUT (612,2,221 612,2,224 851,2,189 963,2,208 1855,2,231). VERIFY OK 1024/1024 (~30min staged). Re-exported build_alu4bank.*. Reproduce: scratch/ins_target.py (coords above). TODO: verify-driven insulation (generalize). Full trace: MORNING-REPORT.md.
+    cobble re-sweep: 0 evals, 261 static skips (filter screens whole tier, zero sim cost). stone re-sweep: 7 acc then 3938 skips, exhausted (3740->3733). Promoted 3733. Wire confirm at new state next, then DONE.
