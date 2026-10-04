@@ -79,3 +79,4 @@ alu1 VERIFY OK 32/32 (hier gate, BANK=1 default). recipes/alu1.txt promoted to 2
     Doing read-only analysis meanwhile; zero engine edits (their profiler
     imports the router; I touch nothing it reads except by import).
     Polite mode while prof_router lives: REDSTONE_SERIES_VERIFY=1 in my env only (no engine edits) -> my slices run 1 core, their wall-clock timings unskewed. Slower (~4s/eval), so 100-eval slices.
+    repeater-completion slice (serial, polite): 4278 -> 4269 (9 acc/100e). Repeater tier nearly exhausted. Promoted.
