@@ -57,3 +57,4 @@ reached, switch approach (2-block moves) instead of grinding slice 4.
 Other agent active on alu1 (hier_stitch.py pid 10916): my slices stay
 foreground-bounded with heartbeats; no kills except my own orphans by
 command-line match.
+    slice 300e seed8: 4350 -> 4339 (11 acc). Promoted.
