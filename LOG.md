@@ -2458,3 +2458,33 @@ Operator in-game results, parsed:
 ## Night 2026-10-04 (opt: cache base() splits)
 
 core.base() @lru_cache + 14 inline duplicates converted (compose 10, layout 3, sim 1). check_shorts 0.17s->0.10s, 658k->236k calls; cache 241505/21 hits. Gates: sim suite + diff_engine ALL IDENTICAL + compose_check bit-identical. Skipped with reason: ok() already squeezed, dust_points 0.5%, max->if 0.4%, heap swap (reference risk), dirty-bit (proven ~=0), exporters fine.
+
+## Night 2026-10-04 (10): lock/side terms narrowed to wiki+cmc (FIXED per operator)
+
+Research over recollection: wiki Repeater page ("locked by another
+repeater or comparator", enumerated twice, no dust/blocks/levers) +
+cmc engine.js sideInput (rep/comp facing-in + dust/rblock only) agree
+exactly. Our sim over-modeled both. The user-observed self-loop was
+always repeater-fed (kept); only the phantom dust/block/lever/torch
+side-locks go. C6/C7 game canaries WITHDRAWN (sources decisive).
+
+Patch (sim.py + simvec.py mirrored, tables + evaluators verified
+compatible by read-through):
+- rep_locked: repeater/comparator facing-in ONLY. Killed the alu1glass
+  x12 at the root: side-COBBLE locks never existed, so the whole
+  serial-vs-scalar "ambiguity" was a phantom-ordering debate. No game
+  test needed; alu1glass re-verified GREEN all vectors (the proof).
+- comp sides: dust/redstone-block (wiki 15w47a)/facing-in rep/comp.
+  Dropped lever/target/plain-block feeds.
+- comp rear: ADDED strong-block read (vanilla-standard; conservative
+  strong-only; safe direction).
+- Canaries rewritten vanilla-true: repeater-fed side freezes via
+  SEQUENCE (fresh-vector freeze-OFF is impossible truly: repeater sides
+  are always slower than direct input -- the old dust canary froze only
+  through the phantom); dust-side negative pins the wiki rule;
+  repeater-fed self-loop latches (warmup-race analyzed, robust).
+
+Gates, all green: sim suite (3 lock canaries), diff_engine ALL
+IDENTICAL, compose_check 144/322/224/214, nonhier 6/7 bit-identical
+(alu1 = known pillar fault, untouched), chainmix 11497, mux4 20239,
+stack3d 8/8. alu4/cpu4 full re-verifies NOT re-run (long; queued).

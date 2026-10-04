@@ -176,25 +176,15 @@ def _tables_from(P, inp):
             r_src[c] = None
 
     # ---- repeater lock sides (mirror sim.rep_locked term for term) ----
-    # ponytail: a repeater whose side is powered holds its last output
-    # (and an output looped to its own side latches on permanently).
-    # side() lacks torch (comparators ignore torch sides per sim); lock
-    # sides count lit torches too, so a dedicated spec with ("t", cell).
+    # ponytail: ONLY a repeater/comparator facing into the side locks
+    # (wiki Repeater page + cmc, both explicit). Dust, blocks, levers,
+    # torches and redstone blocks beside a repeater do NOT lock -- the
+    # old branches modeled the same phantom sim just deleted.
     def rside(cell, t):
-        if cell in lever:
-            return ("l", lever[cell])
-        if cell in rblk:
-            return ("r",)
-        if cell in torch:
-            return ("t", cell)
         if cell in rep:
             return ("r", cell) if back(cell, t) else None
         if cell in comp:
             return ("k", cell) if back(cell, t) else None
-        if cell in dust:
-            return ("d", cell)
-        if cell in pwr:
-            return ("c", cell)
         return None
 
     r_side = {}
@@ -204,9 +194,10 @@ def _tables_from(P, inp):
                      rside((c[0] - d[1], c[1], c[2] - d[0]), c))
 
     # ---- comparator: rear input, two sides, mode ----------------------
+    # ponytail: sides mirror sim.comp_in (dust, redstone blocks per wiki
+    # 15w47a, facing-in repeaters/comparators). Levers, torches, plain
+    # blocks and target do not feed sides.
     def side(cell, t):
-        if cell in lever:
-            return ("l", lever[cell])
         if cell in rblk:
             return ("r",)
         if cell in rep:
@@ -215,8 +206,6 @@ def _tables_from(P, inp):
             return ("k", cell) if back(cell, t) else None
         if cell in dust:
             return ("d", cell)
-        if cell in pwr:
-            return ("c", cell)
         return None
 
     k_rear, k_side, k_mode = {}, {}, {}
@@ -235,6 +224,10 @@ def _tables_from(P, inp):
             k_rear[c] = (("r", rear) if back(rear, c) else ("z",))
         elif rear in comp:
             k_rear[c] = (("k", rear) if back(rear, c) else ("z",))
+        elif rear in pwr:
+            # ponytail: strong-block rear read (mirrors sim; _lev_s("c")
+            # is pbs-gated, so the mirror is exact).
+            k_rear[c] = ("c", rear)
         else:
             k_rear[c] = ("z",)
         k_side[c] = (side((c[0] + rz, c[1], c[2] + rx), c),

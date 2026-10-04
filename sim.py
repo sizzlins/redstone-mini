@@ -1396,33 +1396,62 @@ if __name__ == "__main__":
     _lg, _, _, _, _, _ = _run_vec({"A": 1}, None, _lp)
     assert _lg.get("B", False) is True, _lg
     print("slab ok: carries power, feeds dust on top, lid never cuts")
-    # ponytail: repeater side-lock (wiki, user-measured in game).
-    # Powered sides freeze the output: a fresh A=1,B=1 run locks OFF
-    # (was off at power-on); an output looped back to its own side
-    # latches ON permanently (input drops, side holds itself).
+    # ponytail: repeater side-lock, vanilla-true form (wiki Repeater page
+    # + cmc engine.js: ONLY a repeater/comparator facing into the side
+    # locks; dust/blocks/levers/torches beside it do NOT). Positive: side
+    # fed by a facing-in repeater freezes the output (fresh 1,1 stays off:
+    # power-on locked stays off). Negative: the same geometry with a
+    # dust-fed side follows its input (1,1 goes ON) -- pins the wiki rule
+    # so the old over-broad terms can never return.
     _lk = [(0, 1, 0, "minecraft:lever"), (1, 1, 0, W_),
            (2, 1, 0, "minecraft:repeater[facing=west,delay=1]"),
            (3, 1, 0, W_), (4, 1, 0, W_), (5, 1, 0, W_),
            (6, 1, 0, "minecraft:redstone_lamp"),
            (0, 1, 3, "minecraft:lever"), (1, 1, 3, W_), (2, 1, 3, W_),
-           (2, 1, 2, W_), (2, 1, 1, W_)]
+           (2, 1, 2, W_),
+           (2, 1, 1, "minecraft:repeater[facing=south,delay=1]")]
     _lp2, _lio2 = _hand(_lk, {(0, 0): "A", (0, 3): "B"}, {(6, 0): "Y"})
+    # ponytail: freeze needs SEQUENCE, not a fresh vector. A repeater-fed
+    # side is always slower than the direct input (delay >= 1), so on a
+    # fresh run the main follows its input before the side can heat --
+    # freeze-OFF at power-on is impossible vanilla-truly (the old dust-side
+    # canary froze only because dust is instant, i.e. via the phantom).
+    # Real lock: arm the side first (carried OFF-hold), then raise input.
+    sim_sequence({"inputs": ["A", "B"], "outputs": ["Y"],
+                  "gates": [{"out": "Y", "op": "AND", "args": ["A", "B"]}]},
+                 _lk, _lio2,
+                 [(({"A": 0, "B": 1}), {"Y": False}),
+                  (({"A": 1, "B": 1}), {"Y": False}),
+                  (({"A": 1, "B": 0}), {"Y": True})])
+    print("lock ok: repeater-fed side freezes (armed 0,1 holds 1,1 off)")
+    _lkd = [(0, 1, 0, "minecraft:lever"), (1, 1, 0, W_),
+            (2, 1, 0, "minecraft:repeater[facing=west,delay=1]"),
+            (3, 1, 0, W_), (4, 1, 0, W_), (5, 1, 0, W_),
+            (6, 1, 0, "minecraft:redstone_lamp"),
+            (0, 1, 3, "minecraft:lever"), (1, 1, 3, W_), (2, 1, 3, W_),
+            (2, 1, 2, W_), (2, 1, 1, W_)]
+    _lp3, _lio3 = _hand(_lkd, {(0, 0): "A", (0, 3): "B"}, {(6, 0): "Y"})
     for _vv, _want in (({"A": 0, "B": 0}, False), ({"A": 0, "B": 1}, False),
-                       ({"A": 1, "B": 1}, False), ({"A": 1, "B": 0}, True)):
-        _lg2, _, _, _, _, _ = _run_vec(_vv, None, _lp2)
-        assert bool(_lg2.get("Y", False)) is _want, (_vv, _lg2)
-    print("lock ok: side-lit repeater freezes (fresh 1,1 stays off)")
+                       ({"A": 1, "B": 1}, True), ({"A": 1, "B": 0}, True)):
+        _lg3, _, _, _, _, _ = _run_vec(_vv, None, _lp3)
+        assert bool(_lg3.get("Y", False)) is _want, (_vv, _lg3)
+    print("lock ok: dust-fed side does NOT freeze (1,1 follows input)")
+    # ponytail: self-loop latch through a facing-in repeater (the
+    # user-measured phenomenon, vanilla-true construction): output net
+    # drives a repeater facing into the side; input drops, side holds
+    # itself, output stays on permanently.
     _sl = [(0, 1, 0, "minecraft:lever"), (1, 1, 0, W_),
            (2, 1, 0, "minecraft:repeater[facing=west,delay=1]"),
            (3, 1, 0, W_), (4, 1, 0, W_), (5, 1, 0, W_),
            (6, 1, 0, "minecraft:redstone_lamp"),
-           (3, 1, 1, W_), (2, 1, 1, W_)]
+           (4, 1, 1, W_), (4, 1, 2, W_), (3, 1, 2, W_), (2, 1, 2, W_),
+           (2, 1, 1, "minecraft:repeater[facing=south,delay=1]")]
     _sio = {"levers": {(0, 0): "A"}, "lamps": {(6, 0): "Y"}, "nets": {}}
     sim_sequence({"inputs": ["A"], "outputs": ["Y"],
                   "gates": [{"out": "Y", "op": "AND", "args": ["A", "A"]}]},
                  _sl, _sio,
                  [({"A": 1}, {"Y": 1}), ({"A": 0}, {"Y": 1})])
-    print("lock ok: output looped to its own side latches on permanently")
+    print("lock ok: repeater-fed self-loop latches on permanently")
     # ponytail: Target-block oracle (wiki Target, verified against that page
     # before modeling). A target is opaque conductive when idle, redirects
     # adjacent dust even before a hit, and only becomes a source for the hit
