@@ -1,0 +1,7 @@
+IN A, B, CIN
+OUT S, COUT
+x1 = A XOR B
+S = x1 XOR CIN
+c1 = A AND B
+c2 = x1 AND CIN
+COUT = c1 OR c2

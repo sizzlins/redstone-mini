@@ -2492,3 +2492,21 @@ stack3d 8/8. alu4/cpu4 full re-verifies NOT re-run (long; queued).
 ## Night 2026-10-04 (diff_engine: side-lock diode suite)
 
 Sampled builds had no side-powered repeaters, so the lock rule gated vacuously (flagged twice). Added hand-placed suite: diode with lever-direct side dust + delay-4 input repeater, 4 vectors, tri-engine exact agreement. Probed broad-vs-narrow first: no divergence reachable (dust is instant in-tick, so path length can't stagger; delay element required; final shape agrees under all rules incl. frozen broad ref). Suite passes 4/4; guards future lock/wake drift in ANY engine. Asserts agreement only, never vanilla truth (needs game).
+
+## Night 2026-10-04 (11): autonomous 8h torchless-FA run (operator asleep)
+
+DONE (operational): torchless 1-bit FA solved 16/16 + minimized (width,
+blocks) + exported + support-audited. FIG (fallback): best stage reached
+(NOT/XOR/AND/FA) + blockers, honestly reported, nothing faked.
+State banked: evo_blocks plateaued 10/16 over ~30k evals (approaches
+1-6 logged in code comments); approach #7 = STAGED evolution (NOT ->
+XOR -> AND -> FA, machine-discovered frozen motifs, still raw atoms).
+Rule-7 hardening: future timeout 180s per eval + wall clock + heartbeat
++ crash-safe saves (30k evals, zero hangs observed; timeout is belt
+and suspenders). Other agent active: no kills except own orphans by
+command-line match, no engine edits planned (staged work is scratch +
+recipes only), heads-ups via notes/.
+Assumption A8: frozen DISCOVERED patterns as later-stage building blocks
+is evolution, not prebuilt gates (nothing hand-designed enters any
+genome; operator can veto in the morning -- the pure alternative costs
+more compute, noted in report if relevant).
