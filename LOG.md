@@ -167,3 +167,16 @@ metrics); (b) width via filtered stone slices until 2 consecutive
 slices stop moving max-x; (c) depth/height documented as router-side
 work with this evidence, left for coordination. Assumption A6: I/O pin
 positions are fixed inputs (moving pins = compose change, out of lane).
+
+## Correction (7b): east edge is NOT bare floor
+
+Prior entry said max-x=325 was 14+ bare stones (probe truncated at 14
+lines -- my error, owned). Full plane: a LIVE north-south wire trunk
+z=23..81 with 7 repeaters, all on its y=0 stones. The filter correctly
+blocked them (load-bearing); only 5 border stones came out. Corrected
+footprint verdict: min-x=lever (pins), max-x=wire trunk (routing),
+z-extremes=live wire (routing). Footprint is now FULLY
+placement-determined; single-deletion post-pass cannot move
+individually-necessary extremes. Width/depth need tighter placement =
+router lane. Coordinating via notes/to-opt-agent.md (evidence + ask,
+no files touched), continuing count-squeeze in my lane.
