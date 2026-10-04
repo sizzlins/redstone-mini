@@ -1,83 +1,49 @@
-# MORNING REPORT — autonomous session 2026-10-04 (alu4 bands 1/2 green, 0 parked)
+# MORNING REPORT — 2026-10-04 (alu4 FULL GREEN)
 
-## Status: 2 of 3 red bands green, no merge yet (band 0 blocks)
+## DONE: full 4-bit ALU verifies 1024/1024 in sim
 
-- **Band 1 GREEN** (7518 blocks, `1,inputs_first,short`): SIM MISMATCH
-  (Y1 True-when-False) traced to A0B0 boundary input stuck lit (X1 dark,
-  XOR correct; S1 cone inherits) via a y=3 flight over a torch zone.
-  DODGED, not fixed: `inputs_first` order routes lanes in open ground.
-- **Band 2 GREEN** (6957 blocks, `1,inputs_first,long`): long jogs dodge
-  its wall. Both wins came from existing ladder diversity, not new code.
-- **Band 0 RED**: OP1's lane cannot reach m20's west port (4,12) -- pocket
-  sealed W (lane wall) / N,S (B0-adjacency + funnel cobble) / E (own
-  tile). All starts fail incl. astar+3D. 8 approaches exhausted
-  (sidestep-probe, reorder, order-seeds x6, NOFLAT, maze x4, TERR,
-  IN-order, arg-swap-proven-useless). PARKED with precise TODO:
-  disambiguate tile-seal vs lane-seal timing, then port-approach
-  reachability gate in placer OR lane keep-out around west-fed ports.
-  Partial merge impossible (Y0 lives in band 0).
-- **No stitch attempted** (needs all bands). No engine changes this
-  session (all findings are recipe/ladder/probe-level).
+- **6/6 bands green** under engine `f462f6f` (`hier_bands.py recipes/alu4.txt`):
+  b0 13304 (Y0 — was RED for the whole campaign) via `3,inputs_first,short`
+  (+long, same blocks); b1 7518; b2 6957; b3 571; b4 2414; b5 4878.
+- **MERGE 71560 blocks** (2198×353), 10 levers, smoke 3/4 → Y2 pillar
+  re-derivation (`y2trace` → 3 glass swaps at 868,2,221 + 868,2,224 +
+  1170,2,218, same fault family as the old 5-pillar fix, new coords) →
+  smoke 4/4 → **`verify_par` VERIFY OK: 1024 vectors, 16 chunks green**.
+- **Paste-ready:** `build_alu4full.schem` (hash-verified copy already in
+  `.../worldedit/schematics/`), + `.mcfunction` (4.7 MB) + `.html` (7.9 MB)
+  in repo root (gitignored by design).
+- Engine gates all hold: `compose_check` bit-identical 144/322/224/214,
+  nonhier suite 6/6 identical (2925/5499; alu1-flat RED by design since
+  124d179), `hier_verify alu1` VERIFY OK 32/32.
+- Commits: `ee61873` (corridor blame + pull-early), `f462f6f` (hop-cond2 +
+  diode-drop). Probes in `scratch/` (`reachmap`, `corridor_map`,
+  `shortdiag`, `stampwho`, `loopdiag`) — gitignored, kept for forensics.
 
-## Methods banked (probes force-added to git)
+## What changed in the engine (all green-neutral by construction + gated)
 
-`sidestep.py` (lwire from N starts), `banddiag.py` (settled DIFF incl.
-non-lamp nets), `jmap.py` (junction diodes), `boxmap.py` (3D region map),
-`srcmax.py` (power maxima), `maze_one.py`, `one_ladder_ext.py`
-(spreads 1-10). Rule learned: `PYTHONHASHSEED=0` makes compose
-bit-identical across runs (hash-proven); unseeded probes chase different
-geometries. `banddump.py` output name now takes the recipe prefix.
+1. `lwire` tags `first_err` with cands[0] corridor; `_blame` counts foreign
+   wires within 2 of it — a fence (≥10, beats pocket) outranks endpoint blame.
+2. `_order` pulls gates-that-precede-inputs before lanes (stable partition)
+   and drops auto-satisfied input preds (inputs_first).
+3. `_hop_free` cond2 counts committed `sup`/`ctx.sup` (was own-supports only).
+4. Compose tail: on `repeater loop`, bisect router diodes via `_loop_rep`
+   mirror, drop the single closer (cap 9); sim judges decay.
+5. Stall guard: duplicate blame pair fails fast (was 24-restart grind).
+6. Tried and REMOVED: flight veto, span-refusal, lower-role lids, lever-at-load
+   (unfired / orphaned hop-chains / wrong layer — see LOG).
 
-## Still open (ranked)
+## Still red / known limits (no action unless you say so)
 
-1. Band 0 port wall (TODO above; biggest remaining red).
-2. `_streets` flip (parked; needs alu4 bands climbing -- this session
-   unblocked the prerequisite everywhere except band 0).
-3. Paste tests (your hands); SWAR delete (your call); LOG sharing (stable
-   since the merge; GA acked append-only).
+- `gates_first` rungs on band 0 die input-phase repeater loops theDrop can't
+  always clear (multi-diode/tile) — inputs_first covers, no campaign need.
+- One `4,inputs_first,long` attempt: loop dropped, then SIM MISMATCH x1
+  (decay from the drop — sim gate correctly rejected; other rungs green).
+- Old `build_alu4.*` / `build_alu4bank.*` are STALE (pre-b0, unverified) —
+  paste `build_alu4full.schem`, not those.
+- GA agent's files untouched: `scratch/evo_blocks.py`, `scratch/rig_verify.py`
+  (their commits `c439751` etc.), `build.*.bak`. `scratch/` stays gitignored.
 
-## GA agent status (observed, not touched)
+## Needs you (human)
 
-Still grinding (`evo_blocks.py` modified in worktree, left alone).
-`recipes/fa1.txt` is theirs (untouched). No file overlap (my paths:
-probes + LOG + this report). No collisions. Tree clean except the two
-protected `.bak` files.
-
----
-
-# MORNING REPORT 2026-10-04, part 2 (torchless-FA agent, end of night)
-
-## Status: NOT solved, XOR/AND/FA open (honest, read this before continuing)
-
-**Banked and green:** torchless NOT (subtract-comparator + lever-ON rear
-+ A side + routed output, 12 cells, 2/2 sim-verified, minimized). Files:
-`scratch/not_found.pkl`, `scratch/evo_not/best.txt`, enumerators
-`scratch/enum_{not,and,xor}.py`, evolver `scratch/evo_blocks.py`,
-oracle `recipes/fa1.txt`. Full regression green after all engine work
-(suite, diff ALL IDENTICAL, compose_check + nonhier bit-identical,
-add2opt 3730 + alu1glass re-verified).
-
-**Do not repeat:** blind atomic sampling (~80k evals, best FA 10/16 --
-CIN-routing with no logic), single-compare AND (arithmetically
-impossible, both modes fail single-sided vectors -- I lost 10 turns to
-this, truth-table every "obvious" gate), loose-region enumeration
-(attenuation + collisions), unguarded isolation (84-100% merge rates).
-
-**Exact next steps, in order** (all analysis done, just implement+run):
-1. Two-termini lamp XOR: branch outputs to SEPARATE lamp-adjacent dust
-   (kills the merge route entirely; ~4 routes instead of 6). Highest
-   expected value.
-2. De Morgan assembly from frozen NOTs via evolution (routing-only;
-   logic proven, pins need L-shaped feeds for perpendicular rear/side).
-3. If both fail: the dual-subtract architecture may need 3D (y=2
-   channels double space, pillar support required) -- biggest build,
-   last resort.
-
-**Needs you (human):** game paste of build_add2opt.schem (still open
-from last night); LOG merge decision (unchanged); footprint call
-(unchanged, notes/to-opt-agent.md).
-
-**Hands off:** `M compose.py` in workdir is the other agent's router
-work (not mine, never touched, not committed). Their processes came
-and went all night; no kills exchanged, no file collisions. My strays:
-none (verified by command-line match every time).
+1. **Game paste test** of `build_alu4full.schem` (in your schematics folder).
+2. Nothing else. No passwords, no payments, no secrets blocked anything.

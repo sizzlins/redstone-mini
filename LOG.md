@@ -2656,3 +2656,8 @@ Open items for the live run (operator): pack_format 81 is a GUESS for
 fix); lamp parse assumes EN wording (raw bodies logged either way).
 Needs from operator: server+rcon+password, world dir, b0 anchor.
 RIG server staged at D:/put gitrepos here/mc-server (vanilla 26.3 jar from piston-meta, run.bat on bundled Java 25, server.properties with rcon). Operator runs it (EULA is theirs to accept, not mine), sets password, sends host/port/password-file/b0. Then rig_verify.py drives ground-truth verdicts.
+
+## Morning 2026-10-04 (alu4 FULL GREEN: 1024/1024, Y0 included)
+
+End-to-end under engine f462f6f: hier_bands 6/6 green (b0 13304 via 3,inputs_first,short; b1 7518; b2 6957; b3 571; b4 2414; b5 4878; corridor blame + diode-drop also fired on band 3) -> stitch MERGE 71560 blocks (2198,353), 10 levers -> smoke 3/4, Y2 wrong on 1010101010 (same stitch-coupling family as the old 5-pillar fix; old coords stale, layout reshuffled) -> y2trace named (868,2,221),(868,2,224),(1170,2,218) -> ins_target swap 3/3 -> smoke 4/4 -> verify_par VERIFY OK 1024 vectors, 16 chunks green. Exported build_alu4full.{html,mcfunction,schem} (schem hash-copied to worldedit schematics). Old build_alu4.* / build_alu4bank.* superseded (unverified under new engine / stale layout).
+
