@@ -2536,3 +2536,7 @@ tiles.footprint @lru_cache (callers audited read-only). Marginal on clean placem
 ## Night 2026-10-04 (opt: full_state cache; full-read audit done)
 
 Read every runtime file. Last duplicate-string pattern: export.full_state @lru_cache (60703/21 hits). Ranked list: shipped (caches, serial -43%, coalescing, fast paths, demo skip, fp, chunks) vs rejected-with-proof (dirty-bit, heap, max->if, dust_points, pool persistence, doomed-search, SWAR, Rust) vs open-needs-hands (_streets flip, tail measurement, paste). Nothing left above ~1%.
+
+## Night 2026-10-04 (tail evidence: no tail; work-stealing closed)
+
+Fresh 1024v alu4 verify, 16 chunks x 64v, per-chunk times 383-445s (max/min 1.2x, mean 419s) -- uniform, no stragglers. Old 105-vs-468s skew was contention artifact, not structure. Verdict: finer chunks / work-stealing cannot help (tail ~= mean at any granularity; only adds spawn overhead). Case closed with numbers; HIER_NCHUNKS stays opt-in. (Side bonus: fresh-copy 16/16 green = alu4 re-verified on current engine.)
