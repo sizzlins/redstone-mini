@@ -4344,3 +4344,39 @@ is 1051 MB across 1496 files, with three `_states.pkl` state dumps alone at
 ~550 MB and 25 MB + 14.6 MB of memo.json. Nothing deleted. My own sweep's
 per-cell dumps contribute (a 30 MB cmc cells file for alu4merge_g), which is
 the honest storage cost of the gate.
+
+------------------------------------------------------------
+wireconn.py REFUTES the params-vs-geometry story, in 30 seconds.
+------------------------------------------------------------
+Hypothesis for alu4bank_ins's 633 scattered dust fragments: sim TRUSTS the
+blockstate east/west/north/south params while cmc DERIVES connectivity from
+geometry, so stale params (e.g. from the ins_target pillar swap) split them.
+
+Test: two ADJOINING dust cells whose params both claim no connection
+(east=none on (1,1,0), west=none on (2,1,0)), lever on, lamp at the end.
+Vanilla connects them automatically.
+
+    python scratch/wireconn.py
+    SIM  A=1 -> Y=True  (want True ) ok
+    OUT  A=1  (1,1,0) sim=15 cmc=15  (2,1,0) sim=14 cmc=14  agree
+    ENGINES AGREE
+    exit 0
+
+Both engines push 15->14 across the "unconnected" join. Neither reads params
+over geometry, at that shape. So the scattered fragments are not a
+params-trust difference -- back to decay/timing, and the next cheapest probe
+is whether the diff SHRINKS with more cmc settle ticks (a settling artifact
+would; a rule gap would not).
+
+Also checked ins_target.py for the stale-params route before running this: it
+swaps cobble pillars to glass but only pillars, and never touches a wire's own
+params -- so there was no mechanism for params to be stale there anyway.
+
+------------------------------------------------------------
+stackfail.pkl: the one genuine coverage hole, and it stays one.
+------------------------------------------------------------
+48 real circuit builds are all gated; stackfail.pkl (2464 blk, in=a,b,c
+out=c2,t,y) matches no recipe, subset or exact. Its intended function is not
+recoverable from the pins alone and no cand_*.txt/*.recipe.txt covers it, so
+writing the recipe would be guessing at the oracle -- the exact thing the
+verification layer exists to prevent. Documented, not forced.
