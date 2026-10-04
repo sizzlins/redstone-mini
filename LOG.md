@@ -62,3 +62,4 @@ command-line match.
 ## Night 2026-10-04 (alu1 GREEN)
 
 alu1 VERIFY OK 32/32 (hier gate, BANK=1 default). recipes/alu1.txt promoted to 22-gate 2-band restructured recipe (equiv-proven vs original). Fixes: edge-lever lane-march skip (2722ad1, band 3 green); bankdrop west-approach retry (stitch ring); split-NOT qn1a/qn1b (side-lock latch). Full trace: notes/alu1-green-2026-10-04.md. Project history recovered at notes/LOG-history-2026-10-04.md (was wiped from this file twice tonight -- see notes file; needs operator merge decision).
+    slice 300e seed9: 4339 -> 4333 (6 acc). Promoted. (One more low slice starts the <=5 streak.)
