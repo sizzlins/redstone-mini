@@ -52,21 +52,21 @@ def _stage(name):
     _lev = ('minecraft:lever[face=floor,facing=north,powered=false]',
             'lever')
     if name == 'not':
-        XMAX, YMAX, ZMAX = 5, 3, 5
+        XMAX, YMAX, ZMAX = 7, 3, 7
         PINS = [(0, 1, 0, _lev[0], 'lever', 'A'),
-                (0, 1, 2, 'minecraft:redstone_lamp', 'lamp', 'Y')]
+                (0, 1, 6, 'minecraft:redstone_lamp', 'lamp', 'Y')]
         ORACLE_TEXT = 'IN A\nOUT Y\nY = NOT A\n'
     elif name == 'xor':
-        XMAX, YMAX, ZMAX = 6, 4, 7
+        XMAX, YMAX, ZMAX = 14, 4, 13
         PINS = [(0, 1, 0, _lev[0], 'lever', 'A'),
-                (0, 1, 2, _lev[0], 'lever', 'B'),
-                (0, 1, 4, 'minecraft:redstone_lamp', 'lamp', 'Y')]
+                (0, 1, 6, _lev[0], 'lever', 'B'),
+                (0, 1, 12, 'minecraft:redstone_lamp', 'lamp', 'Y')]
         ORACLE_TEXT = 'IN A, B\nOUT Y\nY = A XOR B\n'
     elif name == 'and':
-        XMAX, YMAX, ZMAX = 6, 4, 7
+        XMAX, YMAX, ZMAX = 14, 4, 13
         PINS = [(0, 1, 0, _lev[0], 'lever', 'A'),
-                (0, 1, 2, _lev[0], 'lever', 'B'),
-                (0, 1, 4, 'minecraft:redstone_lamp', 'lamp', 'Y')]
+                (0, 1, 6, _lev[0], 'lever', 'B'),
+                (0, 1, 12, 'minecraft:redstone_lamp', 'lamp', 'Y')]
         ORACLE_TEXT = 'IN A, B\nOUT Y\nY = A AND B\n'
     elif name == 'fa':
         pass  # module defaults (XMAX=8, full pins, recipe file oracle)
@@ -404,6 +404,41 @@ def _bridge(rng, genome):
     return g
 
 
+def _reach(rng, genome):
+    """Extend a live dust cell 1-4 steps TOWARD a random pin (goal-directed
+    wiring, approach #10). Bridges join random pairs (usually two dead
+    ends); reach grows nets at goals: A-trails toward motifs, motif
+    outputs toward lamps. The missing counterpart to _wired_comp (which
+    builds motifs but never connects them to anything that matters)."""
+    g = dict(genome)
+    bmap = dict(g)
+    dust = [c for c, b in g.items() if b == DUST]
+    if not dust:
+        return g
+    a = rng.choice(dust)
+    px, py, pz, _, _, _ = rng.choice(PINS)
+    x, y, z = a
+    for _ in range(rng.randint(1, 4)):
+        if x == px and z == pz:
+            break
+        if x != px and (z == pz or rng.random() < 0.5):
+            x += 1 if px > x else -1
+        elif z != pz:
+            z += 1 if pz > z else -1
+        else:
+            break
+        c = (x, y, z)
+        if not (1 <= x <= XMAX and 0 <= z <= ZMAX):
+            break
+        if c in g or c in FROZEN:
+            continue
+        if not _solid_below(bmap, c):
+            continue
+        g[c] = DUST
+        bmap[c] = DUST
+    return g
+
+
 def _const_io(genome, pins_io, vectors):
     """Register genome levers as constant inputs (approach #8 root fix).
 
@@ -596,10 +631,9 @@ def main():
             while len(batch) < BATCH and _tries < BATCH * 6:
                 _tries += 1
                 # 20% mutate, 5% relocate, 15% crossover, 10% jump,
-                # 10% motif-fill, 12% wired-comp, 8% wired-rep, 10% bridge,
-                # 10% grow. Bridges are approach #9: output ROUTES to pins
-                # (proven 12-cell NOT needs 7 routed dust; random walks
-                # never thread comp-output to lamp-net).
+                # 10% motif-fill, 12% wired-comp, 8% wired-rep, 5% bridge,
+                # 10% reach, 5% grow. Reach is approach #10 (goal-directed
+                # wiring toward pins; bridges join random dead ends).
                 _r = rng.random()
                 if not best or _r < 0.2:
                     cand = _mutate(rng, best) if best else _grow(rng)
@@ -616,8 +650,10 @@ def main():
                     cand = _wired_comp(rng, best if best else _grow(rng))
                 elif _r < 0.8:
                     cand = _wired_rep(rng, best if best else _grow(rng))
-                elif _r < 0.9:
+                elif _r < 0.85:
                     cand = _bridge(rng, best if best else _grow(rng))
+                elif _r < 0.95:
+                    cand = _reach(rng, best if best else _grow(rng))
                 else:
                     cand = _grow(rng)
                 # frozen scaffold (prior-stage discovered patterns): ops may

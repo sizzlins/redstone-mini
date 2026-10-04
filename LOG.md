@@ -2570,3 +2570,43 @@ Stall guard: blame returning an already-constraining (net,owner) pair replays th
 
 Reachability diagnostic (scratch/reachmap.py + corridor_map.py): n1_0 (8,12)->(111,29) corridor 90% free (110/122), pinched by B0 fence (207 near cells, 5 parallel rivers z=9,10,15,17,20) + tile doorstep (m00 cobble, A0B0_0 wire). Pocket blame saw endpoints only (OP1) and restarted around the wrong net. Fix: lwire tags first_err with cands[0] corridor; _blame counts foreign wires within 2 of corridor, fence (>=10, >pocket) wins; _order honors gate->input via pull-early stable partition + ignores auto-satisfied input preds (inputs_first). Result: inputs_first rungs all route n1_0 now (via (n1_0,OP1) AND (n1_0,B0) precedes on different spreads), die later on n0_0 SHORT3D slope-link (new wall). Gates: compose_check identical; nonhier 6/6 identical; hier_verify alu1 VERIFY OK 32/32. gates_first rungs die on input-phase repeater loops (untouched).
 
+
+## Night 2026-10-04 (14): torchless program, honest accounting
+
+SOLVED: torchless NOT (subtract-comp + lever-ON rear + A side + routed
+output), 2/2 green, 12 cells, minimized-verified (nothing smaller in
+3000 evals). Machine-discovered via exhaustive BFS-construction
+(enum_not, 527 candidates). First torchless gate with zero torch
+material. Banked: scratch/not_found.pkl + evo_not/best.pkl.
+
+OPEN: XOR/AND/FA assembly (~100k evals, ~15 approaches, all stalled).
+Root causes, each proven by measurement (not theory):
+- Single-comparator AND is IMPOSSIBLE (both modes fail a single-sided
+  vector; my early "compare=AND" belief was an arithmetic error that
+  cost 10 turns -- truth-table everything, even "obvious" gates).
+  AND needs De Morgan (3 NOTs). XOR dual-subtract stands verified.
+- Blind assembly plateaus (FA 10/16, NOT 1/2): ~12 coordinated cells
+  never land together by sampling (80k evals).
+- Enumerative construction drowns in routing: 6 disjoint routes +
+  isolation in shared regions jointly unsatisfiable (measured stage
+  funnels at every turn); pin geometry (same-column pins force
+  collinear feeds, but comparators need PERPENDICULAR rear/side).
+- Electrical rules that MUST hold (all validated): pointing (wiki Lamp
+  verbatim + cmc agree; our dust_points already correct -- two of my
+  "sim bug" scares were my own geometry errors, owned above),
+  analog levels (15-hops exact; compare needs rear>=side i.e. longer
+  rear runs; subtract kills need R<=S), isolation (orthogonal dust
+  adjacency merges nets -- measured 84-100% merge rates in dense
+  layouts), lock-sides guarded (repeaters freeze), support prefilter
+  (sim blind to floating levers; y==1 floor blind spot stands).
+- Sim itself vindicated throughout (every "bug" I chased was my error
+  except real ones: unregistered-lever invisibility [fixed via
+  _const_io], target-support omission [fixed], lock/side over-breadth
+  [fixed per wiki+cmc]). The sim is now STRICTER and all greens re-
+  verified: suite, diff ALL IDENTICAL, compose_check identical,
+  nonhier 6/7 identical, add2opt 3730 GREEN, alu1glass GREEN.
+Next session, in order: (1) two-termini lamp XOR variant (branch
+outputs to SEPARATE lamp-adjacent cells -- kills the merge route;
+spec in report); (2) De Morgan assembly from frozen NOTs via evolution
+(routing-only task); (3) distributed pins (L-shaped feeds fix the
+perpendicular-rear/side geometry). Do NOT re-run blind sampling.
