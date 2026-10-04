@@ -2402,3 +2402,29 @@ no files touched), continuing count-squeeze in my lane.
 Banked merge smoked 2/4 red (Y2 stuck lit, documented pillar-feed fault). Blanket insulate() FAILED (579 swaps, 2/4->4/4 red -- kills legit conduction; discarded). Targeted forensics (lit+dark-logic dust -> torch-fed pillar, in failing-output fanin): 4 pillars fixed Y2, 1 more fixed residual COUT (612,2,221 612,2,224 851,2,189 963,2,208 1855,2,231). VERIFY OK 1024/1024 (~30min staged). Re-exported build_alu4bank.*. Reproduce: scratch/ins_target.py (coords above). TODO: verify-driven insulation (generalize). Full trace: MORNING-REPORT.md.
     cobble re-sweep: 0 evals, 261 static skips (filter screens whole tier, zero sim cost). stone re-sweep: 7 acc then 3938 skips, exhausted (3740->3733). Promoted 3733. Wire confirm at new state next, then DONE.
     wire confirm: 3/300 (3733->3730, interaction tail). DONE criterion met 4x over (wire 4,0,2,3 all <=5); all tiers re-swept at final geometry. Promoted 3730. Final acceptance run next.
+
+## Night 2026-10-04 (8): torchless 1-bit full adder commissioned (operator, live)
+
+Task: 1-bit full adder (A,B,CIN -> S,COUT) from RAW atoms only. No
+prebuilt gates, no torch material. Palette: dust, comparator, lever,
+lamp, repeater, glass, slab, target. Fitness lexicographic (width,
+blocks); height unconstrained per operator ("not height"). Assumption
+A7: pins fixed (3 levers + 2 lamps at x=0 plane, glass floor y=0
+pre-laid as scaffolding, not logic); evolution fills x>=1; width = max
+occupied x. Constants must come from lever blocks (only 15-source in
+palette); construction argument for possibility: NOT via
+comparator-subtract from 15, OR via dust merge, AND via De Morgan --
+evolution may find better (analog tricks welcome).
+
+Sim audit for the palette: comparator terms complete (rear/side from
+dust/target/lever/rblk/torch/rep/comp, both modes + self-tests);
+"glass never powers" (inert); slabs conduct like stone; target
+conducts (tg terms). GAP T1: _check_supports solid set omits target
+(line 1072: cob|rblk|glass|slab) -- target IS a full solid in vanilla,
+so target-floored candidates fail LOUD wrongly. 1-word fix queued
+BEHIND game proof (C4 below); not touching engine until then (opt
+agent active). GAP T0 (known): y==1 support blind spot -- sidestepped
+by construction (pre-laid floor, never in genome).
+Method: canaries C1-C5 in game BEFORE launching evolution. Evolving
+against unconfirmed physics = pillar factory; scaffolding only until
+canaries land.
