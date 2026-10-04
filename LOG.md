@@ -3367,3 +3367,79 @@ Full alu4 picture (both engines, per-cell diff):
     cmc-refused structurally (sim green): alu4mergeNEW, alu4mergeNEW4
     red both engines (15): alu4_build, alu4bank, alu4bank2, alu4bank_ins,
             alu4fresh, alu4_av, alu4ctrl..6, alu4mergeNEW5
+
+============================================================
+BUG: the "sim not settling" diagnostic crashed while reporting.
+The gate was reporting a crash where a diagnosis belonged.
+============================================================
+symptom: python scratch/nonhier_suite.py printed
+    alu1  RED TypeError: 'int' object is not subscriptable  14.9s
+and exit code 0, so the suite looked FINE while one of its seven cases had
+crashed rather than judged. The opt agent's handoff records alu1-flat as
+"RED by design since 124d179 (22 < _TERR_MIN_GATES=40)". What it was actually
+doing was crashing. Those are very different things to hand a human: one is a
+known design limit, the other is a broken gate.
+
+root cause, simvec.py run_scalar's not-settling branch:
+
+    tloop = sorted(cell[j] for j in churn if cell[j] in torch)
+    cset  = set(cell[j] for j in churn)
+    for c in churn:                      # <-- ids, not cells
+        for dx, dz in DIRS:
+            if (c[0] + dx, c[1], c[2] + dz) in cset:
+
+`churn` is a list of integer cell INDICES. Lines 799, 800 and 812 all index
+through `j` correctly; this one walked the ids and subscripted them as cells.
+So the error path for a non-settling build raised TypeError instead of writing
+the report it exists to write.
+
+fix: iterate the cells (`for c in cset:`). One word. This CANNOT change any
+verdict -- it is the failure path of a build that has already failed; it only
+changes which exception is raised and therefore what a human is told.
+
+This is the exact failure mode sim.py's own _TICK_CAP comment warns about:
+"sim not settling" reads as a router fault and is not one. A TypeError in the
+middle of producing that message reads as a router fault AND as a broken
+verifier.
+
+after, alu1 flat:
+  RuntimeError: sim not settling on {'A':0,'B':0,'CIN':0,'OP0':0,'OP1':0}.
+  churn=2003 edges: same-level=3326 slope=535
+  loop_torches: [(91,1,47),(91,1,50),(108,1,89),(156,1,69),(156,1,72),
+                 (168,1,111)] max_gap=11414
+
+suite after: 144 / 322 / 224 / 214 / 2925 GREEN, ctrl_decode GREEN 5499
+(== EXPECT), alu1 RED with that message instead of a crash.
+
+Verified unchanged: refdrift FREEZE SEMANTICALLY IDENTICAL TO HEAD (sim.py
+untouched), diff_engine ALL IDENTICAL 16/16 exit 0.
+
+----------------------------------------------------------------
+LATENT SECOND BUG, found while in the same function, NOT fixed
+----------------------------------------------------------------
+simvec.py references a name `fire` that is NEVER ASSIGNED anywhere in the
+file. AST proof: 9 Name loads at lines 881, 882, 914, 918, 919, 938, 942,
+943, 962; ZERO stores, zero args. They are inside run_scalar's wake loop:
+
+    elif k == 2:   # torch: re-evaluate, or fire
+        if fire[c]: ...
+        fire[c] = 1
+
+So any build that reaches those branches raises NameError: name 'fire' is not
+defined. It did exactly that when the alu1 crash surfaced through
+simvec.verify_par's spawn Pool. alu4 builds do NOT reach it (run_scalar
+returns normally on alu4merge_g and alu4fix), which is why every green in the
+project is unaffected -- the branches are simply unreached by the builds we
+care about.
+
+Note the name collision trap: sim.py:333 defines `def fire(now, c, level,
+duration)`, an unrelated FUNCTION, and sim.py does not inject anything into
+simvec's namespace (verified: no `simvec.x =` assignments). So simvec's
+`fire[c]` container and sim.py's `fire()` function are unrelated and neither
+can supply the other.
+
+NOT GUESSED AT. Reconstructing the missing container means deciding what the
+pending-fire set should contain and when it is cleared, which is a physics
+decision in shared code with no oracle in this environment -- the same reason
+Finding 3's lever fix was not applied. Recorded with exact line numbers so it
+is cheap to pick up.
