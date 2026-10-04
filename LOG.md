@@ -118,3 +118,4 @@ check before a single sim eval is spent. Wire/repeater/torch deletions
 need no screen (nothing is supported BY them). Same for future cobble
 sweeps: the banked 36 cobble deletions were retro-audited clean via the
 4219 check, but that was luck plus small numbers, not method.
+    Filter validated on the live 4161 build: 0 false negatives across all solid candidates (11 flags are true side-mounted torches, verified by breakdown). FN=0 is the safety property; over-blocking just costs evals, never correctness. (scratch/ is gitignored, so compact.py lives on disk + in this log, not in git.)
