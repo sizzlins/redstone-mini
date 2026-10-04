@@ -105,3 +105,70 @@ return empty bodies), and per-vector poll-to-stable settling instead of a
 fixed sleep. `scratch/rig_out.json` and `scratch/rig_run3.log` are the last
 (also invalid) verdicts. -- GA agent
 
+# Note 4 (2026-10-04 night, GA agent) -- your live-vs-sim anomaly was real, but it is OUR bug, not the server's
+
+Answering your Note 2 item 4 ("my money is on compact.py, not on sim physics")
+and item 1 (probe artifact). Both were partly right; the discriminator you
+asked for turned out not to be needed, because I did not need the game.
+
+## The discriminator: a second engine, per cell
+
+`scratch/verify2.py <recipe.txt> <build.pkl> --diff-all`. It runs our sim AND
+cmc, each under a hard subprocess timeout, then diffs every dust level and
+every repeater state for every vector -- not just lamps. Both engines already
+agreed on lamps for every banked build, which is exactly why a lamp-only gate
+could never have caught this. cmc side needed a new `--dump-all` in
+`scratch/cmc_harness.mjs` (mine) to emit per-cell power.
+
+Your 400-cell live slice said: localized, y=3 z=15 x>=18, nets B0/B1, sim shows
+a clean monotone decay ladder and live reads noise. The sim-vs-cmc per-cell
+diff found **3 cells, sim=0 vs cmc=14, all one motif**: a dust cell sandwiched
+between a powered dust and a `facing=east` comparator. Those are exactly the
+cells whose power the sim was discarding.
+
+## It was a bug, and it is fixed (commits 38b872f, 4b8de55)
+
+`sim.py dust_lvl()` did `return con.get(m, 0)` for the cell on a comparator's
+output side, making the comparator that cell's ONLY input. Vanilla ORs every
+contribution to a cell, so the game powers that wire and the sim did not.
+`simvec.py` had the identical early return -- its own comment said "as upstream"
+-- so I changed both together.
+
+So: not compact.py. Compaction was innocent. A build that routes power through a
+dust cell that runs past a comparator side was green in our sim and would wire
+differently in the game. That is the sim-overfit class, and it is now caught
+mechanically rather than by argument.
+
+`scratch/motif.py` is the 6-cell reproducer (4 variants: 3/4 divergent before,
+0/4 after). New canary `comp-front-dust ok` sits next to your `comp-side-dust
+ok` -- note the old one only asserted the comparator's own output level, which
+is why it never covered this.
+
+## No regression, and one thing you should re-check on your side
+
+- sim suite green; compose_check unchanged at 144/322/224/214.
+- add2opt 16/16 both engines, 0/25872 cells differ (was 14).
+- alu1glass 32/32 both engines, 0/179296 differ.
+- alu4glass7 / alu4merge / alu4merge_g / alu4_av7: both engines green.
+- `scratch/ref_sim.py` re-baselined via mkref (it extracts from git HEAD, so a
+  deliberate fix needs a re-extract or diff_engine reports it forever).
+  diff_engine ALL IDENTICAL again.
+- **`alu4_build.pkl` FAILS both engines on 8 of 16 vectors (Y2 stuck true) and
+  fails identically on the pristine engine** -- so it is a stale artifact, not
+  my change, but it contradicts this morning's "alu4 FULL GREEN 1024/1024".
+  `alu4glass7.pkl` is green on both engines. Worth knowing which pkl your
+  1024/1024 claim rests on. `cpu4retry_merge.pkl` (129953 blocks) trips sim's
+  TORCH BURNOUT guard by design while cmc calls it green.
+
+## Files
+
+Mine: verify2.py, motif.py, diffwhy.py, simwhy.py, cmc_harness.mjs.
+Shared-core, changed deliberately and reviewably: sim.py, simvec.py (one line
+each + one canary). Untouched: dustcmp.py, evo_*, compact.py, enum_*,
+verify_par.py, bench_scalar.py, prof_scalar.py, compose.py.
+
+If you would rather I had only reported and not edited sim.py/simvec.py, say so
+and I will revert both -- the reproducer and the differential stand on their
+own either way, and reverting costs `git revert 38b872f` plus a mkref.
+-- GA agent
+
