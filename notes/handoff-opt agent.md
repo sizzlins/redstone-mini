@@ -3,7 +3,7 @@
 Repo `D:\redstone-mini`, branch `phase2-design` (shared with the GA agent —
 we both commit here; commits interleave). Mine:
 `1be2186, ee61873, f462f6f, 325eac7, 2ca3f69, ddd500a, a5ee1ef, fe71ca1,
-470c84c` + the uncommitted gate fixes below. `notes/handoff.md` was deleted in
+470c84c, de58bef` (router wins, then the gate fixes + alu1 pin). `notes/handoff.md` was deleted in
 the working tree (not by me — left that way, staged state untouched).
 
 ---
@@ -70,7 +70,7 @@ Paste-ready: `build_alu4full.schem` / `.mcfunction` / `.html` (gitignored).
    *Corollary: earlier "ALL IDENTICAL" claims rested on a weaker baseline than
    they claimed; the independent gates (full 1024-vector verify against the
    logical oracle) carried the load.*
-5. **`hier_verify` swallowed stage failures** (uncommitted). `run()` passed
+5. **`hier_verify` swallowed stage failures** (`de58bef`). `run()` passed
    `check=False` and **discarded the child's return code**, so a RED stitch
    (`sys.exit(1)`) was ignored and the pipeline verified the *previous*
    `merge.pkl` — measured: one run printed `STITCH RED … no ground for t3` and
@@ -100,6 +100,43 @@ Paste-ready: `build_alu4full.schem` / `.mcfunction` / `.html` (gitignored).
 - **Stale-pop guard**: correct and free, but measured 0 pops saved (no
   duplicates exist). Kept anyway — it is 3 lines and closes a real hole.
 - **Router window** (`margin = man + 64`): the actual lever, see next.
+
+---
+
+## Cold-start: the gates, and how to re-certify a change
+
+Run these in order after touching anything; each is the cheapest thing that
+fails if the change broke something.
+
+    python scratch/mkref.py                    # ONLY after a sim.py/simvec.py commit
+    python scratch/diff_engine.py              # must print ALL IDENTICAL
+    python compose.py                          # self-test: buffers ok
+    python scratch/compose_check.py            # 144 / 322 / 224 / 214 bit-identical
+    python scratch/nonhier_suite.py            # 6/6 (alu1 flat RED by design)
+    python scratch/hier_verify.py recipes/alu1.txt   # 32/32, exit 0
+    python scratch/hier_verify.py recipes/alu4.txt   # bands + stitch + 1024/1024, exit 0
+
+Speed tools (all bounded, all take a build pkl now):
+
+    python scratch/prof_scalar.py 5 scratch/alu4merge_g.pkl   # table engine per vector
+    python scratch/prof_runvec.py 3                            # authority engine per vector
+    python scratch/bench_scalar.py 8 2 scratch/alu4merge_g.pkl # A/B + spread mode
+    python scratch/prof_router.py scratch/cand_alu4hierb1.txt  # router profile
+    python scratch/astar_waste.py scratch/cand_alu4hierb1.txt  # pops vs optimal (prune?)
+    python scratch/rss_probe.py                                # one child's RAM
+
+Full alu4 reproduce from scratch (~10 min):
+
+    python scratch/hier_bands.py recipes/alu4.txt scratch/alu4bands 90
+    $env:REDSTONE_HIERDUMP2="scratch/alu4merge.pkl"
+    python scratch/hier_stitch.py scratch/alu4bands.pkl recipes/alu4.txt 200
+    python scratch/ins_target.py scratch/alu4merge.pkl scratch/alu4merge_g.pkl 868,2,221 868,2,224 1170,2,218
+    python scratch/verify_par.py scratch/alu4merge_g.pkl recipes/alu4.txt 8 900 8 16   # x2 rounds
+    python scratch/export_bank.py scratch/alu4merge_g.pkl alu4full
+
+The `ins_target` pillar swap is load-bearing: without it the merge smokes
+3/4 (Y2 wrong on 1010101010). Those coordinates are merge-specific — re-derive
+with `scratch/y2trace.py` if the layout moves.
 
 ---
 
