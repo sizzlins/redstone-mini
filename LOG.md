@@ -124,3 +124,4 @@ sweeps: the banked 36 cobble deletions were retro-audited clean via the
 ## Night 2026-10-04 (opt 3: serial fast path, parse-once, band fp)
 
 verify_par skips pool for tiny sweeps (0.26s->0.01s, 26x, same _serial_shard); parse once per worker (was per shard; _CTX reset in _init_worker or sequential verifies reuse build 1's tables); band caches fingerprinted, stale refused LOUD (proven end-to-end, alu1 32/32 re-verified). Pivoted: dirty-bit wake (term-info costs ~= savings -- full analysis in notes). Closed: OP0 orphan (superseded geometry). cpu4 bank smoke GREEN; alu4bank 2/4 RED pre-existing pillar fault. Full trace: MORNING-REPORT.md.
+    wire re-sweep post-salvage: 0/300 (resume re-verified 4161 green under current engine incl. their simvec change -- no drift breakage). cobble re-sweep: 9 acc / 9 evals, then 879 static skips, tier done in 13s. The filter turns solid tiers from eval-bound to free. Promoted 4152.
