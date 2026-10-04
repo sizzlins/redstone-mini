@@ -2428,3 +2428,24 @@ by construction (pre-laid floor, never in genome).
 Method: canaries C1-C5 in game BEFORE launching evolution. Evolving
 against unconfirmed physics = pillar factory; scaffolding only until
 canaries land.
+
+## Night 2026-10-04 (9): canaries C1-C5 land, T1 fixed
+
+Operator in-game results, parsed:
+- C1 (dust on glass): stays + powers. Floor-legal, inert. Matches sim.
+- C2 (dust on bottom-slab): CANNOT BE PLACED. Slab drops out as dust
+  floor entirely (my prior belief it was placeable was wrong -- asking
+  beat assuming). Consequence: floor = glass or target only.
+- C3 (dust on target): stays + works. C4 (dust-target-dust): conducts
+  IDENTICAL to stone. Extra (theirs, unasked, valuable): wall torch on
+  powered target behaves exactly like stone; on glass the torch stays
+  lit regardless (power never arrives). Glass inertness fully confirmed.
+- Slab audit on all banked build_*.mcfunction: ZERO slabs anywhere, so
+  no existing build stands on slab and the sim slab-support term is
+  dead code in practice. No latent pillar saga. (If slabs ever get
+  stamped under dust, sim would wrongly pass it -- noted, not fixed:
+  router never emits them.)
+- T1 FIX APPLIED (sim.py _check_supports solid += target): game-proven
+  by C3/C4, 1 word, sim suite re-run green (lamp/pillar/comp/burnout/
+  ladder/budget lines all ok). Existing builds unaffected (none use
+  target as support; suite proves zero behavior change).

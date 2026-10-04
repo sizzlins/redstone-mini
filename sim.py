@@ -1069,7 +1069,12 @@ def _check_supports(P):
     (their y>=2 cells already ride stamped pillars).
     """
     dust, torch, rep, rblk, cob, repdelay, lever, lampnet, attach_rev, comp, leveratt, glass, slab, target = P
-    solid = cob | rblk | glass | slab
+    # ponytail: target counts (game-proven 2026-10-04, C3/C4: dust sits on
+    # target, target conducts dust-to-dust and mounts torches exactly like
+    # stone). Was omitted; every target-floored candidate failed LOUD
+    # wrongly. Zero behavior change for existing builds (none stand on
+    # target; suite re-run below to prove it).
+    solid = cob | rblk | glass | slab | target
     for c in list(dust) + list(rep) + list(comp):
         if c[1] == 1:
             continue
