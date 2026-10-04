@@ -44,3 +44,16 @@ tiers still untouched. Promoted 4366 to build_add2opt.*.
     total: 4648 -> 4350 (-298, -6.4%, ~1860 evals)
 
 Hit rate holding at ~5%, all wire tier. Promoted 4350 to build_add2opt.*.
+
+## Night 2026-10-04 (5): autonomous squeeze loop (operator AFK)
+
+Assumption A5: DONE = wire-tier single-deletion exhaustion, defined
+operationally: two consecutive 300-eval slices with <=5 accepts each,
+then one confirm slice; promote best, write MORNING-REPORT, stop.
+Repeater/cobble/stone tiers get tried naturally once wire stops
+yielding (loop restarts from wire tier only after an accept).
+Rule 3 armed: if 3 consecutive slices all land <=5 with no new tier
+reached, switch approach (2-block moves) instead of grinding slice 4.
+Other agent active on alu1 (hier_stitch.py pid 10916): my slices stay
+foreground-bounded with heartbeats; no kills except my own orphans by
+command-line match.
