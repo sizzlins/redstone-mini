@@ -75,6 +75,43 @@ def candidate_recipes():
     return out
 
 
+def row_from_verdict(v, doc):
+    """A sweep row from a verdict.json. Shared by the fresh and cached paths so
+    a resumed run reports the SAME fields as the run that did the work."""
+    r = {'sim': v.get('sim', {}).get('ok'),
+         'cmc': v.get('cmc', {}).get('ok'),
+         'sim_raised': (v.get('sim', {}).get('raised') or '')[:60],
+         'blocks': len(json.load(open(doc))['blocks'])}
+    d = v.get('diff')
+    if d:
+        r['diff_cells'] = d.get('mismatches')
+        r['diff_total'] = d.get('cells')
+        r['diff_rep'] = d.get('rep_mismatches')
+        r['diff_rep_total'] = d.get('repeaters')
+    return r
+
+
+def load_verdict(doc):
+    vp = doc + '.verdict.json'
+    if os.path.exists(vp):
+        try:
+            return json.load(open(vp))
+        except ValueError:
+            return None
+    return None
+
+
+def flush(out_p, rows):
+    """Rewrite the summary after EVERY row. ponytail: the 10/4 sweep ran to
+    41/42 and then a tool timeout killed the process tree, and because the
+    summary was written only after the loop, scratch/sweep.json DID NOT EXIST
+    -- an entire night's evidence reduced to 44 orphaned verdict.json files
+    that nobody could read without hand-parsing them. The work was cached but
+    the record of it was not, which is the same loss the cache was meant to
+    prevent. Cheap: a json.dump of a few dozen rows."""
+    json.dump(rows, open(out_p, 'w'), indent=1)
+
+
 def run_gate(pkl, recipe, doc, max_vectors, sim_to, cmc_to, diff):
     cmd = [sys.executable, '-u', os.path.join(HERE, 'verify2.py'),
            recipe, pkl, '--doc', doc, '--max-vectors', str(max_vectors),
@@ -101,27 +138,12 @@ def run_gate(pkl, recipe, doc, max_vectors, sim_to, cmc_to, diff):
     if rc not in (0, 1):
         return {'gate': 'crash', 'gate_rc': rc,
                 'secs': round(time.time() - t0, 1), 'raw': out[-300:]}
-    v = None
-    vp = doc + '.verdict.json'
-    if os.path.exists(vp):
-        try:
-            v = json.load(open(vp))
-        except ValueError:
-            v = None
+    v = load_verdict(doc)
     if v is None:
         return {'gate': 'no-verdict', 'gate_rc': rc,
                 'secs': round(time.time() - t0, 1), 'raw': out[-300:]}
-    r = {'gate': 'ok', 'gate_rc': rc, 'secs': round(time.time() - t0, 1),
-         'sim': v.get('sim', {}).get('ok'),
-         'cmc': v.get('cmc', {}).get('ok'),
-         'sim_raised': (v.get('sim', {}).get('raised') or '')[:60],
-         'blocks': len(json.load(open(doc))['blocks'])}
-    d = v.get('diff')
-    if d:
-        r['diff_cells'] = d.get('mismatches')
-        r['diff_total'] = d.get('cells')
-        r['diff_rep'] = d.get('rep_mismatches')
-        r['diff_rep_total'] = d.get('repeaters')
+    r = {'gate': 'ok', 'gate_rc': rc, 'secs': round(time.time() - t0, 1)}
+    r.update(row_from_verdict(v, doc))
     return r
 
 
@@ -130,6 +152,7 @@ def main():
     max_vectors, sim_to, cmc_to = 4, 600, 900
     diff = False
     skip_done = True
+    cached_only = False
     out_p = os.path.join(HERE, 'sweep.json')
     only = None
     i = 0
@@ -146,6 +169,13 @@ def main():
             diff = True; i += 1
         elif args[i] == '--force':
             skip_done = False
+            i += 1
+        elif args[i] == '--cached-only':
+            # Rebuild the summary from cached verdicts and run NOTHING. Needed
+            # whenever a sweep is killed before its final write: the work is
+            # already cached, so re-gating it would burn hours to re-derive a
+            # file we could have had in seconds. Earned twice on 10/4-10/05.
+            cached_only = True
             i += 1
         elif args[i] == '--out':
             out_p = args[i + 1]; i += 2
@@ -179,18 +209,46 @@ def main():
         recipe = match[0][0]
         tag = os.path.basename(p)[:-4]
         doc = os.path.join(HERE, '_sweep_%s.v2doc.json' % tag)
-        # ponytail: resume. A long sweep gets killed by whoever launched it
+# ponytail: resume. A long sweep gets killed by whoever launched it
         # (tool timeouts kill the process tree), so never redo finished work.
         if skip_done and os.path.exists(doc + '.verdict.json'):
-            rows.append({'pkl': p, 'status': 'cached',
-                         'recipe': os.path.relpath(recipe, ROOT)})
-            print('%-34s %-26s CACHED' % (tag, os.path.basename(recipe)[:26]),
-                  flush=True)
+            r = {'status': 'cached'}
+            v = load_verdict(doc)
+            # Rehydrate from the cached verdict. Previously this wrote a bare
+            # {'status': 'cached'} with NO sim/cmc/diff fields, so a resumed run
+            # produced a sweep.json that looked complete and reported zero
+            # differences for every build -- because it had no numbers at all,
+            # not because there were none. That is the worst possible failure
+            # for a gate: it reads as a clean sweep.
+            if v is not None:
+                r.update(row_from_verdict(v, doc))
+            else:
+                r['status'] = 'cached-unreadable'
+            rows.append(r)
+            rows[-1].update({'pkl': p, 'recipe': os.path.relpath(recipe, ROOT),
+                             'inputs': ins, 'n_recipes': len(match)})
+            flush(out_p, rows)
+            print('%-34s %-26s CACHED sim=%-5s cmc=%-5s %s'
+                  % (tag, os.path.basename(recipe)[:26], r.get('sim'),
+                     r.get('cmc'),
+                     ('cells %s/%s rep %s/%s' % (r.get('diff_cells'),
+                                                 r.get('diff_total'),
+                                                 r.get('diff_rep'),
+                                                 r.get('diff_rep_total')))
+                     if 'diff_cells' in r else ''), flush=True)
+            continue
+        if cached_only:
+            rows.append({'pkl': p, 'status': 'not-gated',
+                         'inputs': ins, 'outputs': outs})
+            flush(out_p, rows)
+            print('%-34s %-26s NOT GATED (--cached-only)'
+                  % (tag, os.path.basename(recipe)[:26]), flush=True)
             continue
         r = run_gate(p, recipe, doc, max_vectors, sim_to, cmc_to, diff)
         r.update({'pkl': p, 'recipe': os.path.relpath(recipe, ROOT),
                   'inputs': ins, 'n_recipes': len(match)})
         rows.append(r)
+        flush(out_p, rows)
         flag = 'DIFF' if (r.get('diff_cells') or 0) else ''
         print('%-34s %-26s sim=%-5s cmc=%-5s %s%s'
               % (tag, os.path.basename(recipe)[:26], r.get('sim'),
@@ -201,7 +259,7 @@ def main():
                                              r.get('diff_rep_total')))
                  if 'diff_cells' in r else '',
                  ('  ' + flag) if flag else ''), flush=True)
-    json.dump(rows, open(out_p, 'w'), indent=1)
+    flush(out_p, rows)
     good = [r for r in rows if r.get('sim') is True and r.get('cmc') is True]
     diffs = [r for r in rows if (r.get('diff_cells') or 0)]
     noref = [r for r in rows if r.get('status') in ('not-a-build', 'no-recipe')]
