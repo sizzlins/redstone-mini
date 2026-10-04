@@ -2661,3 +2661,83 @@ RIG server staged at D:/put gitrepos here/mc-server (vanilla 26.3 jar from pisto
 
 End-to-end under engine f462f6f: hier_bands 6/6 green (b0 13304 via 3,inputs_first,short; b1 7518; b2 6957; b3 571; b4 2414; b5 4878; corridor blame + diode-drop also fired on band 3) -> stitch MERGE 71560 blocks (2198,353), 10 levers -> smoke 3/4, Y2 wrong on 1010101010 (same stitch-coupling family as the old 5-pillar fix; old coords stale, layout reshuffled) -> y2trace named (868,2,221),(868,2,224),(1170,2,218) -> ins_target swap 3/3 -> smoke 4/4 -> verify_par VERIFY OK 1024 vectors, 16 chunks green. Exported build_alu4full.{html,mcfunction,schem} (schem hash-copied to worldedit schematics). Old build_alu4.* / build_alu4bank.* superseded (unverified under new engine / stale layout).
 
+## 2026-10-04 night (GA agent) -- the live vanilla rig is NOT a valid oracle; two hard engine facts
+
+Spent the session trying to make the RCON rig produce trustworthy ground truth.
+It cannot, and the reason is not our sim. Assumptions I made and corrected:
+I assumed the rig worked because levers/dust/lamps responded, and I assumed
+readback was sound because `scoreboard players get` returned numbers. Both
+assumptions were wrong in ways that cost hours; recording them so nobody
+repeats them.
+
+### Fact 1 (26.3 AND 1.21.11): redstone power does not propagate from setblock-driven changes
+
+Measured identically on vanilla 26.3 (protocol 777, data 5023) and on a fresh
+Mojang 1.21.11 (protocol 774, data 4671, SHA1 verified
+64bb6d763bed0a9f1d632ec347938594144943ed, installed at
+D:/put gitrepos here/mc-server-1.21, rcon 25576, port 25566):
+
+- redstone block DIRECTLY under a lamp -> lamp `lit=false`. Must be true.
+- redstone block adjacent to dust -> dust `power=0`. Must be 15.
+- wall lever -> host block -> dust on top of host (our own sim.py `_lp3`
+  canary, exactly) -> dust `power=0`, repeater downstream `powered=false`.
+- all cells verified present with `execute if block <pos> <block>` before and
+  after, so this is not a placement or retention artifact.
+- the vanilla floor is alive while this happens: `time query gametime` advances
+  ~20 tps, java CPU climbs, a redstone torch burns out when its block is powered
+  and re-lights when unpowered.
+
+So scheduled ticks run, blocks are placed and retained, levers flip -- and no
+power reaches anything. Two independent Mojang jars behave the same, which
+rules out a broken download. **Conclusion: the vanilla rig cannot serve as
+ground truth in this environment. Do not spend more time trying.**
+
+### Fact 2: `setblock` redstone dust is deleted when unsupported
+
+`setblock <pos> minecraft:redstone_wire` reports "Changed the block", then the
+cell reads back `minecraft:air` within a second UNLESS a solid block is below
+(or a solid neighbour face). This is vanilla `canSurvive` behaviour, but it
+silently eats dust instead of refusing the placement, and it invalidated three
+of my own "failing controls" before I spotted it. **Any future paste must give
+dust a floor, or it will look like a physics bug.**
+
+### Fact 3: the scoreboard readback channel needs the objective to exist
+
+`execute store success score <p> __rig ...` + `scoreboard players get <p> __rig`
+is the only RCON-visible read channel (`say` and nested `execute ... run <cmd>`
+return empty bodies -- measured). It returns 0 silently on a server that has
+no `__rig` objective, so every probe looks like "block absent". Fresh servers:
+`scoreboard objectives add __rig dummy` first. This one cost me a false
+"repeaters are dead on 1.21.11 too" conclusion.
+
+### Fact 4: the earlier rig numbers were also invalidated by a paused server
+
+`pause-when-empty-seconds=60` + no player = server stops ticking; scheduled
+redstone updates freeze while instant neighbour updates keep working. Symptom
+was identical to "physics divergence": first 8 vectors failing, later ones
+passing, S0's driver live while S1/COUT cones dark. Set it to `0`; `gametime`
+then advances. Check `latest.log` for "Server empty for 60 seconds, pausing"
+before believing any rig number.
+
+### What survives as verification
+
+Two independent implementations, which is what the project actually needs:
+our sim and cmc (`D:/put gitrepos here/cmc`). Re-verified green just now:
+- add2opt (3730 blocks, 2-bit adder): sim 16/16, cmc 16/16
+- alu1glass (13300 blocks): sim 32/32, cmc 32/32
+
+The opt agent's localized live-vs-sim anomaly (y=3, z=15, x>=18, nets B0/B1,
+sim-clean decay ladder vs live noise) is therefore NOT evidence of a sim bug --
+the live side was a dead server. It is still worth a sim-vs-cmc per-cell
+differential, which is a real cross-check that does not need the game. Doing
+that next.
+
+### rig_verify.py changes worth keeping regardless
+
+- readback via `execute store success` + `scoreboard players get` (see Fact 3)
+- per-vector poll-to-stable settling instead of a fixed sleep (quiescence = two
+  consecutive identical full-lamp reads, 120 s cap, fails loud)
+- post-`/reload` seed-probe gate, forceload `query` verification, and a
+  floor-cell paste gate ("no floor, no vectors")
+- does NOT create the `__rig` objective yet -- adding that (Fact 3)
+

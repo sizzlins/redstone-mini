@@ -4,9 +4,8 @@ Pipeline (all automatic once server+rcon+b0 exist):
   1. translate build setblocks by b0 delta, write datapack rig/ into world
   2. RCON: gamerules (chain length, quiet feedback), /reload, /function paste
   3. per vector: setblock levers (exact bids from build), sleep settle,
-     query lamps via `/execute if block ... lit=true` (pass/fail parse,
-     raw bodies logged -- EN-client assumption documented, never silent)
-  4. score vs expected, JSON verdict, exit code.
+     query lamps via `execute store success` + `scoreboard players get`
+     (the only RCON-visible read channel), score vs expected, JSON verdict.
 
 Usage:
   python scratch/rig_verify.py <build.json> --world <dir> --b0 x,y,z
@@ -120,13 +119,53 @@ def main():
         lamp_of[name] = W(bx, by, bz)
 
     cmds_paste = [
-        'gamerule maxCommandChainLength 200000',
-        'gamerule sendCommandFeedback false',
-        'gamerule logAdminCommands false',
-        'scoreboard objectives add __rig dummy',
+        # ponytail: 26.x renamed gamerules (snake_case, namespaced;
+        # max_command_chain_length is now max_command_sequence_length).
+        # Discovered live: old names fail with "Incorrect argument".
+        'gamerule minecraft:max_command_sequence_length 200000',
+        # ponytail: feedback MUST stay true (2026-10-04: with
+        # send_command_feedback false, even direct commands like
+        # `scoreboard players get` return empty bodies via RCON --
+        # every read goes blind. Log spam is already off above).
+        'gamerule minecraft:send_command_feedback true',
+        'gamerule minecraft:log_admin_commands false',
+    ]
+    cmds_paste.append('scoreboard objectives add __rig dummy')
+    # forceload the build bbox first (setblocks in unloaded chunks fail
+    # with "position is not loaded" -- measured on first live run).
+    # forceload takes WORLD-block coords (verified live: block rect maps
+    # to chunk coverage). NOTE: "No chunks were marked" does NOT mean
+    # failure -- it also fires when chunks are ALREADY marked. Trust only
+    # `forceload query` below, gated in the paste check.
+    _wxs = [x + dx for x, y, z, b in doc['blocks']]
+    _wzs = [z + dz for x, y, z, b in doc['blocks']]
+    cmds_paste.append('forceload add %d %d %d %d'
+                      % (min(_wxs) - 16, min(_wzs) - 16,
+                         max(_wxs) + 16, max(_wzs) + 16))
+    _probes = [(min(_wxs), min(_wzs)),
+               ((min(_wxs) + max(_wxs)) // 2,
+                (min(_wzs) + max(_wzs)) // 2),
+               (max(_wxs), max(_wzs))]
+    for _qx, _qz in _probes:
+        cmds_paste.append('forceload query %d %d' % (_qx, _qz))
+    cmds_paste += [
         'reload',
         'function rig:build',
     ]
+    # paste-verify (fail fast): two floor cells must exist post-paste.
+    # (2026-10-04: ran 16 vectors against an unpasted world because the
+    # paste failure was silent. Never again: no floor, no vectors.)
+    _miny = min(y for x, y, z, b in doc['blocks'])
+    _fb = [(x, y, z, b) for x, y, z, b in doc['blocks']
+           if y == _miny][:2]
+    for i, (x, y, z, bid) in enumerate(_fb):
+        wx, wy, wz = W(x, y, z)
+        base = bid.split('[')[0]
+        tag = 'FL%d' % i
+        cmds_paste.append('execute store success score %s __rig '
+                          'if block %d %d %d %s'
+                          % (tag, wx, wy, wz, base))
+        cmds_paste.append('scoreboard players get %s __rig' % tag)
     seq = []  # (kind, cmd)
     for c in cmds_paste:
         seq.append(('paste', c))
@@ -136,13 +175,22 @@ def main():
                 wx, wy, wz, off, on = lever_of[name]
                 seq.append(('lever', 'setblock %d %d %d %s'
                             % (wx, wy, wz, on if val else off)))
-        seq.append(('sleep', settle))
+        seq.append(('sleep', (settle, vi, sorted(doc['expected'][vi]))))
         for name in doc['expected'][vi]:
             wx, wy, wz = lamp_of[name]
-            seq.append(('query', 'execute if block %d %d %d '
-                        'minecraft:redstone_lamp[lit=true] run '
-                        'scoreboard players set __r__ __rig %d'
-                        % (wx, wy, wz, vi)))
+            # ponytail: `say` and nested `execute ... run <cmd>` return
+            # NOTHING via RCON (broadcast/nested outputs are swallowed),
+            # so lamp state rides `execute store success` (writes 1/0 to
+            # scoreboard silently) + `scoreboard players get` (DIRECT
+            # command with visible `'<P> has N [__rig]'` output).
+            # Calibrated live 2026-10-04 (26.x): match -> 'Test passed'/1,
+            # mismatch -> 'Test failed'/0.
+            tag = 'L%d%s' % (vi, name)
+            seq.append(('query', 'execute store success score %s __rig '
+                        'if block %d %d %d '
+                        'minecraft:redstone_lamp[lit=true]'
+                        % (tag, wx, wy, wz)))
+            seq.append(('query', 'scoreboard players get %s __rig' % tag))
     if dry:
         print('dry-run: %d paste cmds + %d steps (no connection)'
               % (len(cmds_paste), len(seq) - len(cmds_paste)))
@@ -157,44 +205,156 @@ def main():
         return 0
 
     password = open(pwfile).read().strip()
-    rc = Rcon(host, port, password)
+
+    def connect():
+        # ponytail: generous timeout (measured 2026-10-04: forceload
+        # generating ~150 fresh chunks wedges RCON past 10s; the client
+        # timed out mid-read, then everything cascaded. Quick commands
+        # still return after 150ms quiet; only the truly-stuck wait).
+        return Rcon(host, port, password, timeout=120)
+
+    rc = connect()
     raw = []
-    try:
-        for kind, cmd in seq:
-            if kind == 'sleep':
-                time.sleep(cmd)
-                continue
+
+    def run(cmd):
+        # ponytail: reconnect-resilient exec (measured 2026-10-04: the
+        # server drops the RCON client across /reload + bulk /function --
+        # 2s freeze, connection reset. Retry once on a FRESH connection;
+        # fail loud only if that dies too).
+        nonlocal rc
+        try:
+            return rc.exec(cmd)
+        except Exception as e1:
+            print('  [reconnect after: %s]' % str(e1)[:80], flush=True)
             try:
-                out = rc.exec(cmd)
-            except RconError as e:
+                rc.close()
+            except Exception:
+                pass
+            rc = connect()
+            return rc.exec(cmd)
+
+    # split paste phase (must verify) from vector phase (must not run
+    # on an unpasted world). Paste cmds are contiguous at seq head; the
+    # gate fires on the LAST paste index (robust to reconnect-probe
+    # entries appended to raw mid-phase).
+    _last_paste = max(i for i, (k, _) in enumerate(seq) if k == 'paste')
+
+    try:
+        for _i, (kind, cmd) in enumerate(seq):
+            if kind == 'sleep':
+                # ponytail: poll-to-stable, not fixed sleep (2026-10-04:
+                # fixed 6s reads under laggy TPS caught mid-transients --
+                # early vectors failed, late passed. Quiescence = two
+                # consecutive identical full-lamp reads; timeout loud).
+                _floor, _vi, _names = cmd
+                time.sleep(min(_floor, 3.0))
+                _prev, _stable, _t0 = None, False, time.time()
+                while time.time() - _t0 < 120:
+                    _cur = []
+                    for _nm in _names:
+                        _wx, _wy, _wz = lamp_of[_nm]
+                        try:
+                            run('execute store success score PL __rig '
+                                'if block %d %d %d '
+                                'minecraft:redstone_lamp[lit=true]'
+                                % (_wx, _wy, _wz))
+                            _o = run('scoreboard players get PL __rig')
+                        except Exception as e:
+                            _cur = None
+                            break
+                        _m = re.search(r'has (\d+)', _o or '')
+                        _cur.append(None if not _m else int(_m.group(1)))
+                    if _cur is not None and _cur == _prev and \
+                            all(v is not None for v in _cur):
+                        _stable = True
+                        break
+                    _prev = _cur
+                    time.sleep(2)
+                raw.append(['sleep', 'vec%d stable=%s in %.0fs'
+                            % (_vi, _stable, time.time() - _t0), ''])
+                print('  [settle vec%d stable=%s %.0fs]'
+                      % (_vi, _stable, time.time() - _t0), flush=True)
+                if not _stable:
+                    print('ABORT: vec%d never settled (120s); failing loud'
+                          % _vi, flush=True)
+                    print(json.dumps({'ok': False, 'stage': 'settle',
+                                      'vec': _vi}))
+                    return 3
+                continue
+            print('> [%s] %s' % (kind, str(cmd)[:90]), flush=True)
+            try:
+                out = run(cmd)
+            except Exception as e:
                 raw.append([kind, cmd, 'RCON-ERR: %s' % e])
                 continue
             raw.append([kind, cmd, out])
+            print('  <- %s' % (out[:160].replace('\n', ' | ') if out
+                               else '(empty)'), flush=True)
+            if cmd == 'reload':
+                # ponytail: post-reload RCON goes mute (measured: every
+                # command after /reload returned empty until the reload
+                # finished server-side). Settle, then gate on `seed`
+                # (known-visible) before any command that matters.
+                time.sleep(15)
+                _ready = False
+                for _t in range(12):
+                    try:
+                        _po = run('seed')
+                    except Exception as e:
+                        raw.append(['paste', 'seed-probe',
+                                    'RCON-ERR: %s' % e])
+                        time.sleep(5)
+                        continue
+                    raw.append(['paste', 'seed-probe', _po])
+                    if _po and 'Seed:' in _po:
+                        _ready = True
+                        break
+                    time.sleep(5)
+                if not _ready:
+                    print('ABORT: server never settled post-reload '
+                          '(12 seed probes, no Seed:); vectors skipped)',
+                          flush=True)
+                    print(json.dumps({'ok': False, 'stage': 'reload'}))
+                    return 3
+                print('reload settled (seed probe ok)', flush=True)
+            if _i == _last_paste:
+                _fl = [(r[1], r[2] or '') for r in raw
+                       if r[0] == 'paste'
+                       and 'scoreboard players get FL' in r[1]]
+                _missing = [c for c, b in _fl
+                            if not re.search(r'has 1\b', b)]
+                _fq = [(r[1], r[2] or '') for r in raw
+                       if r[0] == 'paste' and
+                       r[1].startswith('forceload query')]
+                _unmarked = [c for c, b in _fq
+                             if 'is marked for force' not in (b or '')]
+                _missing += _unmarked
+                if _missing:
+                    print('ABORT: paste unverified, missing %s '
+                          '(world unpasted or wrong b0; vectors skipped)'
+                          % _missing, flush=True)
+                    print(json.dumps({'ok': False, 'stage': 'paste',
+                                      'missing': _missing}))
+                    return 3
+                print('paste verified (%d floor markers)' % len(_fl),
+                      flush=True)
     finally:
         rc.close()
-    # score lamp queries: query i-th lamp of vector vi lives right after
-    # its sleep marker; walk the raw log in order.
-    results, fails, ri = [], 0, 0
-    qi = 0
+    # score: store+get pair per lamp; parse the number from get output.
+    # (Calibrated live 2026-10-04; raw bodies logged for re-calibration.)
+    results, fails = [], 0
     vecs = doc['vectors']
     exp = doc['expected']
-    # regroup: queries appear in seq order; slice per vector by lamp count
     queries = [r for r in raw if r[0] == 'query']
-    per = len(exp[0])
+    qi = 0
     for vi in range(len(vecs)):
         got, bad = {}, []
-        for li, name in enumerate(exp[vi]):
-            q = queries[qi]
+        for name in exp[vi]:
+            qi += 1  # store body (pass/fail text, ignored)
+            body = queries[qi][2] if qi < len(queries) else ''
             qi += 1
-            body = q[2] or ''
-            # EN-client assumption (documented): success/failure wording.
-            if re.search(r'pass', body, re.I) and \
-                    not re.search(r'fail', body, re.I):
-                lit = True
-            elif re.search(r'fail', body, re.I):
-                lit = False
-            else:
-                lit = None
+            m = re.search(r'has (\d+)', body or '')
+            lit = bool(int(m.group(1))) if m else None
             got[name] = lit
             want = exp[vi][name]
             if lit is None or bool(lit) != bool(want):
