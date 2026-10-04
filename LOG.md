@@ -181,3 +181,4 @@ individually-necessary extremes. Width/depth need tighter placement =
 router lane. Coordinating via notes/to-opt-agent.md (evidence + ask,
 no files touched), continuing count-squeeze in my lane.
     wire slice seed16: 2/300 (3747->3745). Wire streak post-salvage: 4,0,2 -- exhausted for the third time. Promoted 3745. Final tier re-sweeps next (repeater/cobble/stone, geometry changed since their sweeps), then DONE check.
+    repeater re-sweep: 5/300 (3745->3740). Promoted.
