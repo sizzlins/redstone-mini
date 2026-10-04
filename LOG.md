@@ -2994,3 +2994,89 @@ NEW GATES (scratch/, gitignored, force-added)
 NEW RULE, worth a pre-commit hook eventually: after ANY commit touching
 sim.py or simvec.py, run mkref.py THEN refdrift.py. mkref alone cannot
 tell you it worked, because it writes whatever it was handed.
+
+## 2026-10-05 (session 2 agent) -- cold start; the TABLES are the wall, not the inner loop
+
+Read the handoff chain (handoff-opt agent -> README -> LOG -> to-ga-agent +
+to-opt-agent -> PONYTAIL-DEBT). Assumptions I had to make, since nobody was
+available: (A1) the loop stays OPTIMIZATION-only -- I do not attempt cpu4 or
+re-touch the banked builds; (A2) the handoff's alu4 gate line is WRONG and I
+treat my own re-earn as the baseline (below); (A3) `diagnose` is the method:
+measure before changing, ship only measured wins, revert what does not pay.
+
+### Baseline re-earned on arrival (all green)
+
+    compose.py            ok (buffers ok)
+    compose_check.py      144 / 322 / 224 / 214  bit-identical
+    nonhier_suite.py      6/6 exit 0 (alu1 flat RED by design, 16.7s)
+    diff_engine.py        ALL IDENTICAL (6.1s)
+    hier_verify alu1      VERIFY OK 32/32, exit 0 (51.2s)
+
+### FINDING 1: the handoff's alu4 gate line cannot earn its green
+
+`python scratch/hier_verify.py recipes/alu4.txt` exits 1, at
+`SMOKE 1010101010 MISMATCH ['Y2']` -- NOT a regression. hier_verify runs
+bands -> stitch -> smoke -> verify, and the stitch's smoke needs the manual
+3-pillar `ins_target.py` swap that the "reproduce from scratch" list applies
+OUT OF BAND. The green artifact is `alu4merge_g.pkl` (merge + swap); the gate
+verifies `alu4merge.pkl` (merge only). Same family as the two gate bugs the
+opt agent already fixed: a green you cannot re-earn from the documented
+command is a green nobody can trust.
+
+The claim itself survives, with evidence: `alu4merge_g.pkl`, `alu4ab.pkl`
+and `alu4ab2.pkl` are BYTE-IDENTICAL (sha256 e3dc0e59...), and
+`alu4ab2.pkl.verify.json` reads 16/16 chunks green written at 23:20, which is
+AFTER the last engine-file commit (470c84c, 23:13). So alu4 really is
+1024/1024 on the current engine -- only that cache's path component differed.
+Baseline accepted: alu4 green, and `scratch/alu4merge_g.pkl` is the artifact.
+
+### FINDING 2 (the real one): one verify worker costs 112 MB and 7.78s
+
+`scratch/tbl_probe.py` (new, bounded): parse + `_tables_from` on
+alu4merge_g, measured under tracemalloc.
+
+    cells        dust=30582 pwr=36436 rep=4368 comp=18 torch=138
+    parse        0.09s   heap 9.5 MB
+    tables       7.78s   heap 103.0 MB
+    ONE WORKER   112.5 MB heap, 1.6 KiB PER CELL, 7.78s to build
+    16 workers   1.80 GB of tables alone; 230 MB peak per worker mid-vector
+
+So `hier_verify`'s workers=16 asks for ~3.7 GB on a box with 5.4 GB free and
+a Minecraft server resident. THAT is the "8 concurrent children run 2.1x
+slower each than one alone" the handoff could not explain: it is not
+scheduling, it is memory. The tables are dicts of (x,y,z) 3-tuples plus a
+per-cell `wake` list of tagged 2-tuples -- ~24 edges/cell -- so the working
+set is enormous and every walk is a random-access tuple-hash miss.
+
+Second, independent waste: `verify_par` spawns a fresh process PER CHUNK, and
+each child re-parses and REBUILDS the tables. A 1024-vector sweep at nchunks=16
+therefore pays 16 x 7.78s = 126s of pure rebuild on top of ~543s of compute:
+**23% of the dominant compute is thrown away rebuilding constant tables.**
+
+One root cause, three symptoms: parallel scaling collapse, per-worker memory
+at the RAM ceiling, and rebuild waste. The fix for all three is the same:
+stop representing the build as dicts-of-3-tuples.
+
+### Per-vector profile (cProfile, 5 vectors, alu4merge_g, 0.529s/vector)
+
+    run_scalar body      1.816s tottime (35%)
+    _dust_lvl_s          866209 calls = 173242/vector, 1.177s
+    dict.get           6221113 calls = 1244222/vector, 0.857s
+    _cob_state_s         745628 calls = 149126/vector, 0.853s
+    list.append         1699175, set.add 1341465, mark 529747
+
+5.8 dust evaluations per dust cell per vector, 4.1 per solid cell. The opt
+agent's reverted micro-opt (locals in _dust_lvl_s/_cob_state_s, 0.515 vs
+0.514s) is consistent with this: the cost is the NUMBER of tuple-keyed
+operations, not which local holds them. Shrinking the representation is the
+lever; shuffling locals is not.
+
+### Plan (ranked by measured root cause, not by cleverness)
+
+    B. Compact int-indexed tables: kill the 3-tuple keys. Attacks memory
+       (1.6 KiB/cell), build time (7.78s) and inner-loop speed at once.
+       Gated by diff_engine 3-way bit-identity + every suite.
+    A. verify_par: persistent workers, so tables are built once per worker.
+    A. worker-count A/B (only meaningful AFTER B frees the RAM).
+    C. whole-field bit-parallel engine, additive and separately gated.
+    (gate fix) make hier_verify able to re-earn the alu4 green.
