@@ -124,9 +124,15 @@ def main():
             for vals in itertools.product([0, 1], repeat=len(r["inputs"]))]
     chunks = [vecs[i::nchunks] for i in range(nchunks)]
     key = lambda i: f"{nchunks}:{i}"
-    todo = [i for i in range(nchunks) if cache.get(key(i)) != "green"]
+    # ponytail: empty chunks are vacuously green (finer nchunks than
+    # vectors leaves holes). Queueing them would spawn a child per hole
+    # for zero vectors; counting them short-circuits instead. They carry
+    # no cache entry and need none.
+    todo = [i for i in range(nchunks)
+            if chunks[i] and cache.get(key(i)) != "green"]
     todo = todo[:max(1, per_call)]
-    green = sum(1 for i in range(nchunks) if cache.get(key(i)) == "green")
+    green = sum(1 for i in range(nchunks)
+                if not chunks[i] or cache.get(key(i)) == "green")
     print(f"verify: {green}/{nchunks} chunks green (nchunks={nchunks}, "
           f"workers={workers}), doing {todo}", flush=True)
     if not todo:
@@ -213,7 +219,8 @@ def main():
         print(f"VERIFY RED: {len(failed)} bad chunks (progress cached; "
               f"rerun to resume)", flush=True)
         sys.exit(1)
-    green = sum(1 for i in range(nchunks) if cache.get(key(i)) == "green")
+    green = sum(1 for i in range(nchunks)
+                if not chunks[i] or cache.get(key(i)) == "green")
     if green < nchunks:
         print(f"STAGED: {green}/{nchunks} chunks green, {len(vecs)} vectors "
               f"total", flush=True)

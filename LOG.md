@@ -2450,3 +2450,7 @@ Operator in-game results, parsed:
   ladder/budget lines all ok). Existing builds unaffected (none use
   target as support; suite proves zero behavior change).
     C2 refined (operator): dust can NOT sit on bottom slab, CAN on top slab (full-height top face; matches cmc hasFullTopFace). Sim already treats type=top as support+conductor (parse lines 955-968; comment even documents top-slab dust). Palette locked: air/dust/glass/TOP-slab/target/rep4/comp4x2/leverON-OFF. Bottom slab excluded from genome (sim would wrongly allow it as support -- latent gap for others, dead code for us: router never emits slabs, zero banked builds contain any).
+
+## Night 2026-10-04 (generalizations: insulation rule, chunks, streets A/B)
+
+3a ins_allvec: per-vector parasitic rule (sim-lit + logic-dark same vector, torch feed, no shared use); rediscovers 5 hand pillars +2; alu4 1024/1024. Traps: states keys are strings; all-dark criterion vacuous. 3b: empty-chunk skip + HIER_NCHUNKS (default identical); alu1 nchunks=64 green. 3c: REDSTONE_STREETS=gap env-gated, default mid; flip parked (alu4 bands blocked pre-existing -- overlay-exonerated, needs own campaign). Full trace: MORNING-REPORT.md.

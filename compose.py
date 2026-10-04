@@ -2288,7 +2288,25 @@ def compose_hier_parts(built, gates, recipe):
     # ponytail: street waypoints between every adjacent band pair (for
     # relay stations below): street center x, computed from real offsets.
     _sts = sorted(offs.values())
-    _streets = [(a + b) // 2 for a, b in zip(_sts, _sts[1:])]
+    # ponytail: _bankstreets is the REAL gap between adjacent bands. _streets
+    # is the midpoint of two band START offsets, which is inside the earlier
+    # band's field, not in the reserved gap -- harmless for a gate net whose
+    # relay legs are short, fatal for a bank row that has to cross the whole
+    # build (measured: "compose: no ground for OP1: (1312,-33) -> (1312,2)",
+    # descending band 3's middle). The gap is exactly _HIER_GAP wide and
+    # nothing is ever stamped in it: band i+1 starts at maxx_i + 1 + GAP.
+    # _streets is left alone so every gate net keeps its verified geometry.
+    # ponytail: REDSTONE_STREETS=gap aims relay waypoints at the real gaps
+    # (offs[b] - GAP//2, same as _bankgaps) instead of mid-field. Empty
+    # ground is strictly more routable than tile field, so this can only
+    # open paths the mid-field columns close -- but every gate net's
+    # geometry moves with it, so the default stays mid until a full
+    # re-verify (alu1+alu4+cpu4 green, counts compared) says otherwise.
+    if os.environ.get("REDSTONE_STREETS") == "gap":
+        _bord = sorted(offs, key=lambda k: offs[k])
+        _streets = [offs[b] - _HIER_GAP // 2 for b in _bord[1:]]
+    else:
+        _streets = [(a + b) // 2 for a, b in zip(_sts, _sts[1:])]
     # ponytail: _bankstreets is the REAL gap between adjacent bands. _streets
     # is the midpoint of two band START offsets, which is inside the earlier
     # band's field, not in the reserved gap -- harmless for a gate net whose
