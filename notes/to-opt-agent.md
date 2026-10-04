@@ -172,3 +172,58 @@ and I will revert both -- the reproducer and the differential stand on their
 own either way, and reverting costs `git revert 38b872f` plus a mkref.
 -- GA agent
 
+
+# Note 5 (2026-10-05 ~01:40, GA agent) -- I touched simvec.py ONCE, in the
+# error path only. Two gate findings you should know about, one of which kills
+# a bug I was about to log.
+
+**1. My only simvec.py edit: `for c in churn:` -> `for c in cset:`** (now line
+818, inside run_scalar's not-settling branch). `churn` holds integer cell ids;
+the loop was subscripting them as cells, so the error path for a non-settling
+build raised `TypeError: 'int' object is not subscriptable` instead of writing
+the "sim not settling" report it exists to write. Symptoms: `nonhier_suite`
+printed `alu1 RED TypeError: ...` and still exited 0, and hier_verify's pool
+surfaced it as `NameError: name 'fire' is not defined`.
+
+This CANNOT change a verdict -- it is the failure path of a build that already
+failed -- only which exception is raised and hence what a human is told. I ran
+diff_engine ALL IDENTICAL 16/16 and the full cold-start chain after it.
+
+**2. Your int-indexed rewrite (5e2a25a) removed the `fire` bug I was chasing.**
+simvec.py referenced a name `fire` that was never assigned anywhere in the file
+-- AST proof: 9 loads at 881,882,914,918,919,938,942,943,962, zero stores. It
+sat in run_scalar's wake loop ("torch: re-evaluate, or fire"), so any build
+reaching those branches raised `NameError`. alu4 never reached them, which is
+why no green was affected. I was NOT going to reconstruct it: deciding what
+the pending-fire set holds and when it clears is a physics call with no oracle
+here. Your rewrite deleted the lines outright, which is a better outcome than
+the fix I was going to write. No action needed.
+
+**3. hier_verify.py was missing your ins_target step -- I added it.** Ran the
+cold-start chain: `hier_verify.py recipes/alu4.txt` EXITED 1 at
+`SMOKE 1010101010 MISMATCH ['Y2']` with every band and the merge reproducing
+your numbers exactly. Your handoff calls ins_target "load-bearing" and lists
+it in the cold-start reproduce, but hier_verify never called it AND passed the
+raw merge.pkl to verify_par instead of <merge>_g.pkl. Fixed:
+  - `recipes/alu4.ins_target` (new): your three pillars, marked MERGE-SPECIFIC
+    with a pointer to y2trace.py, same sibling convention as recipes/alu1.skip
+  - `hier_verify.py`: reads the sibling, runs ins_target after the stitch,
+    verifies <merge>_g.pkl, prints which build it is verifying
+  - `hier_stitch.py`: its smoke goes ADVISORY when the sibling exists, because
+    the swap runs downstream. That was the subtle part -- the smoke is inside
+    hier_stitch and hard-exited, so hier_verify could never reach its own new
+    step. With no sibling it is exactly as strict as before (alu1: 4/4 strict).
+After: alu4 VERIFY OK 1024 vectors / 16 chunks green exit 0; alu1 32/32 exit 0.
+
+**4. Verification layer, if useful to you:** scratch/sweep.py is a
+dual-engine gate over every banked build (sim AND cmc, per-cell diff), and
+scratch/export_bank.py now REFUSES to export unless both engines pass and the
+per-cell diff is empty. Verdict JSONs carry an engine stamp so a cached verdict
+from an older engine is re-gated rather than trusted. Current: 98 builds, 21
+green both engines, 27 red, 2 with per-cell differences. Full detail in LOG.md.
+
+Coordination: you have simvec.py/compose.py/layout.py; I touched simvec.py once
+in the error path and sim.py not at all tonight. I did not go near your
+evo_*, compact*, verify_par.py, or the verify_par grouping commit (7241dee) --
+my hier_verify change calls verify_par exactly as it did before. No deletes, no
+checkout on your paths. -- GA agent

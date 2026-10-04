@@ -1,44 +1,50 @@
 [
  {
-  "status": "cached-unstamped",
+  "gate": "ok",
+  "gate_rc": 1,
+  "secs": 5.9,
   "sim": true,
-  "cmc": true,
-  "sim_raised": "",
-  "blocks": 15104,
-  "diff_cells": 0,
-  "diff_total": 25528,
-  "diff_rep": 0,
-  "diff_rep_total": 3700,
-  "pkl": "D:\\redstone-mini\\scratch\\alu1_avtest.pkl",
-  "recipe": "recipes\\alu1.txt",
-  "inputs": [
-   "A",
-   "B",
-   "CIN",
-   "OP0",
-   "OP1"
-  ],
-  "n_recipes": 1
- },
- {
-  "status": "cached-unstamped",
-  "sim": false,
   "cmc": false,
   "sim_raised": "",
-  "blocks": 13300,
-  "diff_cells": 0,
-  "diff_total": 22412,
-  "diff_rep": 0,
-  "diff_rep_total": 3216,
-  "pkl": "D:\\redstone-mini\\scratch\\alu1_current.pkl",
-  "recipe": "recipes\\alu1.txt",
+  "blocks": 41031,
+  "pkl": "scratch/alu4mergeNEW.pkl",
+  "recipe": "recipes\\alu4.txt",
   "inputs": [
-   "A",
-   "B",
-   "CIN",
+   "A0",
+   "A1",
+   "A2",
+   "A3",
+   "B0",
+   "B1",
+   "B2",
+   "B3",
    "OP0",
    "OP1"
   ],
-  "n_recipes": 1
+  "n_recipes": 3
+ },
+ {
+  "gate": "ok",
+  "gate_rc": 1,
+  "secs": 5.7,
+  "sim": true,
+  "cmc": false,
+  "sim_raised": "",
+  "blocks": 41031,
+  "pkl": "scratch/alu4mergeNEW4.pkl",
+  "recipe": "recipes\\alu4.txt",
+  "inputs": [
+   "A0",
+   "A1",
+   "A2",
+   "A3",
+   "B0",
+   "B1",
+   "B2",
+   "B3",
+   "OP0",
+   "OP1"
+  ],
+  "n_recipes": 3
  }
 ]
