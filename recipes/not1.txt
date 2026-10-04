@@ -1,0 +1,3 @@
+IN A
+OUT Y
+Y = NOT A

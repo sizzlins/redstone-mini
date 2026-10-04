@@ -2610,3 +2610,25 @@ outputs to SEPARATE lamp-adjacent cells -- kills the merge route;
 spec in report); (2) De Morgan assembly from frozen NOTs via evolution
 (routing-only task); (3) distributed pins (L-shaped feeds fix the
 perpendicular-rear/side geometry). Do NOT re-run blind sampling.
+
+## Night 2026-10-04 (15): cmc cross-check harness (operator asked, built)
+
+scratch/cmc_harness.mjs + cmc_dump.py: banked build -> second-engine
+verdict via the cloned cmc (first-principles vanilla engine). NOT game
+truth (cmc is also a model), but sim+cmc agreement >> sim alone.
+Fresh World per vector (stateless like sim_verify), bulk load updates-
+OFF (cold-start ~ sim pre-roll, no construction-transient latches),
+explicit checkSupport audit every cell (automates the 242-stone class),
+enqueue all, settle, compare lamps. Target->stone mapping (game-proven
+C3/C4 conductor-equivalence; cmc has no target id).
+Results: torchless NOT 2/2, add2opt 16/16 (3730 blocks), alu1glass
+32/32 (13300 blocks) -- ALL GREEN in cmc. The x12 are now dead by
+triple evidence (serial+scalar+cmc, wiki+cmc source): side-cobble locks
+never existed. No game test needed, case closed.
+Two mapping lessons banked in code: wall-torch facing=head (support
+opposite; first run popped 11 torches -- the AUDIT caught my mapping
+bug, proving the audit works); repeater/comparator facing flipped vs
+ours (input-side vs output-side conventions, verified at 16-vector
+scale). TODO (not tonight): sim _check_supports skips torches AND y==1
+entirely -- two blind spots of the same class; sim canary at ~1619 has
+a floating wall torch that only passes because of it.
