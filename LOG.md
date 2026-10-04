@@ -2170,3 +2170,44 @@ found in 40 draws, and eval 40 was still improving. The gate-count
 metric was misleading me: it optimizes mutations, not the artifact. The
 simplifier is the actual fix; more evals would have found the same thing
 eventually, just later and at 4-core burn.
+
+## Night 2026-10-04 (2): level-3 block compactor ("unhardcoding")
+
+User asked what if the hardcoded gate macros go away so the search can
+find the true optimum. Answer built, not just argued: scratch/compact.py,
+a post-pass hillclimb on the verified build. Single-block deletions in
+seeded-random priority order (wire, repeater, cobble, comparator, torch,
+stone; lamps/levers never candidates), accepted iff full sim_verify
+stays green. Monotone (best only shrinks), bounded (evals + wall clock),
+resumable across slices via best.pkl (re-verified on load; compose is
+not deterministic run to run, so re-rolling the seed would trash
+progress). Netlist never changes: function preserved by construction,
+re-checked every step.
+
+Result on the 8-gate adder (seed 4648, all wire tier):
+
+    slice 60e seed0:  4648 -> 4620  (28 acc, 47%)
+    slice 300e seed1: 4620 -> 4534  (86 acc, 29%)
+    slice 300e seed2: 4534 -> 4476  (58 acc, 19%)
+    slice 300e seed3: 4476 -> 4442  (34 acc, 11%)
+    total: 4648 -> 4442 (-206, -4.4%, 960 evals)
+
+Every accept is a full-green 16/16 sim_verify. Promoted to
+build_add2opt.{mcfunction,schem,html} (gitignored by design; numbers
+banked here). Chain: add2fat correct -> op_simplify exact -> compose+sim
+green -> 206 verified deletions.
+
+What it means: the router leaves ~200 blocks of pure wire slack on a
+4.6k build and deletion pressure finds it at 11-47% hit rates. The
+macros were never the floor -- routing slack was. Repeater/cobble/stone
+tiers are still untouched (wire tier never exhausted in 960 evals), so
+4442 is not the optimum, just where the hit rate curve said bank it.
+Next slices would likely take another ~50-100. The sim-vs-game trust
+note stands: final artifact wants one game paste before banking (same
+rule as everything; the compactor optimizes against the sim).
+
+Also noted, not fixed: Start-Process background launches trip the tool
+harness (ChildProcess.kill); foreground slices with generous timeouts
+are the working pattern. compact.py has the __main__ guard (learned
+from the recursive-spawn incident that orphaned two compose runs; both
+mine, both killed, other agent's portwall.py untouched).
