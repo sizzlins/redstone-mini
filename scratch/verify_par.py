@@ -45,11 +45,32 @@ def _vec_child(conn, blocks, io, recipe, vecs, idx):
         from sim import _run_vec, _parse_build, _latch_hold_seed
         pst = _parse_build(blocks, io)
         hold = _latch_hold_seed(blocks, io)
+        # ponytail: use the TABLE engine (simvec.run_scalar) when eligible,
+        # exactly as sim.sim_verify routes it: states is None here, and
+        # `hold is None` IS the latch-free test (sim.py:_latch_hold_seed
+        # returns None without ~qb nets). This child called sim._run_vec for
+        # every vector, so the whole staged parallel verify -- the repo's
+        # dominant compute -- never touched the fast engine sim_verify ships
+        # in production. Same caps either way (sim._TICK_CAP/_STEP_CAP
+        # default 20000/2000000 and the parent exports them), same verdict:
+        # diff_engine.py proves the two engines agree bit for bit, and
+        # run_scalar raises rather than guessing when it is not eligible.
+        # REDSTONE_VERIFY_ENGINE=slow forces the authority engine for a
+        # differential A/B on the same cache key.
+        run = lambda v, _p: _run_vec(v, hold, _p)   # noqa: E731
+        if (hold is None
+                and os.environ.get("REDSTONE_VERIFY_ENGINE", "fast")
+                != "slow"):
+            try:
+                from simvec import run_scalar
+                run = lambda v, _p: run_scalar(v, _p)   # noqa: E731
+            except ImportError:
+                pass
         bad = []
         t0 = time.time()
         for k, vec in enumerate(vecs):
             try:
-                got = _run_vec(vec, hold, pst)[0]
+                got = run(vec, pst)[0]
             except RuntimeError as e:
                 bad.append((vec, f"RED {str(e)[:80]}"))
             else:

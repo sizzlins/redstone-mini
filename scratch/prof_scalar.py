@@ -1,7 +1,7 @@
 """Bounded profile of simvec.run_scalar vs sim._run_vec on cached alu4.
 
 NEVER HANGS: fixed small vector count, engine caps in force, no pool.
-Usage: python scratch/prof_scalar.py [nvec]
+Usage: python scratch/prof_scalar.py [nvec] [build.pkl]
 """
 import os
 import sys
@@ -19,7 +19,10 @@ from recipe import parse_recipe
 
 n = int(sys.argv[1]) if len(sys.argv) > 1 else 3
 r = parse_recipe(open(r"D:\redstone-mini\scratch\cand_alu4hier.txt").read())
-d = pickle.load(open(r"D:\redstone-mini\scratch\alu4_build.pkl", "rb"))
+# default = the historical cached build; pass the pkl under test to profile
+# the CURRENT merge (alu4merge_g.pkl = 71560 blocks, verified 1024/1024).
+d = pickle.load(open(sys.argv[2] if len(sys.argv) > 2 else
+                     r"D:\redstone-mini\scratch\alu4_build.pkl", "rb"))
 ins = r["inputs"]
 P = sim._parse_build(d["blocks"], d["io"])
 combos = [{ins[j]: (k >> j) & 1 for j in range(len(ins))} for k in range(n)]

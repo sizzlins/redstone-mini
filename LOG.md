@@ -2741,3 +2741,35 @@ that next.
   floor-cell paste gate ("no floor, no vectors")
 - does NOT create the `__rig` objective yet -- adding that (Fact 3)
 
+
+## Night 2026-10-04 (verify_par used the SLOW engine: 2.2x on the repo's dominant compute)
+
+Profiled the real hot path on the CURRENT verified build (alu4merge_g, 71560 blocks,
+scratch/prof_scalar.py now takes a pkl; it was pinned to a stale 10/2 cache).
+Findings, in order of size:
+1. **verify_par's child never touched the fast engine.** _vec_child called
+   sim._run_vec for every vector, so the whole staged parallel verify -- the
+   repo's dominant compute -- ran the authority engine while sim.sim_verify
+   ships the table engine (simvec.run_scalar) in production. Eligibility is the
+   condition sim.py already computes: _latch_hold_seed returns None iff no ~qb
+   nets, which IS sim.py's own _hold is None test (states is None here too).
+   Child now picks run_scalar when eligible, with REDSTONE_VERIFY_ENGINE=slow
+   as the differential escape hatch. A/B same box, same build, minutes apart:
+   **104s -> 47s per 64-vector chunk (2.2x)**, both green (128 vectors of
+   self-differential). Full sweep re-certified: 1024/1024 VERIFY OK.
+2. **Per-vector cost is uniform, not tail-dominated**: 9 evenly spread vectors
+   0.52-0.97s (avg ~0.68s), so 1024 vectors = ~700s of single-core work. The
+   old chunk times (108-273s for 43s of work) were the engine choice, NOT
+   memory or tail: 2 children x 170MB (scratch/rss_probe.py) fits in 3GB free.
+   The LOG's earlier 'tail ~= mean, work-stealing cannot help' conclusion was
+   drawn under the slow engine and stands for physics, but the WALL it explained
+   was the engine, not scheduling.
+3. **Tried and REVERTED (measured no win, so it does not ship):** hot-loop
+   locals in _dust_lvl_s/_cob_state_s + early exits in _cob_state_s (0.515s vs
+   0.514s per vector, noise). The helpers' cost is real work, not lookup
+   overhead. Reverted rather than bank unmeasurable complexity.
+Gates after the change: diff_engine ALL IDENTICAL, compose_check identical
+(144/322/224/214), compose self-test ok, nonhier 6/6 identical (alu1 flat RED by
+design), hier_verify alu1 VERIFY OK 32/32, alu4 1024/1024.
+
+
