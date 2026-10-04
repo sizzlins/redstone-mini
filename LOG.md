@@ -4380,3 +4380,18 @@ out=c2,t,y) matches no recipe, subset or exact. Its intended function is not
 recoverable from the pins alone and no cand_*.txt/*.recipe.txt covers it, so
 writing the recipe would be guessing at the oracle -- the exact thing the
 verification layer exists to prevent. Documented, not forced.
+
+## 2026-10-05 -- FINDING 1 is CLOSED (by the co-tenant agent, verified by me)
+
+`hier_verify.py recipes/alu4.txt` now runs end to end and exits 0. They wired
+the missing `ins_target` step in at 4d98d4c ("hier_verify was missing the
+load-bearing ins_target step; alu4 gate now passes"); I ran it rather than
+re-implementing it:
+
+    bands 6/6 (13304 7518 6957 571 2414 4878) -> stitch MERGE 71560
+    -> smoke 3/4, Y2 wrong on 1010101010 (advisory, .ins_target pending)
+    -> ins_target swap -> smoke 4/4
+    -> VERIFY OK 1024 vectors, 16 chunks green, exit 0   (173.7s total)
+
+So the documented gate command earns its green. That closes the last open item
+from my cold start. MORNING-REPORT.md updated to say so, credited as theirs.

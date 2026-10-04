@@ -167,9 +167,51 @@ build cost · `tickdiff.py` first divergent tick · `evlog.py` event-stream diff
   `f81977c`, and a stub `f81977c`-class commit after my cold start). My
   `diff_engine` was re-earned on their HEAD and stayed green. They own
   `scratch/sweep*`, `scratch/mkref.py`, `scratch/ref*`.
-- **`hier_verify.py recipes/alu4.txt` cannot earn the alu4 green** — it exits 1
-  at `SMOKE 1010101010` because the load-bearing `ins_target` 3-pillar swap is
-  an out-of-band manual step. The green artifact is `alu4merge_g.pkl`. Same
-  family as the two gate bugs already fixed: a green you cannot re-earn. Not
-  fixed; it needs the swap wired in.
+- **`hier_verify.py recipes/alu4.txt` now earns the alu4 green end-to-end (FIXED,
+  not by me).** It used to exit 1 at `SMOKE 1010101010` because the load-bearing
+  `ins_target` 3-pillar swap was an out-of-band manual step. The co-tenant agent
+  wired it in (`4d98d4c`, "hier_verify was missing the load-bearing ins_target
+  step"). I verified their fix rather than duplicating it: bands 6/6 → stitch →
+  advisory smoke 3/4 → swap → smoke 4/4 → **VERIFY OK 1024 vectors, 16 chunks
+  green, exit 0** in 173.7s. Same family as the two gate bugs already fixed, and
+  now closed the same way: the green is re-earnable from the documented command.
 - The `parallax`/GA agent owns the **cpu4** Y2 coupling, which I never touched.
+## Session continues (same night) -- three tools, two refutations
+
+**`scratch/coldstart.py` -- one command, 8 gates, 4.6 minutes, all green.**
+The four broken gates shared a cause: nobody ran them, and each passed
+unnoticed because the *other* gates were green. `coldstart.py`,
+`--quick`, `--sweep`, `--only` included. Verified `8/8 green, exit 0`.
+It re-checks the freeze *after* `mkref` rewrites it, because `mkref` cannot
+report its own failure -- my first version had the honest name
+`mkref_then_drift` while doing exactly that.
+
+**`scratch/notmin.py` -- the regression seam for the non-pin lever.**
+A 16-block, router-free, hand-placed comparator-subtract inverter with a glass
+floor, through *both* engines on A=0/A=1 in 2s. Currently exit 1 with the
+predicted signature (`sim=0 cmc=15` at A=0). The fix is still not applied; now
+it cannot be forgotten.
+
+**`scratch/coverage.py` -- the sweep truly covers everything.** 98 pkls:
+48 real circuit builds, **all gated**. The 50th is `stackfail.pkl`, whose
+function cannot be recovered from its pins and no recipe covers -- a deliberate
+non-gate, since writing the recipe would be guessing at the oracle. The other
+49 are band caches and state dumps (pipeline inputs, not circuits), largest 235
+MB. `scratch/` is 1.05 GB across 1496 files; three `_states.pkl` are ~550 MB
+and my own sweep's cells dumps contribute. Nothing deleted.
+
+**Open B corrected twice.** I first called `alu4bank_ins` a
+"propagation/structure" gap from one probe -- wrong; it is 633 scattered
+dust-only fragments, largest 17 cells, with 14/18 comparators agreeing exactly.
+Then I hypothesised params-vs-geometry; **`scratch/wireconn.py` refutes it in
+30s** -- both engines push 15->14 across a join whose params say unconnected,
+so neither reads params over geometry. Next cheapest probe: whether the diff
+*shrinks* with more cmc settle ticks (a settling artifact would; a rule gap
+would not). Not yet run.
+
+**Coordination, still live:** the optimisation agent has uncommitted
+`simvec.py` edits in the worktree. Nothing of theirs staged, reverted, or
+touched. Their `5e2a25a` rewrite already deleted one latent crash I was about
+to log. The `coldstart --quick` gate ran green against the tree with those
+uncommitted edits present -- but treat engine-sensitive numbers as provisional
+until they commit.
