@@ -4017,3 +4017,65 @@ DEFAULT STAYS 64. Two things worth keeping from this:
 The env gate ships (it is what made this measurable, and it is one line), but
 no default changed. Recorded so the next agent does not re-run the ladder sweep
 to rediscover that 64 is load-bearing.
+
+## 2026-10-05 (session 2, IMPORTANT) -- alu4 disagrees with cmc on 2286 cells, and it is NOT from tonight
+
+The strongest gate in this repo is the dual-engine per-cell differential
+(`verify2 --diff-all`, our sim vs cmc, an independent implementation). It had
+only ever been run on alu4's LAMP verdict, where both engines say green. Run
+per-cell on the banked paste-ready build, it fails:
+
+    python scratch/verify2.py recipes/alu4.txt scratch/alu4merge_g.pkl --diff-all
+      doc: 71560 blocks, 64 vectors (SAMPLED)
+      DIFF: dust 49814/1957248 cells differ, repeaters 7280/279552 differ
+      DUAL-ENGINE VERDICT: FAIL
+
+### It predates tonight, proven rather than argued
+
+    REDSTONE_SERIES_VERIFY=1  -> sim._run_vec, the AUTHORITY engine
+      DIFF: dust 49814/1957248 cells differ, repeaters 7280/279552 differ
+
+IDENTICAL numbers. `sim.py` is byte-identical to what I inherited (mkref +
+refcheck confirm `worktree sim.py == HEAD:sim.py`), so tonight's work cannot be
+the cause. The per-cell counts are the same to the digit.
+
+### What it looks like
+
+`scratch/diffwhy.py` on the cached doc: **2286 distinct cells**, and they are
+one contiguous region -- x 1082..1095, y 1..3, z 167..183 -- not scattered.
+Signature is a DECAY LADDER: cells our sim reads 12..15 that cmc reads 0,
+running west/south off 15-valued sources. `scratch/simwhy.py` on
+(1082,1,169) vector 35 confirms the direction: our sim says live=13, with
+(1082,1,170)=14, (1082,1,171)=15, (1083,1,169)=12.
+
+So the risk direction is **our sim being too generous** -- powering a wire cmc
+leaves dark -- not the comparator-front direction (sim dark, cmc lit) that the
+GA agent fixed in 38b872f. Same SHAPE of bug, opposite sign, different region.
+
+### Why the build is still green, and why that is not reassuring
+
+Both engines call alu4 correct: ours on all 1024 vectors against the LOGICAL
+oracle, cmc on the 64 it sampled. So the disagreement is in internal wire state
+in a region that does not change the lamps on these vectors. That is exactly
+the sim-overfit class the GA agent described -- a build can be green in sim and
+wire differently in the game -- and it is why the never-pasted paste test
+matters more after this finding, not less.
+
+### Reproduce (bounded; the doc is cached so a re-run is sim-only)
+
+    python scratch/verify2.py recipes/alu4.txt scratch/alu4merge_g.pkl --diff-all
+    python scratch/diffwhy.py scratch/alu4merge_g.v2doc.json --examples 8
+    python scratch/simwhy.py scratch/alu4merge_g.v2doc.json 35 1082 1 169
+    REDSTONE_SERIES_VERIFY=1 python scratch/verify2.py recipes/alu4.txt \
+        scratch/alu4merge_g.pkl --diff-all      # same numbers => not tonight's
+
+For contrast, the GA agent measured **0 / 179296** differing cells on
+alu1glass and 0 / 25872 on add2opt, and I re-ran alu1 tonight: **0 / 204224**,
+DUAL-ENGINE PASS. So this is specific to alu4, which is also the biggest and
+the only one banked for paste. Not a general engine regression.
+
+NOT FIXED tonight: this is physics forensics in the GA agent's lane, it needs
+`diffwhy`/`simwhy`-style triage to find the rule, and I was not going to start
+a semantics change to sim.py on the last hour of an optimisation shift with no
+second pair of eyes on the tree. It is reported instead, with the exact
+commands. Note `recipes/alu4.skip` is NOT involved -- that only pins alu1.
