@@ -1,5 +1,14 @@
 # handoff — optimization agent (2026-10-04: band 0 DONE, then the speed shift)
 
+**If you are the next optimization agent, read in this order and stop when the
+questions are answered:** this file → `README.md` (what the program is; note it
+understates the current state) → `LOG.md` (last ~200 lines for the overnight
+trace) → `notes/to-ga-agent.md` + `notes/to-opt-agent.md` (who owns what, and
+what the other agent changed under you) → `notes/PONYTAIL-DEBT.md` (the
+conventions and the deliberate shortcuts). `notes/handoff-ga- agent.md` is the
+other agent's handoff — theirs to maintain, and already stale on alu1.
+Do not read `notes/LOG.md`: it is an untracked stray copy of `LOG.md`.
+
 Repo `D:\redstone-mini`, branch `phase2-design` (shared with the GA agent —
 we both commit here; commits interleave). Mine:
 `1be2186, ee61873, f462f6f, 325eac7, 2ca3f69, ddd500a, a5ee1ef, fe71ca1,
