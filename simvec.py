@@ -101,9 +101,12 @@ def _tables_from(P, inp):
               target, attach_rev, leveratt):
         uni |= set(d)
     for v in leveratt.values():
-        uni.add(v)
+        if v is not None:           # a lever may attach to its OWN cell (None)
+            uni.add(v)
     for c in torch:                       # torch attachment blocks
-        uni.add(torch[c])
+        a = torch[c]
+        if a is not None:
+            uni.add(a)
     for v in attach_rev.values():
         uni |= set(v)
     cell = sorted(uni)
@@ -371,8 +374,13 @@ def _tables_from(P, inp):
     for c in torch:
         a = torch[c]
         i = cid[c]
-        t_att[i] = cid[a]
-        t_dead[i] = 1 if a in rblk else 0   # on a redstone block: off for good
+        # ponytail: -1 means "no attachment block". sim reads it as
+        # `pb.get(None, False)` -- an absent host, i.e. unpowered -- so a torch
+        # with no attachment block reads as always lit. Must NOT index pb[-1]:
+        # that is a real cell (the last id) and would silently wire the torch
+        # to whatever happens to live there.
+        t_att[i] = cid[a] if a is not None else -1
+        t_dead[i] = 1 if (a is not None and a in rblk) else 0
 
     # ---- wake map: every cell -> the cells its change re-evaluates -------
     # ponytail: bare ids, no kind (see the module note). slab vertices
@@ -888,7 +896,7 @@ def run_scalar(vec, ctx, init=None, until=None, tick_cap=None, step_cap=None,
                 if f:
                     tsched[c] = 0
                     a = t_att[c]
-                    v = not pb[a]
+                    v = not (pb[a] if a >= 0 else False)
                     if tl[c] != v:
                         if tl[c] and not v:
                             bt = tuple(t for t in bout.get(c, ())
@@ -915,7 +923,7 @@ def run_scalar(vec, ctx, init=None, until=None, tick_cap=None, step_cap=None,
                     if tsched[c] or t_dead[c]:
                         continue
                     a = t_att[c]
-                    if (not pb[a]) != tl[c]:
+                    if (not (pb[a] if a >= 0 else False)) != tl[c]:
                         tsched[c] = 1
                         buckets[(now + 1) % RING].append((c << 1) | 1)
                         alive += 1

@@ -3443,3 +3443,112 @@ pending-fire set should contain and when it is cleared, which is a physics
 decision in shared code with no oracle in this environment -- the same reason
 Finding 3's lever fix was not applied. Recorded with exact line numbers so it
 is cheap to pick up.
+
+## 2026-10-05 (session 2) -- Opt B: int-indexed tables. 1.62x per vector, 2.07x on the sweep, 2.8x less RAM
+
+FINDING 2 acted on. `scratch/tbl_sizes.py` (new) put the 103 MB in two
+tables: `wake` 59 MB (775 B/entry -- a (kind, cell) 2-tuple per edge) and
+`d_dirs` 28 MB (973 B/entry -- four 5-tuples per dust cell, each embedding
+another (x,y,z) tuple). 3-tuple cell objects alone were 35.6 MB across 518985
+objects. The working set was 100x L3, which is why 8 concurrent children ran
+2.1x slower each.
+
+### The change
+
+Every table is indexed by a dense CELL ID instead of the (x,y,z) tuple.
+
+- State (`pw`, `pb`, `pbs`, `tl`, `ron`, `con`) is six **bytearrays** indexed by
+  id. Levels are 0..15 and the flags are 0/1, so this is the natural type, not
+  a compromise: reading one is a bounds-checked index returning an interned
+  small int where the old code hashed a 3-tuple. 1244222 dict.get calls per
+  vector are gone -- `dict.get` has dropped out of the profile's top 16.
+- `wake` stores BARE IDS. The kind was redundant: a cell has exactly one type,
+  so `kind[id]` recovers it. That deletes ~340k tuple allocations per vector
+  and makes the same-tick `hset` a set of ints instead of hashed 3-tuples.
+- `d_dirs` splits by SOURCE CLASS (`d_torch`, `d_cob`, `d_dust`, `d_rep`,
+  `d_comp`, `d_cup`, `d_cdn`, `d_lev`, plus a `d_rblk` byte) instead of four
+  5-tuples per cell. Most cells are empty in most classes, and empty is the
+  SHARED `()`.
+- Empty lists are lists, not tuples: one list alloc per non-empty class, no
+  `t + (x,)` reallocation per entry.
+
+### Why the per-direction ORDER could go (it was load-bearing-looking)
+
+`_dust_lvl_s` used to be one loop over four directions, each a 5-tuple with an
+early `return 15` for codes 1/2/3/4/6/8 and a `max` accumulate for 5/7/cup/cdn.
+The comments insisted the order was the point. It is not: 15 is the maximum
+level, so whichever fifteen-source fires first the answer is 15, and the rest
+only accumulate a `max`, which does not care about order. So the answer is "15
+if any fifteen-source, else the largest decay term" -- classifiable. The
+comments said so and were right for the wrong reason.
+
+### THE BUG this rewrite actually hit (worth the whole session)
+
+First run: 2.00x, `vec0` bit-identical, but 5 of 6 vectors settled exactly ONE
+TICK EARLY with identical final state. Not a physics error -- a scheduling one,
+and it took four instruments to localise:
+
+1. `scratch/tbl_diff.py` (new): old-vs-new differ over ALL SIX returned values,
+   on SPREAD vector indices (0..n-1 are the easy ones). Has three deliberate
+   fault injections (`REDSTONE_TBLDIFF_FAULT=ticks|live|lamp`) because a
+   differ that has never gone red is not evidence. All three go red.
+2. `scratch/tickdiff.py` (new): per-tick `snap_at` on both engines -> first
+   divergent TICK is 0, with 30 EXTRA lit cells, all at y=1 on the input edge.
+3. `scratch/tbl_equiv.py` (new): exhaustive table equivalence, every cell,
+   every table, both representations converted back to a common form. Result:
+   EQUIVALENT except 2 intended `l_arm` reductions and 1744 dropped DEAD wake
+   entries. So the tables were innocent and the ring loop was guilty.
+4. `scratch/evlog.py` (new): both engines log every (tick, kind, cell) popped
+   off the Dial ring. First divergence at event 15097 == exactly `ncells`, the
+   seed boundary: old ran `r` (evaluate) for repeater (6,1,3), new ran `R`
+   (fire).
+
+ROOT CAUSE: a repeater with delay 0 schedules its fire into the CURRENT bucket,
+and its own re-evaluation can ALREADY be queued EARLIER in that same bucket.
+Both items are legitimately pending simultaneously and they mean different
+things. The old `(kind, cell)` tuple said which. My first attempt used a single
+`fire[cell]` byte -- but both items share the cell, so the eval item ran the
+FIRE branch, repeaters came on a tick early, and every vector settled a tick
+sooner. Fix: the ring item is ONE int, `(cell_id << 1) | firing`. Order is
+preserved exactly, both items coexist, and it is still one small int instead of
+one 2-tuple per event.
+
+Two smaller bugs the instrumentation also caught: `leveratt` values and torch
+attachments can be None (a lever attaching to its own cell), which broke
+`sorted(uni)` and would have made `t_att = -1` index `pb[-1]` -- a REAL cell,
+silently wiring a torch to whatever lives there.
+
+### Measured
+
+    per vector (alu4merge_g, warm tables)   0.529s -> 0.327s   1.62x
+    python-level calls per 5 vectors      11522751 -> 4735191  2.4x fewer
+    _cob_state_s tottime                       0.853s -> 0.321s  2.7x
+    tables, one worker                      103.0 MB -> 30.9 MB  3.3x
+    one worker TOTAL                        112.5 MB -> 40.4 MB  2.8x
+    peak heap during one vector            230.8 MB -> 77.1 MB  3.0x
+    16 workers, tables alone                 1.80 GB -> 646 MB
+    FULL 1024-vector alu4 sweep, 16 workers  108.7s -> 52.4s    2.07x
+    event log, 4 vectors                93k/162k/412k/574k events IDENTICAL
+
+REGRESSION, recorded not hidden: `_tables_from` build time 7.78s -> 8.60s
+(+10%). It is paid once per worker and the verify_par grouping from the
+previous entry amortises it, so it is ~9% of a worker's wall on a 16-chunk
+sweep -- but it is real and it is next.
+
+### Gates (all green, all re-run on the new engine)
+
+    python simvec.py          8 vectors, run_scalar bit-identical to sim._run_vec
+    python sim.py             all 8 physics canaries ok (incl. comp-front-dust,
+                              torch-burnout, ladder, budget+snapshot)
+    python compose.py         ok
+    compose_check.py          144 / 322 / 224 / 214 identical
+    nonhier_suite.py          6/6 exit 0 (alu1 flat RED by design)
+    diff_engine.py            ALL IDENTICAL -- the 3-way gate: frozen
+                              HEAD:sim.py == live sim._run_vec == NEW run_scalar
+    hier_verify alu1          VERIFY OK 32 vectors, exit 0, 42.1s
+    verify_par alu4merge_g    VERIFY OK 1024 vectors, 16 chunks green, exit 0
+
+simvec.py is an ENGINE file, so this voided every verify cache: the 1024/1024
+above is a genuine cold re-verification on the new engine, not a cache read.
+The event logs being byte-identical is the strongest evidence available -- it
+means the rewrite did not merely agree on the answer, it took the same path.
