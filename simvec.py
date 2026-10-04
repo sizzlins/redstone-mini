@@ -899,7 +899,28 @@ def verify_par(ins, gates, outputs, blocks, io, combos, workers=None,
     # Direct callers bypass sim_verify, so check here too; deferred import
     # (sim imports this module lazily, never at top level).
     from sim import _parse_build as _sv_parse, _check_supports as _sv_check
-    _sv_check(_sv_parse(blocks, io))
+    _P0 = _sv_parse(blocks, io)
+    _sv_check(_P0)
+    # ponytail: serial fast path for small sweeps. A spawn pool costs
+    # real wall before the first vector runs (process spawn, module
+    # re-import, full build unpickle per worker); a tiny sweep never
+    # amortizes it (measured: 4 vectors on a 144-block build took 0.26s
+    # pooled vs 0.01s serial in-process, same box -- 26x). Threshold is
+    # deliberately tight (<=8 vectors AND <=100k cell-vectors): small
+    # fields converge in ticks, so serial cost is provably ~1s, while a
+    # slow-vector build must still fan out no matter how few vectors it
+    # has. Same _serial_shard the pool runs (latch fallback + fail-fast
+    # intact), just without the pool. REDSTONE_SERIAL_CELLVEC=0 forces
+    # the pool (A/B + escape); a plain count in it replaces both caps.
+    _ser_cv = int(_os.environ.get("REDSTONE_SERIAL_CELLVEC", "100000"))
+    if _ser_cv and len(combos) <= 8 \
+            and len(combos) * len(_P0[0]) <= _ser_cv:
+        _init_worker(blocks, io, gates, outputs, ins, tick_cap, stall)
+        _W["stop"] = None
+        _sbad, _sticks, _sfatal = _serial_shard(combos)
+        if _sfatal and not _sfatal.startswith("aborted"):
+            raise RuntimeError(_sfatal)
+        return _sbad, _sticks
     # ponytail: refuse to fan out from inside a pool worker. A pool worker is
     # DAEMONIC by definition, so the nested Pool raises "daematic processes are
     # not allowed to have children" -- and under spawn that is not a raise, it

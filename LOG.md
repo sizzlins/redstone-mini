@@ -87,3 +87,7 @@ alu1 VERIFY OK 32/32 (hier gate, BANK=1 default). recipes/alu1.txt promoted to 2
 sim.py _run_vec: stall window + lever/trace env reads hoisted out of hot loop (4.6M len, ~170k environ.get gone); same-tick re-queue coalescing in sched() (simvec's proven pattern). Measured: 5.34s -> 3.04s / 16.75M -> 9.08M calls. redstone_mini.py skips the 2.2s demo preamble on custom runs. Exporters (0.58s), simvec, router measured clean, untouched. Gates: sim suite + diff_engine ALL IDENTICAL + nonhier bit-identical. Heap->buckets (~11%) and dirty-bit wake (~big) parked as TODOs -- reference-ordering risk.
     slice 300e seed11: 4269 -> 4264 (5 acc). Streak 1 of stop criterion (need 2x <=5). Promoted.
     slice 300e seed12: 4264 -> 4260 (4 acc). Streak 2 (5,4): wire tier exhausted per criterion. Confirm slice next, then cobble/stone tier sweeps before DONE. Promoted.
+
+## Night 2026-10-04 (opt 2: serial fast path 26x + fork-bomb lesson)
+
+verify_par skips the spawn pool for tiny sweeps (<=8 vectors AND <=100k cell-vectors): 0.26s -> 0.01s on example_and. Same _serial_shard the pool runs. Threshold is tight on purpose so slow-vector builds still fan out. LESSON (mine, paid in full): probe without __main__ guard + spawn pool = fork bomb (hundreds of procs). Rule already in handoff; now enforced by example. ab_pool.py fixed + guarded. Gates: simvec self-check + diff_engine ALL IDENTICAL.
