@@ -3683,3 +3683,58 @@ bands reproduced, the merge reproduced, the block count reproduced, and the
 only visible symptom was one MISMATCH line -- which the handoff had already
 documented as a known, fixed-by-a-manual-step fault. A gate whose missing step
 is documented as "someone runs this by hand" is not a gate.
+
+------------------------------------------------------------
+coldstart.py -- one command, every gate, 4.6 minutes
+------------------------------------------------------------
+Four gates were quietly wrong on arrival tonight, and each got past a human
+because the OTHER gates were green:
+
+  1. mkref froze a LOSSY baseline, so diff_engine's ALL IDENTICAL was against
+     mangled bytes.
+  2. sweep.py wrote its summary only after the loop, so a killed sweep left no
+     summary: 44 cached verdicts and no record of them.
+  3. a resumed sweep wrote CACHED rows with no numbers, reporting "zero
+     differences" for every build because it had none.
+  4. hier_verify never called ins_target and verified the raw merge, so
+     hier_verify recipes/alu4.txt could only ever exit 1 -- while every band
+     and the merge reproduced perfectly, so it looked like a known fault.
+
+Nothing catches that class except running everything in one place.
+
+    python scratch/coldstart.py            # all 8 gates
+    python scratch/coldstart.py --quick    # skip the 1024-vector gate
+    python scratch/coldstart.py --sweep    # also the dual-engine sweep
+    python scratch/coldstart.py --only diff_engine,hier_alu1
+
+Measured tonight, exit 0:
+
+    PASS refdrift                0.6s   freeze is byte-faithful to HEAD
+    PASS refdrift_after_mkref    0.2s   ...and STILL is after re-freezing
+    PASS mkref_then_drift        0.1s
+    PASS diff_engine            13.2s   ref == live == table engine, 16/16
+    PASS compose                 0.2s
+    PASS compose_check           0.3s   144/322/224/214
+    PASS nonhier_suite          43.2s
+    PASS hier_alu1              54.0s   VERIFY OK 32/32
+    PASS hier_alu4             164.8s   VERIFY OK 1024 vectors, 16 chunks
+    coldstart: 8/8 gates green
+
+Every gate is a bounded subprocess with its own timeout, a failure never stops
+the rest (gate 3 of 7 failing is more useful than the chain stopping at gate 3),
+and a timeout is reported as TIMEOUT rather than skipped -- a hung gate is a
+finding.
+
+Two notes on the tool:
+  - it re-checks the freeze AFTER mkref, because mkref cannot report its own
+    failure. My first version had the name mkref_then_drift while doing exactly
+    the thing the name warns about.
+  - the mkref fix also made re-freezing IDEMPOTENT: git diff on scratch/
+    ref_sim.py after a fresh mkref is empty. The old one compounded its
+    corruption on every run, so the freeze's bytes depended on how many times
+    anyone had regenerated it.
+
+NOTE, mid-session: the optimisation agent is editing simvec.py in this shared
+tree RIGHT NOW (uncommitted in the worktree while I wrote this). Not staged,
+not reverted, not mine. My diff_engine run above is the current committed
+engine; re-run coldstart after their work lands before trusting anything.
