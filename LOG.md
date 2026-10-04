@@ -2449,3 +2449,4 @@ Operator in-game results, parsed:
   by C3/C4, 1 word, sim suite re-run green (lamp/pillar/comp/burnout/
   ladder/budget lines all ok). Existing builds unaffected (none use
   target as support; suite proves zero behavior change).
+    C2 refined (operator): dust can NOT sit on bottom slab, CAN on top slab (full-height top face; matches cmc hasFullTopFace). Sim already treats type=top as support+conductor (parse lines 955-968; comment even documents top-slab dust). Palette locked: air/dust/glass/TOP-slab/target/rep4/comp4x2/leverON-OFF. Bottom slab excluded from genome (sim would wrongly allow it as support -- latent gap for others, dead code for us: router never emits slabs, zero banked builds contain any).
