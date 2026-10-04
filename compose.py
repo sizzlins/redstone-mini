@@ -12,6 +12,7 @@ from tiles import (new_ctx, footprint, tap_lamps, own, ring, stamp_wire,
                    seal_tiles)
 from layout import build_netspec, check_shorts, check_opens, finish_assembly, _support, bridge_plan, bridge_plan_tall, astar
 from layout import _sup3 as _layout_sup3, _src3 as _layout_src3, _flood3 as _layout_flood3
+from layout import _loop_rep as _layout_loop_rep
 from layout import _torch_hosts, _inverter_ring_at
 
 # last compose() run's coordinate shift (netspec frame -> check frame),
@@ -49,6 +50,14 @@ def _hop_free(ctx, sup, guard, feet, supports, dusts, victim, net, apex=3):
         if (x, y, z) in sup and sup[(x, y, z)] != net:
             return False
     cond2 = set(supports)
+    # ponytail: committed supports count as support (measured b0: t00's hop
+    # passed beside n0_0's committed deck -- cond2 saw only this hop's own
+    # supports, the slope veto missed, SHORT3D at check with no retry left).
+    # Needs join sup AND ctx.sup at stamp, so both dicts cover every pillar;
+    # tile cobble stays invisible (under-veto = today, safe direction). Lids
+    # are blocks-only either way (no behavior change there).
+    def _cs(c):
+        return c in cond2 or c in sup or c in ctx.sup
     for x, y, z in dusts:
         for dx, dz in DIRS:
             for dy in (1, -1):
@@ -56,12 +65,12 @@ def _hop_free(ctx, sup, guard, feet, supports, dusts, victim, net, apex=3):
                 if w is None or w == net:
                     continue
                 if dy == 1:
-                    if ((x + dx, y, z + dz) in cond2
-                            and (x, y + 1, z) not in cond2):
+                    if (_cs((x + dx, y, z + dz))
+                            and not _cs((x, y + 1, z))):
                         return False
                 else:
-                    if ((x, y - 1, z) in cond2
-                            and (x + dx, y, z + dz) not in cond2):
+                    if (_cs((x, y - 1, z))
+                            and not _cs((x + dx, y, z + dz))):
                         return False
     for x, y, z in supports:
         if y == 1 and (x, z) in ctx.solid:
@@ -421,6 +430,36 @@ def lwire(ctx, sup, guard, a, b, net, avoid=frozenset()):
         # treats it as retryable geometry, not a crash.
         raise RuntimeError(f"compose: no ground for {net}: {a} -> {b}")
     raise first_err
+
+
+def _loop_culprit(wires, repeaters, blocks, cands):
+    """Bisect router-planted diodes for the one closing a repeater loop.
+
+    finish_assembly rejects the whole build on a loop with no retry left;
+    dropping the single diode that closes it leaves a combinational dust
+    ring (settles; the sim gate judges decay). Death-path only: green
+    builds never call here. Returns the culprit cell, or None when the
+    loop is tile geometry (no candidate clears it) or multi-diode.
+    Deterministic (sorted candidates; dict-order floods).
+    """
+    cob = _layout_flood3(blocks)
+
+    def _loops(rep):
+        return _layout_loop_rep(wires, rep, set(wires) - set(rep),
+                                cob) is not None
+
+    if not _loops(repeaters):
+        return None
+    pool = sorted(cands)
+    while len(pool) > 1:
+        half = set(pool[:len(pool) // 2])
+        trial = {k: v for k, v in repeaters.items() if k not in half}
+        if _loops(trial):
+            pool = [c for c in pool if c not in half]
+        else:
+            pool = [c for c in pool if c in half]
+    trial = {k: v for k, v in repeaters.items() if k != pool[0]}
+    return pool[0] if not _loops(trial) else None
 
 
 def _flight_live(ctx, net, a, b, flight):
@@ -1736,6 +1775,7 @@ def _compose_once(recipe):
             d = (v[0] - u[0], v[2] - u[2])
             flow.setdefault((u[0], u[1], u[2]), set()).add(d)
             flow.setdefault((v[0], v[1], v[2]), set()).add(d)
+    _rep0 = set(ctx.repeaters)
     for net, full in paths:
         _plant_repeaters(ctx, full, net, flow, own=tile_dust)
     if os.environ.get("RS_WATCH82"):
@@ -1796,7 +1836,29 @@ def _compose_once(recipe):
     check_opens(wires, junctions, repeaters, solid, pos, blocks)
     global _last_ctx
     _last_ctx = ctx
-    return finish_assembly(blocks, solid, wires, rings, junctions, repeaters, pos)
+    # ponytail: post-hoc diode-drop. finish_assembly rejects a repeater
+    # loop with no retry left (measured b0: B0's mesh loops through a
+    # router diode, fatal at the tail). Dropping the single closing diode
+    # leaves a combinational dust ring, which settles; the sim gate judges
+    # any decay the drop causes. Bisect among diodes planted this build
+    # (tile repeaters predate the snapshot, never touched). Death-path
+    # only: builds without loops never enter (same verdicts as today).
+    for _drop in range(9):
+        try:
+            return finish_assembly(blocks, solid, wires, rings, junctions,
+                                   repeaters, pos)
+        except RuntimeError as _e:
+            if "repeater loop on" not in str(_e) or _drop == 8:
+                raise
+            _new = sorted(set(ctx.repeaters) - _rep0)
+            _culprit = _loop_culprit(wires, repeaters, blocks, _new)
+            if _culprit is None:
+                raise
+            del ctx.repeaters[_culprit]
+            blocks[:] = [b for b in blocks if b[:3] != _culprit]
+            print(f"compose diode-drop: {_culprit} closed a repeater loop",
+                  flush=True)
+    raise RuntimeError("compose: loop diodes exhausted")
 
 
 # Space between merged partitions. Wide on purpose: the stitch has to jog
