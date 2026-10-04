@@ -4269,3 +4269,34 @@ are not mine and were left alone. Tools kept for the next session: `tbl_diff`,
 `tbl_equiv`, `tbl_probe`, `tbl_sizes`, `wake_need`, `wake_miss`, `wake_split`,
 `tickdiff`, `evlog`, `build_prof`, `gc_probe`, and `simvec_old` / `simvec_geo` /
 `simvec_prev` as A/B references.
+
+## 2026-10-05 -- METHODOLOGY: sequential A/B is biased low on this box, by up to 40%
+
+Null check on BYTE-IDENTICAL code (`simvec.py` vs a copy of itself) reads
+0.61x / 0.84x / 0.96x / 0.87x -- never 1.00x, always low. So `tbl_diff.py`'s
+interleaved old-then-new has a systematic bias, not just noise.
+
+Probable cause: thermal throttling. This is a laptop CPU (i7-13650HX) under
+sustained load from two agents, and the reference always runs FIRST (cooler)
+while the candidate runs SECOND (hotter). The bias direction matches: new is
+always the hotter run. It also explains why absolute times for BOTH engines
+drifted 20-100% across the session while interleaved ratios stayed roughly
+ordered.
+
+Consequences, all conservative:
+- Every shipped win (1.04x .. 2.86x) was measured AGAINST this bias, so the
+  true wins are at least as large as stated. Nothing banked is overstated.
+- Every "null" rejection (1.00x) might be masking a small real win. Reverting
+  those was still correct: a win I cannot measure on this box is not a win I
+  can defend, and unmeasurable complexity does not ship.
+- Fine distinctions (<10%) are currently unmeasurable here, full stop. The
+  micro-opt loop is therefore SUSPENDED until the box quiets: further churning
+  risks the verified-green tree for gains I cannot prove. Correctness gates
+  (tbl_diff IDENTICAL, diff_engine, the suites) are immune to this and keep
+  running; TIMING claims stop until the null check reads 1.00x again.
+
+If the bias persists when the box is idle, the fallback is to alternate
+old/new/old/new within one process and compare paired runs, or to pin the
+process to isolated cores. Not done tonight; written down so the next session
+does not have to rediscover that 0.61x on identical code means the instrument,
+not the code, moved.
