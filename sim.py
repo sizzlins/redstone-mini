@@ -474,28 +474,19 @@ def _run_vec(vec, init, ctx, until=None, target_hits=None):
         return False
 
     def rep_locked(c):
-        """Repeater side-lock (wiki): powered sides freeze the output.
-
-        A repeater whose side is powered holds its last output instead
-        of following its input -- and an output looped back to its own
-        side latches ON permanently (measured in game: user report).
-        Side terms mirror comp_in's side scan (same physics, boolean):
-        dust/lever/rblk/torch/repeater/comparator/target-solid. Glass
-        never powers, slabs read through pbs like stone.
+        """Repeater side-lock (wiki Repeater page + cmc engine.js, BOTH
+        explicit): ONLY a powered repeater or comparator facing into the
+        side freezes the output. Powered dust, blocks, levers, torches and
+        redstone blocks beside a repeater do NOT lock it -- the old terms
+        here modeled a phantom (deleted, not deprecated): the alu1glass
+        x12 were side-COBBLE locks that never existed in vanilla, which
+        is why serial-vs-scalar could disagree about them.
+        Output looped to its own side through a facing-in repeater still
+        latches ON permanently (user-measured in game; canary below).
         """
         d = rep[c]
         for sx, sz in ((d[1], d[0]), (-d[1], -d[0])):
             s = (c[0] + sx, c[1], c[2] + sz)
-            if s in dust and pw.get(s, 0) >= 1:
-                return True
-            if s in pwr and pbs.get(s, False):
-                return True
-            if s in lever and vec.get(lever[s], False):
-                return True
-            if s in rblk:
-                return True
-            if s in torch and tl.get(s, False) and torch[s] != c:
-                return True
             if s in rep:
                 rd = rep[s]
                 if ron.get(s, False) and (s[0] + rd[0], s[1], s[2] + rd[1]) == c:
@@ -532,14 +523,22 @@ def _run_vec(vec, init, ctx, until=None, target_hits=None):
         elif rear in comp:
             rd = comp[rear]
             rl = con.get(rear, 0) if (rear[0] - rd["rear"][0], rear[1], rear[2] - rd["rear"][1]) == c else 0
+        elif rear in pwr and pbs.get(rear, False):
+            # ponytail: comparator reads a strongly-powered block at rear
+            # (vanilla-standard; cmc reads weak too -- strong-only here is
+            # a conservative under-read: safe direction, never a phantom).
+            rl = 15
         else:
             rl = 0
         sl = 0
+        # ponytail: sides feed from dust, redstone blocks (wiki 15w47a),
+        # and repeaters/comparators facing in (cmc sideInput agrees term
+        # for term). Levers, torches, plain powered blocks and target do
+        # NOT feed sides -- the old terms modeled phantoms (same class as
+        # the narrowed repeater lock above).
         for sx, sz in ((rz, rx), (-rz, -rx)):
             s = (c[0] + sx, c[1], c[2] + sz)
-            if s in lever and vec.get(lever[s], False):
-                sl = max(sl, 15)
-            elif s in rblk:
+            if s in rblk:
                 sl = max(sl, 15)
             elif s in rep:
                 rd = rep[s]
@@ -551,10 +550,6 @@ def _run_vec(vec, init, ctx, until=None, target_hits=None):
                     sl = max(sl, con.get(s, 0))
             elif s in dust and pw.get(s, 0) >= 1:
                 sl = max(sl, pw.get(s, 0))
-            elif s in target:
-                sl = max(sl, tg.get(s, 0))
-            elif s in pwr and pbs.get(s, False):
-                sl = max(sl, 15)
         return rl, sl
 
     def comp_out(c):
@@ -1325,7 +1320,7 @@ if __name__ == "__main__":
         _db, _, _dio = layout(_dr, seed=_seed, grow=0)
         _seen, _dups = {}, set()
         for _x, _y, _z, _b in _db:  # one pass; only dust-involved dups matter
-            _k, _bb = (_x, _y, _z), _b.split("[")[0]
+            _k, _bb = (_x, _y, _z), base(_b)
             if _k in _seen and (_seen[_k] == "minecraft:redstone_wire"
                                 or _bb == "minecraft:redstone_wire"):
                 _dups.add(_k)

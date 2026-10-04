@@ -5,7 +5,7 @@ import sys
 import time
 from types import SimpleNamespace
 
-from core import DIRS, TORCH_BACK
+from core import DIRS, TORCH_BACK, base
 from recipe import expand_gates
 from tiles import (new_ctx, footprint, tap_lamps, own, ring, stamp_wire,
                    place_or, place_and, place_not, place_latch, place_xor,
@@ -441,7 +441,7 @@ def _flight_live(ctx, net, a, b, flight):
     _FC = set(flight) | {start, goal}
     reps = ctx.repeaters
     cob = {(x, y, z) for x, y, z, bid in ctx.blocks
-           if bid.split("[")[0] == "minecraft:cobblestone"}
+           if base(bid) == "minecraft:cobblestone"}
     wires = ctx.wires
     seen, stack = set(), [start]
     while stack:
@@ -708,7 +708,7 @@ def _walk(ctx, sup, guard, a, b, net, cells):
         # derived from ctx.blocks, not a side set, so lwire's rollback
         # (which truncates ctx.blocks) can never desync it.
         cob = {(bx, by, bz) for bx, by, bz, bid in ctx.blocks
-               if bid.split("[")[0] == "minecraft:cobblestone"}
+               if base(bid) == "minecraft:cobblestone"}
         for (x, y, z) in done:
             # mirrors check_shorts' dy=-1 case exactly: the UPPER cell is
             # ours, the LOWER is one step down and diagonal, and the link
@@ -2255,7 +2255,7 @@ def compose_hier_parts(built, gates, recipe):
     # never blocks, so they are untouched.
     _wset = {(x, y, z) for (x, y, z), _nw in wires.items()}
     blocks[:] = [bb for bb in blocks
-                 if not (bb[3].split("[")[0] == "minecraft:cobblestone"
+                 if not (base(bb[3]) == "minecraft:cobblestone"
                          and (bb[0], bb[1] - 1, bb[2]) in _wset
                          and not any((bb[0] + _ex, bb[1] + 1, bb[2] + _ez) in _wset
                                      for _ex, _ez in list(DIRS) + [(0, 0)]))]
@@ -2390,7 +2390,7 @@ def compose_hier_parts(built, gates, recipe):
         # 70k x links = hours per merge; sets make it seconds).
         _bset = {(b[0], b[1], b[2]) for b in blocks}
         _cobset = {(b[0], b[1], b[2]) for b in blocks
-                   if b[3].split("[")[0] == "minecraft:cobblestone"}
+                   if base(b[3]) == "minecraft:cobblestone"}
         # ponytail: support roles split for glass/slab (layout sets): lids
         # stay cobblestone-only, up-reads need opaque sources, down-reads
         # accept any solid rest. Router geometry is glass-free, so empty
@@ -3268,7 +3268,7 @@ def compose_hier_parts(built, gates, recipe):
             from layout import _loop_rep as _lr
             _du0 = set(wires) - set(repeaters)
             _cb0 = {bb[:3] for bb in blocks
-                    if bb[3].split("[")[0] == "minecraft:cobblestone"}
+                    if base(bb[3]) == "minecraft:cobblestone"}
             _lp0 = _lr(wires, repeaters, _du0, _cb0)
             try:
                 full = _stitch(_cur, stub, n, b,
@@ -3304,7 +3304,7 @@ def compose_hier_parts(built, gates, recipe):
             # leg back and let the net's next consumer try.
             _du = set(wires) - set(repeaters)
             _cb = {bb[:3] for bb in blocks
-                   if bb[3].split("[")[0] == "minecraft:cobblestone"}
+                   if base(bb[3]) == "minecraft:cobblestone"}
             _lp = _lr(wires, repeaters, _du, _cb)
             if _lp is not None and _lp != _lp0:
                 _restore(_ss)
@@ -3365,7 +3365,7 @@ def compose_hier_parts(built, gates, recipe):
     _elev = [(x, y, z) for (x, y, z), _nw in wires.items() if y >= 2]
     if _elev and os.environ.get("REDSTONE_MERGE_LIDS") != "0":
         _cob = {(bx, by, bz) for bx, by, bz, bid in blocks
-                if bid.split("[")[0] == "minecraft:cobblestone"}
+                if base(bid) == "minecraft:cobblestone"}
         for (x, y, z) in _elev:
             _un = wires[(x, y, z)]
             if (x, y - 1, z) not in _cob:
@@ -3407,7 +3407,7 @@ def compose_hier_parts(built, gates, recipe):
     # thousands of path cells). Removals discard manually; nothing here adds
     # cobble, so the set only shrinks and stays exact.
     _cob_all = {(bx, by, bz) for bx, by, bz, bid in blocks
-                if bid.split("[")[0] == "minecraft:cobblestone"}
+                if base(bid) == "minecraft:cobblestone"}
 
     for _n, _paths in stitched.items():
         for _full in _paths:
@@ -3430,7 +3430,7 @@ def compose_hier_parts(built, gates, recipe):
                         continue
                     blocks[:] = [bb for bb in blocks
                                  if not (bb[0] == _lid[0] and bb[1] == _lid[1] and bb[2] == _lid[2]
-                                         and bb[3].split("[")[0] == "minecraft:cobblestone")]
+                                         and base(bb[3]) == "minecraft:cobblestone")]
                     _cob_all.discard(_lid)
     # ponytail: connect producer stubs. A cross net with no in-band loads
     # leaves placement stub dust around its tile ports (never routed — there
@@ -3464,7 +3464,7 @@ def compose_hier_parts(built, gates, recipe):
         # (Support split mirrors check_opens: _sup/_src from layout; lids
         # stay cobblestone-only. Parity is load-bearing here by construction.)
         _cob = {(bx, by, bz) for bx, by, bz, bid in blocks
-                if bid.split("[")[0] == "minecraft:cobblestone"}
+                if base(bid) == "minecraft:cobblestone"}
         _sup = _layout_sup3(blocks)
         _src = _layout_src3(blocks)
 

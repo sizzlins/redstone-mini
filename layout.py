@@ -920,7 +920,7 @@ def check_shorts(wires, junctions, blocks):
     # Diagonal +-1 adjacency counts only via a true slope link (support +
     # no lid, sim's rule): stacked/unsupported y-adjacency never couples,
     # so legal overflight passes and real 3D shorts still fail loudly.
-    cob3 = {(x, y, z) for x, y, z, bid in blocks if bid.split("[")[0] == "minecraft:cobblestone"}
+    cob3 = {(x, y, z) for x, y, z, bid in blocks if base(bid) == "minecraft:cobblestone"}
     # ponytail: support roles split for glass/slab (see _src3/_sup3): the
     # up-read needs an opaque source under the higher dust, the down-read
     # accepts any solid rest. Lids stay cobblestone-only (transparent never
@@ -975,7 +975,7 @@ def check_opens(wires, junctions, repeaters, solid, pos, blocks):
                 break
     reached, seen_states = set(), set()
     stack = seed_states
-    cob = {(x, y, z) for x, y, z, bid in blocks if bid.split("[")[0] == "minecraft:cobblestone"}
+    cob = {(x, y, z) for x, y, z, bid in blocks if base(bid) == "minecraft:cobblestone"}
     # ponytail: slope-walk support split (see _src3/_sup3): up-reads need an
     # opaque source, down-reads accept any solid rest. Lids unchanged.
     sup = _sup3(blocks)
@@ -1447,7 +1447,7 @@ def layout(recipe, seed=None, grow=0, reserve=False):
     # reads this instead of rebuilding it per astar call.
     tilecob = {(x, 1, z) for (x, z), (k, _) in solid.items() if k == "cobble"}
     coball = {(x, y, z) for x, y, z, bid in blocks
-              if bid.split("[")[0] == "minecraft:cobblestone"}
+              if base(bid) == "minecraft:cobblestone"}
     # Conductive sets are maintained, never rebuilt: a route only ever needs
     # "is there a block here", and rebuilding per route/rip was O(routes x
     # pillars). condg = ground level (what the flat search may stand on),

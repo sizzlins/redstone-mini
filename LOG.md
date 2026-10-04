@@ -2454,3 +2454,7 @@ Operator in-game results, parsed:
 ## Night 2026-10-04 (generalizations: insulation rule, chunks, streets A/B)
 
 3a ins_allvec: per-vector parasitic rule (sim-lit + logic-dark same vector, torch feed, no shared use); rediscovers 5 hand pillars +2; alu4 1024/1024. Traps: states keys are strings; all-dark criterion vacuous. 3b: empty-chunk skip + HIER_NCHUNKS (default identical); alu1 nchunks=64 green. 3c: REDSTONE_STREETS=gap env-gated, default mid; flip parked (alu4 bands blocked pre-existing -- overlay-exonerated, needs own campaign). Full trace: MORNING-REPORT.md.
+
+## Night 2026-10-04 (opt: cache base() splits)
+
+core.base() @lru_cache + 14 inline duplicates converted (compose 10, layout 3, sim 1). check_shorts 0.17s->0.10s, 658k->236k calls; cache 241505/21 hits. Gates: sim suite + diff_engine ALL IDENTICAL + compose_check bit-identical. Skipped with reason: ok() already squeezed, dust_points 0.5%, max->if 0.4%, heap swap (reference risk), dirty-bit (proven ~=0), exporters fine.
