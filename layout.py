@@ -602,6 +602,17 @@ def astar(starts, goal, net, W, D, solid, rings, wires, junctions, margin=None, 
                 c = came[c]
                 path.append(c)
             return path[::-1]
+        # ponytail: stale-entry skip. Every relaxation pushes a heap entry, and
+        # a cheaper g for the same cell pushes another; nothing ever dropped
+        # the superseded one, so cells were expanded up to 3.5x each (measured:
+        # 100k pops in a 28.5k-cell flat field, and 3 of 10 band searches burned
+        # the whole 100k anti-freeze cap that way -- 86% of all pops). A popped
+        # entry with g worse than the best known for its cell can only
+        # re-propose neighbours the better expansion already proposed, so
+        # skipping it cannot change which goal pops first. Checked AFTER the
+        # goal test so the returned path is untouched.
+        if g > cost.get(cell, 1e9):
+            continue
         x, y, z = cell
         for dx, dz in DIRS:
             ups = () if (flat_only or y >= ymax) else (((x + dx, y + 1, z + dz), _STEPCOST),)

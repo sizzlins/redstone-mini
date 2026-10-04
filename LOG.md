@@ -2855,3 +2855,56 @@ the sim-overfit class the gate now catches.
 - `setblock` dust needs a supporting block or it is silently deleted -- any
   future paste must give dust a floor.
 
+
+## Night 2026-10-04 (router: 3 small wins + the gate was lying; astar window is the real lever)
+
+KEPT (all bit-identical, band ladder reproduces 13304/7518/6957/571/2414/4878
+with the SAME six rungs):
+- layout.py astar ok(): the junction allow-probe built a fresh (x,z) tuple per
+  call -- 1.65M calls per band compose. Hoisted to a 3-tuple frozenset
+  once per search; (None, net) tuple compare replaced with two compares.
+  ok() 0.908s -> 0.625s cumtime. Also DELETED 16 lines of dead code that
+  sat after ok()'s return True (the pre-hoist body).
+- layout.py _support memoized per search: pure over the STATIC field, 381k calls
+  per compose for far fewer distinct cells. Only 'is False' is tested at either
+  call site, so the cache holds the boolean.
+- layout.py stale-entry skip in the astar pop loop (g > cost[cell] -> continue),
+  the standard Dijkstra guard that was simply absent. Free here (see below).
+Band 1 compose 4.4s -> 4.2s; ok()+_support+heap = 4.54s -> 4.07s of profile.
+
+REVERTED after measuring (not banked, per rule 3):
+- Candidate-list neighbour build (ups/dns were rebuilt per DIRECTION though they
+  depend only on the cell): 4.3s vs 4.2s. A list alloc costs what the 3-way
+  tuple concat costs.
+- Pre-astar unreachability flood (idea: 3 of 10 searches burn the whole 100k
+  anti-freeze cap = 86% of all pops, so prove 'no path' with a stack/BFS
+  over ok() instead). DFS 13.4s, BFS 7.5s vs 4.2s baseline: successful
+  searches pay for the flood twice over. REVERTED both.
+- Bound prune / iterative deepening on f: astar_waste.py says pops_above_goal
+  = 0 in EVERY search -- A* never expands beyond the optimal cost, so there is
+  nothing to prune. The waste is not 'too expensive', it is 'too much EMPTY
+  SPACE': _astar_wrap passes margin = man + 64, so the window is the field plus
+  64 cells of nothing in every direction, and a failing flat-only search walks
+  all of it (100k distinct cells in a 28.5k-cell field). NEXT LEVER, needs a
+  decision: a tighter window can only change a path or fail LOUD (never
+  silently wrong), so it is an env-gated A/B, not a default.
+
+THE GATE WAS LYING (found by diff_engine, worth reading twice):
+- scratch/ref_sim.py -- the frozen reference every 'ALL IDENTICAL' claim rests
+  on -- was extracted 10/3 3:26pm, BEFORE the vanilla-burnout feature and
+  before the lock/side narrowing. On alu4 vec001+ the live engine burns a torch
+  and the stale reference cannot, so diff_engine reported DIFFERENCES FOUND
+  against a change that provably did nothing (direct ref-vs-live on the failing
+  case: IDENTICAL, and live == run_scalar).
+- mkref.py made it worse: it extracted only _target_shots/_parse_build/
+  _run_vec and rewrote their _-globals, so a re-frozen reference was MISSING
+  every module-level helper _run_vec calls (dust_lvl, cob_state, rep_locked,
+  rep_on...). Freeze is now VERBATIM 'git show HEAD:sim.py' -- whatever HEAD runs
+  is what the reference runs, so it cannot drift by omission.
+- After the fix: diff_engine ALL IDENTICAL, and it is now a real gate again.
+  Read the corollary: every earlier 'diff_engine ALL IDENTICAL' was made against
+  a weaker baseline than it claimed. The independent gates carried the load --
+  the full 1024-vector verify compares every output to the LOGICAL oracle, not
+  to another engine -- and they all passed on this session's changes.
+
+
