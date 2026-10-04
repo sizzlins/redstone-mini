@@ -21,12 +21,18 @@ def run(args, tl, extra=None):
     if extra:
         env.update(extra)
     try:
-        subprocess.run(args, cwd=os.path.dirname(HERE), timeout=tl, check=False,
-                       env=env)
+        # ponytail: propagate the child's exit code. check=False + discarding
+        # it meant a RED stage (stitch sys.exit(1)) was swallowed and the
+        # pipeline went on to verify the PREVIOUS merge.pkl -- a cached green
+        # for a build that no longer exists (measured: alu1 printed
+        # "STITCH RED ... no ground for t3" and then "VERIFY OK 32/32" from
+        # the stale merge, in the same run).
+        r = subprocess.run(args, cwd=os.path.dirname(HERE), timeout=tl,
+                           check=False, env=env)
     except subprocess.TimeoutExpired:
         print(f"TIMEOUT after {tl}s: {' '.join(args)}", flush=True)
         return 1
-    return 0
+    return r.returncode
 
 
 def main():

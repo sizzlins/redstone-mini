@@ -213,11 +213,25 @@ def main():
     # "1,inputs_first,long"). Forces a band off a rung whose geometry poisons
     # the merge (measured: band-5 long1i parks C2's driver port inside
     # AL_AB0's stub pocket) onto its next sim-green rung. Env-gated.
+    # Also read from a `<recipe>.skip` sibling so a pin outlives the shell
+    # that found it: alu1's band-0 spread-1 rung is sim-green but its compact
+    # 6874-block shape walls the stitch (t3 -> band 1's stub, no ground), so
+    # alu1 pins band 0 to spread>=2. Env wins; the file is the default.
+    _skipspec = os.environ.get("HIER_SKIP", "")
+    if not _skipspec:
+        try:
+            with open(os.path.splitext(src)[0] + ".skip") as _f:
+                _skipspec = _f.read().strip()
+        except OSError:
+            pass
     _skip = set()
-    for _spec in os.environ.get("HIER_SKIP", "").split(";"):
-        if ":" in _spec:
+    for _spec in _skipspec.split(";"):
+        _spec = _spec.strip()
+        if ":" in _spec and not _spec.startswith("#"):
             _bb, _rr = _spec.split(":", 1)
             _skip.add((int(_bb.strip()), _rr.strip()))
+    if _skip:
+        print("HIER_SKIP: %s" % sorted(_skip), flush=True)
     jobs, meta = [], []
     for (b, sub, _cb) in subs:
         for f in rungs:

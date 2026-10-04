@@ -1,0 +1,10 @@
+# Band 0 must not use a spread-1 rung.
+#
+# The comparator-front physics fix (38b872f) made alu1's band 0 sim-green at
+# spread 1, whose compact 6874-block shape (224x88) walls the stitch:
+# "hier stitch t3: band 1 stub (380,34): compose: no ground for t3:
+# (216,53) -> (299,1)" -- reproduced with band 1 on either rung and with
+# band 0 on short vs long, so it is band 0's SHAPE, not a rung accident.
+# Spread>=2 gives band 0 = 10124 blocks (350x120), MERGE 15104, smoke 4/4.
+# Read by scratch/hier_bands.py (HIER_SKIP env wins over this file).
+0:1,gates_first,short;0:1,gates_first,long;0:1,inputs_first,short;0:1,inputs_first,long
