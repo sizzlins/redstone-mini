@@ -2808,8 +2808,54 @@ def compose_hier_parts(built, gates, recipe):
                     return _p + _legs([(_c, _r), stub], "bankdrop",
                                       _loop_check=False)
 
-                return _try(_run)
+                try:
+                    return _try(_run)
+                except RuntimeError:
+                    pass  # retry below; LOUD there if it also fails
+                # ponytail: bankdrop west-approach retry. The drop comes
+                # south at the street column and the last leg runs east
+                # into the stub -- but lwire is free to detour east PAST
+                # the stub and come back west along the stub row, and that
+                # tail parallels the band's own lane run: bare dust across
+                # an existing booster (front -> new dust -> stub -> lane
+                # -> back) is a front-joins-back ring the gate correctly
+                # rejects (measured: OP0 bank->band2, ring at (550,1,2),
+                # 8 east of the stub, path tail ...(556,2)->(551,2)->
+                # (551,1)->(542,1)). Anchoring the final 8 cells from the
+                # west makes overshoot impossible: the target is the
+                # easternmost point, so no detour can pass it.
+                # Retry-only (never first): every green build's bank legs
+                # succeed on the plain shape, so their geometry is
+                # byte-identical -- only a leg that already failed LOUD
+                # ever takes this path, and a second bounded attempt on an
+                # already-dead merge costs nothing that matters.
+                # ponytail: route EVERYTHING fresh, re-stamp nothing. An
+                # earlier shape extended the manual trunk run to the
+                # waypoint column, but routing to that column then ran
+                # west along the trunk row straight through the manual
+                # run's own cells and died on "path re-enters (541,1,-89)"
+                # (measured). With no manual cells the new path cannot
+                # re-enter them; the pre-stamped row dust is same-net and
+                # walkable, and lwire's own simple-path rule still guards
+                # real self-overlap. The waypoint sits 8 west of the stub
+                # (one booster pitch, clear of the lane); the trunk-row
+                # leg to it is trivially short.
+                def _run_west(_c=_col, _r=_row):
+                    _ax = stub[0] - 8
+                    return _legs([drv, (_ax, _r), (_ax, stub[1]), stub],
+                                  "bankdrop", _loop_check=False)
+
+                try:
+                    return _try(_run_west)
+                except RuntimeError as e:
+                    raise RuntimeError(f"hier bank {n} {drv}->{stub}: "
+                                       f"{str(e)[:200]}") from None
             except RuntimeError as e:
+                # ponytail: the inner raise already carries the hier bank
+                # prefix; re-wrapping it would print it twice. Only wrap
+                # errors from _bankcol lookup (missing column).
+                if str(e).startswith("hier bank "):
+                    raise
                 raise RuntimeError(f"hier bank {n} {drv}->{stub}: "
                                    f"{str(e)[:200]}") from None
         _spanlen = abs(stub[0] - drv[0]) + abs(stub[1] - drv[1])

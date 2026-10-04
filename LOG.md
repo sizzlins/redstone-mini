@@ -58,3 +58,7 @@ Other agent active on alu1 (hier_stitch.py pid 10916): my slices stay
 foreground-bounded with heartbeats; no kills except my own orphans by
 command-line match.
     slice 300e seed8: 4350 -> 4339 (11 acc). Promoted.
+
+## Night 2026-10-04 (alu1 GREEN)
+
+alu1 VERIFY OK 32/32 (hier gate, BANK=1 default). recipes/alu1.txt promoted to 22-gate 2-band restructured recipe (equiv-proven vs original). Fixes: edge-lever lane-march skip (2722ad1, band 3 green); bankdrop west-approach retry (stitch ring); split-NOT qn1a/qn1b (side-lock latch). Full trace: notes/alu1-green-2026-10-04.md. Project history recovered at notes/LOG-history-2026-10-04.md (was wiped from this file twice tonight -- see notes file; needs operator merge decision).

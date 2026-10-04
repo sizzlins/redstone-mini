@@ -1,78 +1,59 @@
-# MORNING REPORT — overnight autonomous session 2026-10-03/04
-(evening addendum: glass ladder + repeater lock)
+# MORNING REPORT — alu1 GREEN (autonomous session 2026-10-04)
 
-## DONE: true 3D tile stacking v1 (`stack3d.py`, sim-green 8/8)
+## DONE: alu1 verifies 32/32
 
-**What now builds:** a 2-deck stacked demo — AND gate + c-buffer on
-deck0 (y=1..4), OR gate on deck1 (y=6+, same x,z footprint, 122 shared
-columns), joined by two staircase vias (t, c2) with glass pillars,
-glass floor plate between decks, repeater boosters. 2464 blocks.
-`sim_verify` on the full recipe: **8/8 vectors green**.
-Regenerate deterministically: `PYTHONHASHSEED=0 python stack3d.py`.
+**What now builds:** `recipes/alu1.txt` (2 bands, 22 gates) through the
+standard hier gate — `hier_bands.py` (2 bands green) + `hier_stitch.py`
+(MERGE + 4/4 smoke) + `verify_par.py` (**VERIFY OK: 32 vectors, 16 chunks
+green**). Verified twice: BANK=1 default merge (15104 blocks) and BANK=0
+merge (13996 blocks), both 32/32. `hier_verify.py recipes/alu1.txt`
+exit 0 end-to-end, no env vars.
 
-**Design (no engine edits — one new file):** decks compose flat via
-`layout_retry(verify=True)`, deck1 translates +5y over deck0, glass
-plate at y=5 (inert: conducts/cuts nothing), vias climb fixed
-diagonals with driver-region taps (sim-measured 15s), port-aligned
-translation, top/periodic/end-diode boosters (decay budget ~1/cell),
-air-only paths, slope + lamp-arm clearance, order retries + avoid
-columns. Full reasoning + 8 measured failure→rule pairs in LOG.md.
+**Recipe promoted** (alu4 precedent): 27-gate 4-band original replaced by
+22-gate 2-band restructured recipe, equiv-proven 32/32 vs original.
+Original survives in git HEAD. BAND 0 = recompute slice + split NOTs +
+mux (19 gates, 5 recipe inputs, 0 boundary); BAND 1 = OR chain (3 gates,
+4 boundary).
 
-**Also done:** course check you asked for (`redstone-university` 09
-ALU, read not guessed): our BANDs = their bit-slices, our
-comparator-XOR = theirs, glass insulation = same idiom as our towers,
-dust staircases = our shafts. Through-floor reads can't span our
-pitch-5 passively (documented v2 direction). Assumption I made while
-you slept: stacking tonight, wool color-coding stays out (sim still
-rejects wool — one-liner open at `sim.py:865`).
+## The three fixes (commit messages carry the full trail)
 
-## DONE (evening): glass ladder canary + repeater side-lock in sim
+1. **Edge-levered inputs skip the lane march** (`2722ad1`, band 3 green).
+2. **Bankdrop west-approach retry** (retry-only, zero green-geometry risk):
+   bank drops that detour east past the stub short an existing booster
+   (front-joins-back ring, measured twice at exactly +8 east of stub).
+3. **Split-NOT qn1a/qn1b** (recipe): shared-inverter fanout built two
+   adjacent lane rows; boosters beside same-net parallel dust latch ON via
+   repeater side-lock (wiki, user-measured). One NOT per load = nets can't
+   share a corridor (checkers enforce separation).
 
-Two lessons from you, both verified before coding, both gated:
+## Regression state
 
-1. **Glass ladder (up yes, down no):** sim already models exactly
-   this (DN term climbs over glass, UP term needs opaque cobble).
-   Measured: glass UP 10 / DOWN 0, cobble UP+DOWN 10. No physics
-   change; encoded as a canary. Our shafts already ride it.
-2. **Repeater side-lock (user-measured in game):** sim did NOT model
-   it (fresh A=1,B=1 read 1, vanilla locks 0) — real vanilla-parity
-   gap, now closed: `sim.rep_locked` + hold-last + wake on
-   behind-or-beside, mirrored in `simvec` (`r_side`, hold, side wake
-   edges). Canaries: fresh-1,1 freezes off; output→own-side latches
-   on permanently across `sim_sequence` phases.
+nonhier suite bit-identical: 144/322/224/214/2925/5499. `compose.py`
+self-checks green. alu1 flat compose still RED by design (22 gates <
+_TERR_MIN_GATES; lowering it would reroute 10 flat-green banded recipes --
+rejected). alu4/cpu4 untouched: both fixes are retry-only / no-op paths
+for green builds (edge nets absent; bank legs succeed first try).
 
-**Regression proof (lock changes nothing green):** sim suite green,
-`diff_engine` ALL IDENTICAL, compose_check 144/322/224/214, nonhier
-6/7 bit-identical (144/322/224/214/2925/5499; alu1 RED is the known
-pillar fault, stash A/B identical: same 4 Y vectors), chainmix 11497
-+ mux4 20239 fresh recompose+verify green, stack3d re-verified 8/8
-identical geometry. One open item, LOUD not waived: lock makes
-**alu1glass sim-red x12** (was green) via side-locked repeaters on a
-glitchy input — serial greens / scalar reds (order-dependent latch).
-Read LOG "Night (2)" for the full analysis. Most likely real vanilla
-faults (same saga shape as pillars), needs 4 vectors in game to
-confirm: paste `build_alu1glass.schem`, run the 4 mismatch vectors
-(ask me for the table), report. If the game greens it, my side terms
-are over-broad and I'll narrow with evidence.
+## What still fails / needs hands
 
-**What still fails / needs hands:**
-1. **Paste test** (nothing here can replace the client):
-   `schematics/build_stack3d.schem` is staged (alongside — not over
-   — your glass7 `build.schem`). `//schem load build_stack3d` →
-   `//paste` somewhere with ~60×40 room → tell me B0 and I'll regen
-   a `stack3d` datapack suite in 30 s — or hand-test: levers a/b/c on
-   deck0, lamps t/c2 deck0 + y deck1, all 8 combos
-   (`y = (a AND b) OR c`).
-2. `evo_add2` (add2fat 100-eval) still grinding (eval ~40/100 when
-   checked) — check its `done best=`; sim now locks, which only
-   ever rejects un-vanilla mutants.
+1. **LOG.md conflict -- needs your merge decision.** The GA agent's tooling
+   rewrote LOG.md wholesale twice tonight (2202-line project history
+   deleted in c788eb8; my entry wiped the same way). I recovered the full
+   history to `notes/LOG-history-2026-10-04.md` (1874 lines) and put my
+   trace in `notes/alu1-green-2026-10-04.md` + commit messages. I did not
+   touch their squeeze notes. Recommend: keep both files, stop sharing one
+   mutable log (or you merge by hand). The `write` tool overwrites -- both
+   agents must append-only (`Add-Content`) on shared logs.
+2. OP0 y=3 orphan dust (66 cells lit with OP0=0): seen during forensics,
+   not implicated in any failure. TODO if it ever gates a vector.
+3. `dense_status recipes/alu1.txt` still reports RED (flat+maze only).
+   If you want one command for everything, hier_verify is it (it is for
+   alu4/cpu4 too).
 
-**What I need:** the paste-test table (or B0 for the datapack), and
-one decision for next session: generalize `stack3d` to BAND
-partitions (alu1 4-deck stack) vs full `tiles.new_ctx` 2D→3D map
-migration. Tree is clean apart from gitignored scratch/outputs.
+## GA agent status (observed, not touched)
 
-## Commits (branch `phase2-design`)
-
-- `d3ba831` stack3d v1 + overnight LOG entry
-- `26754fd` repeater side-lock in sim+simvec, glass canary + log (this)
+Squeeze loop running (add2opt 4648 -> 4339 last banked). Their commits are
+LOG.md-only; their code lives in gitignored scratch. My commits are
+`compose.py` + `recipes/alu1.txt` + notes only -- no file overlap. They
+noted my hier_stitch pid in their log; no kills exchanged. Coordination
+worked; the only collision is LOG.md (above).
