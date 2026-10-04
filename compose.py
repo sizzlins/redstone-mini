@@ -1525,6 +1525,25 @@ def _compose_once(recipe):
                 _loads = sorted(_loads)
             try:
                 for cell in _loads:
+                    if net in _edge:
+                        # ponytail: an EDGE-levered input has no lane. Its
+                        # pos is the producer-facing stub on the west/east
+                        # edge, not a north-margin lane start, so the lane
+                        # march below is meaningless for it: lx is computed
+                        # from minx and the input's index, i.e. it points
+                        # back EAST into the lever bank, and the march runs
+                        # east along the bank's own row -- the median LOAD
+                        # row -- straight through the other boundary levers.
+                        # Measured: alu1 band 2 died "no ground for C:
+                        # (-50,12) -> (-42,12)" at every spread, which is
+                        # that march, 8 cells long, crossing two levers.
+                        # Route stub -> load directly instead: the leg gets
+                        # the full candidate set (L, approach rays, offset
+                        # trunks), which is exactly the shape that escapes a
+                        # lever bank (out N/S, east on a jog row, back in).
+                        paths.append((net, lwire(ctx, sup, guard, drv, cell,
+                                                 net, avoid)))
+                        continue
                     if net in inps:
                         # ponytail: offset 8 / pitch 6 was TRIED and REVERTED.
                         # It does not move the measured wall: alu1 CIN's hop
