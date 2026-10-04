@@ -1,48 +1,49 @@
-# handoff — 2026-10-03 session (single input-lever column, three engine bugs, cpu4 diagnosis)
+# handoff — 2026-10-04 overnight session (band 0 → alu4 FULL GREEN 1024/1024)
 
 Repo: `D:\redstone-mini`, branch `phase2-design`.
-Session commits: `49dc51c..ecf651b` (7 commits, `compose.py` +439/-…, docs).
-Working tree clean apart from the two pre-existing `build.mcfunction.bak` /
+Session commits (engine + docs, all `git commit -- <paths>`):
+`80e0d88` input-blame → `1be2186` stall guard → `ee61873` corridor blame +
+pull-early → `f462f6f` hop-cond2 + diode-drop → `325eac7` full-green report.
+Working tree clean apart from the GA agent's `scratch/rig_verify.py`
+(modified, theirs) and the two pre-existing `build.mcfunction.bak` /
 `build.schem.bak`, which nobody may delete or commit.
 
 ---
 
 ## ⚠ Read this first: the working tree is SHARED
 
-Another agent was editing this repo during the previous session. **What went
-wrong then, so it is not repeated:** I ran `git stash push -- export.py` and
-`git checkout -- export.py` to isolate a file I was verifying. Both were meant
-to be temporary and I did not put it back, so another agent's bug fix sat in a
-stash while their tree showed HEAD. Nothing was lost, but it is exactly the
-"you reverted a fix" outcome. Recorded in LOG.md under "export.py: a
-concurrent agent's fix".
+A GA agent worked this tree concurrently all session (commits `c439751`,
+`557f9c7`, `cec16ac`, RCON rig + cmc cross-check harness). **No conflicts:**
+they own `scratch/evo_*`, `scratch/rig_*`, `scratch/compact.py`,
+`memo.json`, RCON files; I owned `compose.py` + docs. Their
+`scratch/evo_blocks.py` edit landed while I worked — left alone, they
+committed it themselves.
 
-**Rules:**
+**Rules (still in force):**
 - **DO NOT DELETE FILES.** Not tracked, not untracked, not ones that look dead.
-  Cut code *inside* a file all you like; the file itself stays. If something
-  must go, comment it out and say so in LOG.md — that leaves it recoverable.
 - **Another process may be editing any file here. `git status` is not evidence
-  that a file is yours.**
-- To isolate someone else's in-flight work, use a **copy** (or a git
-  worktree), never `checkout --` / `stash push` on a path you did not write.
-- Never `rm` / `git clean` anything you did not create.
-- `git add <file>` then `git commit` sweeps up *whatever else is staged*. Use
-  `git commit -- <paths>`, and `git status` first.
-- Before assuming a file is stale, check `LastWriteTime` and `git diff` again.
+  that a file is yours.** Use a copy/worktree to isolate, never `checkout --` /
+  `stash push` on a path you did not write (see 2026-10-03 lesson in LOG.md).
+- `git commit -- <paths>` only, `git status` first. Never `rm` / `git clean`
+  anything you did not create. No checkout/stash of others' work.
+- Rule 7: every test/script hard-bounded, killable children, `__main__`
+  guards (spawn re-import = fork bomb). `Start-Process` detached launches
+  proved flaky under load — foreground runs with timeouts worked.
 
 ---
 
 ## Goal
 
-**Asked for this session:** the input levers had to be in **one cluster**, so
-an input can be flipped from one place. They were not — see "what changed".
+**Operator AFK instruction:** work fully autonomously until DONE, where
+DONE = "whatever ur doing" = the band-0 campaign (alu4 band 0 was the only
+red band blocking a full alu4 merge; Y0 lives in b0). No questions, no
+approval, best guess + LOG note, loop until DONE, switch approach after
+3 failed tries, verify after every change, commit frequently + LOG.md,
+MORNING-REPORT.md when done. **Reached: DONE.**
 
-**Reached:** one lever column, `alu4` green 16/16 with it, reproducible from
-scratch, exported and installed.
-
-**Still the standing goal:** every recipe in `recipes/` generates, verifies and
-exports. `alu4` is done, `cpu4` is not (see below). The remaining
-*architectural* goal is still true 3D tile stacking (scoped, not built).
+**Standing goal (unchanged):** every recipe in `recipes/` generates, verifies
+and exports. `alu4` is now done end-to-end (was: all but b0). `cpu4` untouched
+this session. True 3D tile stacking still scoped, unbuilt.
 
 ---
 
@@ -50,256 +51,164 @@ exports. `alu4` is done, `cpu4` is not (see below). The remaining
 
 | build | verdict | evidence |
 |---|---|---|
-| **alu4** (10 inputs, 1024 vectors) | **GREEN, 10 levers in one column** | `scratch/alu4bank.pkl`, `VERIFY OK: 1024 vectors, 16 chunks green`, 60,724 blocks, size (1980, 285) |
-| alu4 reproducibility | **byte identical from scratch** | `scratch/alu4bandsBANK.pkl` all 6 bands == `alu4bands.pkl`; `alu4fresh.pkl` == `alu4bank.pkl` |
-| alu4 control (`REDSTONE_INPUT_BANK=0`) | **byte identical to shipped** | `alu4merge.pkl` = 35,082 blocks, `io["levers"]` equal, 4/4 smoke |
-| **cpu4** (7 inputs, 128 vectors) | **RED — and NOT the bank** | fresh bands green per-band (203 s), merge succeeds, `SMOKE 1111111 MISMATCH ['Y2']` **identically with the bank off** |
-| alu1 | GREEN, 13,300 blocks (**unchanged**) | `scratch/nonhier_suite.py` |
-| ctrl_decode | GREEN, 5,499 blocks (**unchanged**) | same |
-| example_and / 2gates / latch_sr / xor / micro1 | GREEN | same (144 / 322 / 224 / 214 / 2925 blocks) |
-| suites | GREEN | `python compose.py` self-test passes |
-
-**The lever cluster (the thing that was asked for):**
-
-```
-LEVERS: 10    x 3..3  (span 0)    z 3..93
-   B0(3,3)  A0(3,13)  B1(3,23)  A1(3,33)  B2(3,43)
-   A2(3,53) OP1(3,63) OP0(3,73) B3(3,83)  A3(3,93)
-```
-
-Was 21 levers over 1757 cells of x: for `A3` you had to walk to x=1484 *or*
-x=1760, and `OP1` had five levers at x = 7 / 431 / 826 / 1468 / 1752.
+| **alu4** (10 inputs, 1024 vectors) | **GREEN 1024/1024, Y0 included** | `scratch/alu4merge_g.pkl`, `VERIFY OK: 1024 vectors, 16 chunks green`, 71,560 blocks, size (2198, 353), 10 levers |
+| bands (fresh, engine `f462f6f`) | **6/6 green** | b0 13304 (`3,inputs_first,short`+long) · b1 7518 · b2 6957 · b3 571 · b4 2414 · b5 4878 |
+| Y2 stitch coupling | **fixed, re-derived** | `y2trace` → 3 glass swaps (868,2,221 + 868,2,224 + 1170,2,218); old 5-pillar coords stale (layout reshuffled); smoke 4/4 then 1024/1024 |
+| alu1 (hier gate) | GREEN 32/32 | `hier_verify.py recipes/alu1.txt` VERIFY OK |
+| alu1 flat (nonhier suite) | **RED by design since `124d179`** | 22-gate banded recipe, `22 < _TERR_MIN_GATES=40`; suite `EXPECT 13300` is a stale pre-promotion number |
+| ctrl_decode / micro1 / examples | GREEN, bit-identical | 5499 / 2925 / 144 / 322 / 224 / 214 |
+| suites | GREEN | `python compose.py` self-test, `compose_check.py` |
 
 **Exported and installed:**
 
 | file | size | notes |
 |---|---|---|
-| `build_alu4bank.schem` | 17,390 B | 60,724 placed cells, 22 palette entries, read back and confirmed |
-| `build_alu4bank.mcfunction` | 3,999,496 B | |
-| `build_alu4bank.html` | 25,100,239 B | 1024 vectors, **full** states (the old `build_alu4.html` was a *partial* set: ~29 bytes/vector) |
+| `build_alu4full.schem` | 20,174 B | hash-verified copy in `…\worldedit\schematics\` — **paste this one** |
+| `build_alu4full.mcfunction` | 4,723,327 B | |
+| `build_alu4full.html` | 7,890,574 B | |
 
-`…\FreesmLauncher\instances\26.3\minecraft\config\worldedit\schematics\build.schem`
-is the new build. Last night's 35,082-block one is preserved beside it as
-`build.schem.bak-20261003-063141` (and the older one as
-`build.schem.bak-20261002-210028`). **This new one has never been pasted into
-Minecraft — that is still untested.**
+`build_alu4.*` / `build_alu4bank.*` are **STALE** (pre-b0, unverified under the
+new engine). `build_alu1.schem` still in schematics from its session. **No
+build has ever been pasted into Minecraft — still untested.**
 
-Reproduce alu4 from scratch (~28 min total):
+Reproduce alu4 end-to-end now:
 
-    python scratch/hier_bands.py  scratch/cand_alu4hier.txt scratch/alu4bandsBANK 150
-    python scratch/hier_stitch.py scratch/alu4bandsBANK.pkl scratch/cand_alu4hier.txt 900 scratch/alu4fresh.pkl
-    python scratch/verify_par.py  scratch/alu4fresh.pkl scratch/cand_alu4hier.txt 16 2400 16 16
-
----
-
-## What changed
-
-`REDSTONE_INPUT_BANK` (default **ON**) replaces one lever per band per input
-with **one lever column** north of the merge. Seven commits, `compose.py` only:
-
-- Every BAND composes alone and stamped its own input bank
-  (`compose.py:1055`), and the merge only deleted levers for boundary
-  (`recipe["edge"]`) nets — so recipe inputs kept one lever per partition.
-- The column sits north of the merge, one row per input, rows **10 apart**
-  (`_hop_free`'s shape is a 5-cell staircase with back and front two cells
-  either side of the wire it crosses, so a row needs 9 clear cells to be
-  hoppable; at 6 apart the walk answered "compose: stitch rings for OP1").
-- Rows are ordered **by how far east each input reaches, longest row
-  SOUTHERNMOST**. A drop crosses exactly the rows south of it, so this makes a
-  drop cross only the rows of inputs reaching *further* east than the band it
-  feeds. Cut the crossings from ten to three.
-- **Every row run is stamped up front**, straight, in open ground; only the
-  drops are routed. That puts every row/drop crossing in a drop, where the hop
-  fits. The other order put them in a 1000-cell row run and the router's
-  detour to hop a single drop came back through a waypoint ("path re-enters
-  (332,1,-116)").
-- The bank is **stitched last**, and its cluster is built after `_minz0`. A
-  full-width trunk in the north margin takes away the only open margin the gate
-  nets have — `A3B3` died "no ground for A3B3: (1834,50) -> (1341,1)". Routing
-  the bank after every gate net gives each gate net the field it verified
-  green with. `_gate + _bank` in the stitch loop is the whole of it.
-- Drop columns **prefer the stub's own column**, checked clear of solids and
-  repeaters. `_streets` is the midpoint of two band *start* offsets — i.e.
-  *inside the earlier band*, not in the reserved `_HIER_GAP` — and a gate net's
-  3D flyover roofs a whole gap with y=1 pillars, so no fixed gap column is
-  reliable. `_bankstreets` was added as the gap fallback; `_streets` was left
-  untouched so no gate net's geometry moves.
-
-### Three engine bugs found and fixed
-
-All three are no-ops on any field that was already valid, and all three were
-found by the bank walking into them. Verified harmless to the old path
-(`REDSTONE_INPUT_BANK=0` byte identical, and alu1/ctrl_decode block counts
-unchanged) — worth stating because two of them live in `lwire`, which every
-partition composition uses, not just the hier ones.
-
-1. **`lwire`'s 3D flight could put dust and cobblestone in one cell.** A
-   one-cell descent makes the lower step the support for the cell above it, so
-   the same cell got both. The existing self-lid test is structurally blind to
-   it: it asks whether the cell above the lower step is a support, and that
-   cell is only a support *because* it is about to become dust too.
-   `finish_assembly` killed the whole merge with `duplicate block`.
-2. **`_support()` reports an already-recorded pillar as reusable** (returns
-   `None` for a cell in `sup`), so a later leg of the same net laid dust on a
-   cell that already owed a cobblestone. `_support` is about support, not
-   occupancy, and nothing else checked.
-3. **`_landed`'s contiguity checker had repeaters backwards — both halves** —
-   against `sim.py:835`, which stores `rep[c] = -parsed_facing`, i.e. travel.
-   Every correctly-oriented booster counted as a break. Identified because the
-   error *walked along the row one cell at a time* as each half was corrected
-   (`broken link (-4) -> (-3)`, then `(-3) -> (-2)`, then `(813) -> (814)`). A
-   third fix was needed: the two every-8 passes can leave two boosters one
-   cell apart where they meet, and sim reads that fine ("repeaters chain
-   back-to-back").
-
-### Diagnostics added (they are what made the rest findable)
-
-- `REDSTONE_HIERDUMP_FAIL` now fires on a **stitch** failure, not just
-  `check_opens`/`finish_assembly`. The banked fan-out is the first thing that
-  can fail before either of those.
-- Leg failure messages are no longer truncated to 60 characters. That one line
-  was hiding every bank error behind the last generic strategy's message.
-- A banked leg no longer falls through to the six generic strategies: all six
-  are anchored on the driver's own cell or at the stub's latitude, which for a
-  bank means running east at the trunk row through six fields. Every one was
-  measured to fail on every banked leg, and running them cost ~40 s per leg
-  while replacing the error that mattered.
-- `_loop_near` is skipped for the bank. It floods a ±25 box around *every* path
-  cell, so a 1000-cell trunk run sees the whole consumer band and reports a
-  ring that was already there. `_try`'s before/after `_lr` diff is the check
-  that can actually tell a new ring from an old one.
+    python scratch/hier_bands.py recipes/alu4.txt scratch/alu4bands 90
+    python scratch/hier_stitch.py scratch/alu4bands.pkl recipes/alu4.txt 200   # with REDSTONE_HIERDUMP2=scratch/alu4merge.pkl
+    python scratch/ins_target.py scratch/alu4merge.pkl scratch/alu4merge_g.pkl 868,2,221 868,2,224 1170,2,218
+    python scratch/verify_par.py scratch/alu4merge_g.pkl recipes/alu4.txt 16 400 2   # ×8 rounds, staged
+    python scratch/export_bank.py scratch/alu4merge_g.pkl alu4full
 
 ---
 
-## What failed, and why it was wrong
+## What changed (compose.py only, all green-neutral + gated)
 
-- **Keeping each input's own westernmost lever is NOT one place.** It made
-  **four** clusters (alu4: A0's at x=13, A1's at x=437, A2's at x=832, A3's at
-  x=1482), because each input's westernmost copy lives in a different band.
-  Recorded because it looks like the cheap fix and is not.
-- **A straight-line one-level fan-out cannot work, and this is worth not
-  re-deriving.** Every band's stub sits at z 2..8 while every field reaches
-  north past z −19, so a per-input row must be north of the field, and every
-  drop from a row runs south — so every drop crosses every row south of it.
-  Crossings are structural, not a placement bug.
-- **`_relay` does not help the bank.** Its waypoints are already at
-  `(x, drv[1])` and `drv[1]` already *is* the trunk row, so it was the obvious
-  missing piece for the 1657-cell east run. Measured: identical failure. The
-  east run was never the problem; the descent into the band at the stub's
-  latitude was.
-- **`_streets` is in the wrong place.** It is the midpoint of two band *start*
-  offsets, so it lands inside the earlier band, not in the gap. Harmless for a
-  gate net with short relay legs, fatal for a trunk crossing the whole build
-  (the first relay attempt descended band 3's middle). Not fixed — it is
-  load-bearing for green geometry. Worked around with `_bankstreets`.
-- **The measured progression, for reference** (same command each time):
+1. **Corridor blame** (`ee61873`). Pocket blame sees endpoints only: b0's
+   n1_0 blamed OP1 while B0 owned 207 near-corridor cells (5 parallel rivers
+   fencing the z=19 slot). `lwire` tags `first_err` with cands[0]'s corridor;
+   `_blame` counts foreign y=1 wires within 2 of it; a fence (≥10 cells, beats
+   pocket count) wins. Fired in the wild (`n1_0 sealed by B0` on 3 spreads).
+2. **Gate-pull-early** (`ee61873`). `_order` pulls gates-that-precede-inputs
+   before the lanes (stable partition of `out`, closure under gate preds) and
+   drops auto-satisfied input preds in inputs_first. A thin leg can't cross a
+   fat routed fence but the fence's later march hops one thin wire fine.
+3. **Hop cond2 sees committed supports** (`f462f6f`). t00's short-hop dust
+   coupled n0_0's committed deck, but `_hop_free` cond2 held only the hop's
+   own supports (layout's `bridge_free` takes pre-existing `cond`; the
+   adaption dropped it). `_cs()` also consults `sup`/`ctx.sup`. Tile cobble
+   stays invisible (under-veto = today, safe).
+4. **Post-hoc diode-drop** (`f462f6f`). SHORT3D had been masking pre-existing
+   input-mesh repeater loops (checker order). Compose tail catches
+   `repeater loop` from checks/finish, bisects router-planted diodes with a
+   `_loop_rep` mirror, drops the single closer (cap 9); the sim gate judges
+   any decay. Fired 1–2× per green rung.
+5. **Stall guard** (`1be2186`). A blame pair already in `precede` replays the
+   death identically (same order, field same-or-worse) — raise instead of
+   grinding 24 restarts. Fired on b0 rung 1 (saved ~22 restarts).
+6. **Input-vs-input blame** (`80e0d88`). `_blame`/`_order` handle input faileds
+   and owners (lane-vs-lane seals were invisible, zero restarts ever fired).
 
-  | change | failure |
-  |---|---|
-  | cluster at band-0 latitude, chain stub→stub | `OP1 band 4: path re-enters (1341,1,2)`; band 5 `no ground (825,4)->(1653,1)` |
-  | fan out from the cluster, no chain | `A2 band 3: no ground for A2: (-4,2) -> (1123,1)` |
-  | bank strategy first (north-margin route) | unchanged — the riser ran into the other nine stubs in the shared stub column |
-  | one lever per trunk row, no risers | all ten inputs stitch; `A3B3 band 4: no ground (1834,50) -> (1341,1)` |
-  | rows ordered by reach | `OP0 band 2: bridge support lands on wire at (8,1,-23)` |
-  | rows 6 apart + gapped waypoints | `OP1 band 5: no ground (-4,-33) -> (1653,1)` |
-  | + street waypoints on the east run | unchanged — `lwire` will not route >350 cells |
-  | drop on the stub's own column, gate nets first, rows pre-stamped, `_landed` repeaters fixed | **GREEN 16/16** |
+Verified after every change: `compose.py` self-check, `compose_check.py`
+bit-identical, nonhier suite 6/6 identical, `hier_verify alu1` 32/32 —
+before each commit. Precedent kept: restarts/blame/vetoes fire only
+post-death, so green geometry never moves (empty precede ⇒ identical order).
 
-- **cpu4's cached green was not green.** `cpu4merge3.pkl` contains **8
-  conflicting duplicate cells** (e.g. `(1854,1,108)` cobblestone+wire): it
-  predates the one-cell-one-block gate, so its 16/16 was scored by a sim
-  reading two blocks in one cell. It also cannot be re-stitched at all
-  (`duplicate block at (1854,2,87)`). `cpu4bands2.pkl` bands 5/6 carry the same
-  defect class.
+### Diagnostics added (scratch/, gitignored, hard-bounded, all keepable)
+
+- `reachmap.py` — per-corridor-cell blocker census (tile vs lane-wire by
+  owner vs ring/repeater/guard) + sealers-within-2 + routed bboxes, first 2 +
+  last 3 deaths. Found the B0 fence (207) and the 90%-free corridor.
+- `corridor_map.py` — ASCII map of the fatal corridor vs field. Showed the
+  z=19 slot between B0 rivers and the 4 pinch points.
+- `shortdiag.py` — SHORT3D *and* OPEN forensics (wraps both checkers),
+  9×9×y1–3 neighborhood with owners. Showed the lid orphaning t00's hop-chain.
+- `stampwho.py` — who stamps elevated dust (wraps `tiles.stamp_wire` +
+  tracebacks + shift correction). Proved the killer dust came from the 3D
+  flight path, not hops.
+- `loopdiag.py` — repeater-loop ring flood + diode list + map. Showed B0's
+  670-cell mesh with ~90 diodes on 5 parallel runs.
+
+---
+
+## What failed, and why (so it is not re-derived)
+
+| try | result |
+|---|---|
+| Lever-at-load fallback (2nd lever at sealed port) | Fired on b0 OP1 (3,12), exposed the next identical wall at (8,12)→(111,29). Placement wall, not delivery. **Reverted same session.** |
+| Flight-time slope veto (reject coupling 3D flights) | Never fired in any measured run (victim cells stamp after the flight); lid-half not airtight vs upper-pass lids. **Removed.** |
+| y=2 span-refusal | Never fired (killer dust was hop dust, not spans); junction-blind. **Removed.** |
+| Lower-role lids (lid over own cell under foreign flight) | Dropped the lid, then the lid **orphaned t00's hop-chain** (chain needs the same slopes) → OPEN death. Lids protect flights but kill chains over decks. **Removed.** |
+| 10+ pre-session b0 approaches | sidestep/astar, reorder, seeds, NOFLAT, maze, TERR, IN-order, arg-swap, pitch, funnel, blanket-insulate — all confirmed dead again by the reachability map (double rivers 2 apart are unhoppable, tile zone kills tall-hop feet). |
+| `gates_first` rungs on b0 | Input-phase repeater loops (multi-diode/tile) the drop can't always clear. inputs_first covers; no campaign need. |
+| One `4,inputs_first,long` attempt | Loop dropped, then **SIM MISMATCH x1** — the drop cost decay; sim gate correctly rejected. Other rungs green. Proof the drop-then-sim-gate design is sound. |
+| Old Y2 5-pillar coords | Stale (only 1/5 present post-reshuffle). Re-derived, don't reuse. |
 
 ---
 
 ## Files I touched
 
-Tracked, this session (`git diff --stat 49dc51c..HEAD`):
+Tracked (`git log --oneline`: `80e0d88`, `1be2186`, `ee61873`, `f462f6f`, `325eac7`):
 
-| file | delta | what |
-|---|---|---|
-| `compose.py` | +439/−… | the input bank, the three engine fixes, the diagnostics |
-| `LOG.md` | +351 | the full trail, every measurement |
-| `MORNING-REPORT.md` | rewritten | this session's report |
-| `notes/handoff.md` | rewritten | this file |
+| file | what |
+|---|---|
+| `compose.py` | the 6 engine changes above (+76/+72 net across the two feature commits) |
+| `LOG.md` | full trail, every measurement, every removal rationale |
+| `MORNING-REPORT.md` | rewritten: 1024/1024 report, paste instructions |
+| `notes/handoff.md` | this file |
 
 **No other tracked file was modified.** `sim.py`, `simvec.py`, `layout.py`,
-`tiles.py`, `recipe.py`, `export.py`, `core.py` and every `recipes/*.txt` are
-untouched. Verified: `python compose.py` self-test passes, and the non-hier
-suite is green with alu1/ctrl_decode block counts identical to the previous
-handoff's record.
+`tiles.py`, `recipe.py`, `export.py` (see 2026-10-03 lesson — untouched),
+`core.py`, every `recipes/*.txt` are byte-identical.
 
-New, untracked (gitignored), all hard-bounded:
-
-- `scratch/export_bank.py` — exports a merge pkl to `.mcfunction`/`.schem`/`.html`.
-  Fixed pickles in, files out; no compose, no sim, nothing that can hang.
-- `scratch/export_bank_html.py` — same with a states pkl for the interactive page.
-- `scratch/nonhier_suite.py` — bounded suite runner for the non-hier recipes
-  (one killable child each, per-recipe cap), the evidence that the `lwire`
-  fixes moved nobody else's geometry.
-- `scratch/alu4bank*.pkl`, `alu4bankstates.pkl`, `alu4bandsBANK.pkl`,
-  `alu4fresh.pkl`, `cpu4bandsBANK.pkl`, `cpu4bank.pkl`, `cpu4newctrl.pkl`,
-  `alu4ctrl*.pkl`, `bankfail*.pkl`, `bank_trace*.txt` — this session's probes.
-  Nothing in `scratch/` was deleted.
-
-New build artifacts at the repo root: `build_alu4bank.{schem,mcfunction,html}`.
+New, untracked (gitignored by design): the 5 probes + `g_*.log` evidence,
+`scratch/alu4bands.pkl`, `scratch/alu4merge.pkl`, `scratch/alu4merge_g.pkl`,
+`build_alu4full.{schem,mcfunction,html}`. Nothing in `scratch/` was deleted.
 
 ---
 
 ## What we should do next
 
-1. **Paste `build.schem` into the real client.** It has never been tested in
-   Minecraft, and nothing in this repo ever has. The 10 levers are the column
-   at **x=3, z=3..93** (north-west of the machine); the build is 1,974 × 285,
-   so paste somewhere with room. If it is wrong, the round-trip catches it —
-   that is how the 2026-10-02 dust-on-dust defect was found, not the sim.
-2. **Make `hier_bands` combination-aware (this is cpu4's whole problem).** The
-   ladder keeps the first rung that makes a band green **standalone**, but
-   correctness is a property of the band **combination** — `Y2` depends on the
-   cross-band handoff. A fresh cpu4 climb picks a different combination and
-   `SMOKE 1111111 MISMATCH ['Y2']` appears, identically with the bank off.
-   The cheap version: merge, smoke, and on disagreement re-climb only the bands
-   feeding the wrong output, then re-stitch (bands are cached, the stitch is
-   ~9 min, so it is a loop over cached bands). Do **not** spend more redstone
-   effort on cpu4's bank — it is already correct there.
-3. **Fix `_streets` properly.** It is the midpoint of two band *start*
-   offsets, so it sits inside the earlier band rather than in the reserved
-   `_HIER_GAP`. It is load-bearing for green geometry, so it needs the A/B
-   (`REDSTONE_INPUT_BANK` gives a habit for that) and a full re-verify, not a
-   drive-by edit.
-4. **Fingerprint the band caches** (`alu4bands.pkl`, `cpu4bands2.pkl`, and the
-   new `*bandsBANK.pkl`). The engine fingerprint voids verify caches only; a
-   stale band cache cost a full session on cpu4 and nearly one on alu4.
-   Cheapest fix: store the same `__fp__` in the band pkl and refuse on
-   mismatch. This session's alu4 result was checked by hand (all 6 bands
-   byte-identical from scratch) — that check should not be manual.
-5. **Decide on `scratch/` pruning.** It is now ~640 files. The six live tools
-   are `hier_bands`, `hier_stitch`, `verify_par`, `collect_states`,
-   `export_bank`, `nonhier_suite`. Most of the rest is evidence behind LOG.md.
-6. True 3D tile stacking is still the last architectural goal, still scoped and
-   unbuilt: ~140 `y==1` assumptions across `layout/compose/tiles/sim`, and
-   `tiles.new_ctx` says "migrate the maps or don't start".
-7. **Coordination**: if two agents are active, agree file ownership out loud
-   before either starts. `simvec.py` is no longer declared off-limits (that
-   note is stale — it was released when the SWAR engine was cut).
+1. **Paste `build_alu4full.schem` into the real client.** Never tested in
+   Minecraft; the round-trip is how the 2026-10-02 dust-on-dust defect was
+   found, not the sim. 10 levers, column x=3, z=3..93; build is 2198×353 —
+   needs room.
+2. **Decide stale-artifact policy.** `build_alu4.*`, `build_alu4bank.*`,
+   `build.mcfunction.bak`/`build.schem.bak` predate verification. I kept
+   everything (no-delete rule); say the word and the stale alu4 files go.
+3. **cpu4 is untouched.** If it climbs next, the combination-awareness note
+   from 2026-10-03 still applies (ladder keeps first standalone-green rung;
+   correctness is per-combination). The corridor-blame + diode-drop machinery
+   is combination-friendly (both fired on band 3 unprompted), so cpu4 may just
+   work — or produce new walls with the same probe kit ready.
+4. **blame pick-rule, if it ever matters.** Corridor wins only when it beats
+   the pocket count; measured pocket counts inflate with flooding (OP1:198 vs
+   B0 fence:125 on one death). A fixed ≥50 fence threshold would flip that
+   death to `(n1_0,B0)` first try — untested, parked; current rule converges
+   anyway (≤2 restarts).
+5. **`gates_first` b0 + multi-diode loops**, only if inputs_first ever stops
+   covering. Bisect finds single closers; tile-geometry or multi-diode loops
+   go loud. Wholesale-drop fallback deliberately not built (decay risk).
+6. **Coordination**: GA agent active (RCON rig, evo). Ownership held all
+   session (they: evo/rig/RCON/memo; me: compose/docs). Re-agree if scopes
+   change. `simvec.py` off-limits note is stale (released when SWAR was cut).
 
 ---
 
 ## Build notes (still true, they cost time)
 
 - Band caches must be built with `REDSTONE_ASTAR_CAP` unset (6000 breaks them).
-- Every probe must be hard-bounded; an unguarded script reaching a spawn path
-  re-imports itself under spawn and becomes a fork bomb. `if __name__ ==
-  "__main__"` everywhere, and `sim_verify`/`verify_par`/`hier_bands`/`hier_stitch`
-  refuse to fan out from a daemon. Every tool added this session follows that.
-- `scratch/mkref.py` extracts the engine from **git HEAD**, so re-freeze
-  `ref_sim.py` *after* committing a physics change, and its header must import
-  whatever constant the frozen copy uses (`TORCH_BACK`, today).
-- `lwire` will not route a span over ~350 cells even on empty ground. That is
-  why `_relay` and the street waypoints exist; a long run must be split.
-- A repeater's stored facing string is `-travel`. `sim.py:835` negates the
-  parsed facing on the way in and `_plant_repeaters` stores `-travel`, so the
-  two agree. Any third implementation of the repeater rule must match that or
-  it will read every booster backwards — that was bug 3 above.
+- Every probe hard-bounded; `__main__` guards everywhere (spawn re-import =
+  fork bomb). `hier_bands`/`hier_stitch`/`verify_par` refuse daemon fan-out.
+- `scratch/mkref.py` extracts the engine from **git HEAD** — re-freeze
+  `ref_sim.py` *after* committing a physics change.
+- `lwire` will not route a span over ~350 cells even on empty ground; long
+  runs must be split (`_relay`/streets).
+- Repeater stored facing is `-travel` (`sim.py:835` negates on parse,
+  `_plant_repeaters` stores `-travel`). Any third repeater-rule
+  implementation must match.
+- `check_shorts` runs before `finish_assembly`: SHORT3D preempts loop
+  detection, so loops hide behind shorts. Fix shorts first, then re-read.
+- Session record, for reference: corridor blame solved n1_0 → SHORT3D wall
+  (hop cond2 fixed the stamper, veto/span never engaged) → lids orphaned
+  chains (removed) → loops exposed (diode-drop) → one SIM MISMATCH on an
+  aggressive drop (sim gate held) → Y2 re-derivation → 1024/1024.
