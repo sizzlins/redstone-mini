@@ -1,59 +1,69 @@
-# MORNING REPORT — alu1 GREEN (autonomous session 2026-10-04)
+# MORNING REPORT — autonomous opt + verify session 2026-10-04
 
-## DONE: alu1 verifies 32/32
+## DONE (this session)
 
-**What now builds:** `recipes/alu1.txt` (2 bands, 22 gates) through the
-standard hier gate — `hier_bands.py` (2 bands green) + `hier_stitch.py`
-(MERGE + 4/4 smoke) + `verify_par.py` (**VERIFY OK: 32 vectors, 16 chunks
-green**). Verified twice: BANK=1 default merge (15104 blocks) and BANK=0
-merge (13996 blocks), both 32/32. `hier_verify.py recipes/alu1.txt`
-exit 0 end-to-end, no env vars.
+1. **Serial fast path for tiny sweeps** (`simvec.py`): `verify_par`
+   skips the spawn pool when `<=8 vectors AND <=100k cell-vectors`
+   (0.26s -> 0.01s on example_and, 26x). Same `_serial_shard` the pool
+   runs (latch fallback + fail-fast intact). `REDSTONE_SERIAL_CELLVEC`
+   overrides. Threshold deliberately tight so slow-vector builds still
+   fan out.
+2. **Parse once per worker** (`simvec.py`): `_serial_shard` re-parsed the
+   whole build per shard (64 shards = 64 parses); now cached per worker
+   via `_parse_build_ctx`, reset in `_init_worker` (without the reset,
+   sequential verifies in one process simulate builds 2-4 with build 1's
+   tables -- caught by inspection, gated by compose_check's 4-build run).
+3. **Band-cache fingerprint** (`hier_bands.py` writes `__fp__`,
+   `hier_stitch.py` refuses mismatch LOUD): stale band caches cost a full
+   session once; engine has since moved twice. Proven: old cache refused
+   (`built under engine None`), fresh climb green.
+4. **alu1 re-verified end-to-end** from the promoted recipe with all of
+   the above in place: stamped bands -> MERGE 15104 -> smoke 4/4 ->
+   **VERIFY OK 32/32**. alu1 stays green.
 
-**Recipe promoted** (alu4 precedent): 27-gate 4-band original replaced by
-22-gate 2-band restructured recipe, equiv-proven 32/32 vs original.
-Original survives in git HEAD. BAND 0 = recompute slice + split NOTs +
-mux (19 gates, 5 recipe inputs, 0 boundary); BAND 1 = OR chain (3 gates,
-4 boundary).
+## Measured, no action (with numbers)
 
-## The three fixes (commit messages carry the full trail)
-
-1. **Edge-levered inputs skip the lane march** (`2722ad1`, band 3 green).
-2. **Bankdrop west-approach retry** (retry-only, zero green-geometry risk):
-   bank drops that detour east past the stub short an existing booster
-   (front-joins-back ring, measured twice at exactly +8 east of stub).
-3. **Split-NOT qn1a/qn1b** (recipe): shared-inverter fanout built two
-   adjacent lane rows; boosters beside same-net parallel dust latch ON via
-   repeater side-lock (wiki, user-measured). One NOT per load = nets can't
-   share a corridor (checkers enforce separation).
-
-## Regression state
-
-nonhier suite bit-identical: 144/322/224/214/2925/5499. `compose.py`
-self-checks green. alu1 flat compose still RED by design (22 gates <
-_TERR_MIN_GATES; lowering it would reroute 10 flat-green banded recipes --
-rejected). alu4/cpu4 untouched: both fixes are retry-only / no-op paths
-for green builds (edge nets absent; bank legs succeed first try).
+- **Dirty-bit wake: pivoted, not implemented.** 73% of evals find no
+  change (880k evals / 238k wakes), so headroom exists -- but the
+  wake->eval term info has nowhere cheap to ride in CPython (side-channel
+  dict ops ~= the term-checks saved; heap-tuple widening collides with
+  coalescing). Same lesson as SWAR: don't outsmart, de-fat. Full analysis
+  in LOG. Next sim wins: none cheap remain (dict.get/max are the work).
+- **Router/exporters/simvec loop**: no env-in-hot-loop, copies are
+  failure-path-only and second-order. Untouched.
+- **OP0 y=3 orphan**: CLOSED. The 66 lit cells belonged to a superseded
+  merge iteration (re-stitched 3x during the night); the cells don't exist
+  in either verified merge (0 lit). Not a checker hole.
+- **Rust/C++**: assessed with numbers, recommended against (see LOG):
+  10-20x physics -> 3-5x end-to-end (Amdahl: spawn/IPC, stragglers,
+  pre-roll, untouched router), vs dual-implementation drift on physics
+  that changed 3x this week + Windows toolchain + undebuggable core.
+  Cython-before-Rust if ever; revisit when physics stabilizes AND
+  physics >80% of end-to-end after driver fixes.
 
 ## What still fails / needs hands
 
-1. **LOG.md conflict -- needs your merge decision.** The GA agent's tooling
-   rewrote LOG.md wholesale twice tonight (2202-line project history
-   deleted in c788eb8; my entry wiped the same way). I recovered the full
-   history to `notes/LOG-history-2026-10-04.md` (1874 lines) and put my
-   trace in `notes/alu1-green-2026-10-04.md` + commit messages. I did not
-   touch their squeeze notes. Recommend: keep both files, stop sharing one
-   mutable log (or you merge by hand). The `write` tool overwrites -- both
-   agents must append-only (`Add-Content`) on shared logs.
-2. OP0 y=3 orphan dust (66 cells lit with OP0=0): seen during forensics,
-   not implicated in any failure. TODO if it ever gates a vector.
-3. `dense_status recipes/alu1.txt` still reports RED (flat+maze only).
-   If you want one command for everything, hier_verify is it (it is for
-   alu4/cpu4 too).
+1. **alu4bank.pkl smoke 2/4 RED (Y2, COUT) -- PRE-EXISTING, not a
+   regression.** Fault shape matches the documented pillar-feed saga
+   exactly (Y2 stuck lit on all-off, elevated runs hot; LOG-history
+   "Finding: Y2 stuck lit"). The bank predates the below-feeds physics
+   fix; the fixed sim correctly flags it. Fix = re-route off
+   torch-topped pillars (separate phase, as logged in October).
+   cpu4retry_merge.pkl smokes 4/4 GREEN under the current engine.
+2. **LOG.md sharing**: GA agent rewrote it wholesale again tonight
+   (history + my entries wiped from worktree/HEAD twice). Recovery in
+   git (`notes/LOG-history-2026-10-04.md`) + my trace in
+   `notes/alu1-green-2026-10-04.md` + commit messages. Still needs your
+   merge decision; I keep entries to short appends.
+3. **Work-stealing pool** (straggler tail on big verifies): deferred for
+   lack of tail evidence on current builds; implement only with a measured
+   skewed tail in hand.
 
 ## GA agent status (observed, not touched)
 
-Squeeze loop running (add2opt 4648 -> 4339 last banked). Their commits are
-LOG.md-only; their code lives in gitignored scratch. My commits are
-`compose.py` + `recipes/alu1.txt` + notes only -- no file overlap. They
-noted my hier_stitch pid in their log; no kills exchanged. Coordination
-worked; the only collision is LOG.md (above).
+Squeeze loop still running (`compact.py`, add2opt 43xx). My commits are
+engine/scratch-gate paths only; their files untouched. One incident,
+mine: an unguarded probe + spawn pool fork-bombed (hundreds of procs);
+killed only my orphans by command-line match, their `compact.py`
+verified untouched, probe fixed+guarded, rule re-learned. No other
+collisions. Tree clean except the two protected `.bak` files.

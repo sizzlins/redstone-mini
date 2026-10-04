@@ -18,6 +18,26 @@ from compose import _strip_buffers
 from sim import sim_verify
 
 
+def _engine_fp():
+    # ponytail: same engine fingerprint verify_par voids verify caches
+    # with (a stale band cache cost a full session on cpu4 and nearly one
+    # on alu4: bands composed under an older engine stitch fine but route
+    # differently, so the merge silently stops matching what the engine
+    # would build today). Stored in the cache; hier_stitch refuses a
+    # mismatch LOUD instead of stitching stale geometry. Local copy, not
+    # an import: verify_par is a CLI script, not a library.
+    import hashlib
+    h = hashlib.sha256()
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    for f in ("sim.py", "simvec.py", "recipe.py", "layout.py",
+              "compose.py", "tiles.py", "core.py"):
+        try:
+            h.update(open(os.path.join(root, f), "rb").read())
+        except OSError:
+            h.update(repr(f).encode())
+    return h.hexdigest()[:12]
+
+
 def run_rung(args):
     sub, force, secs = args
     parent, child = mp.Pipe(duplex=False)
@@ -237,7 +257,8 @@ def main():
                                 "out": best[b][1], "ctx": best[b][2],
                                 "shift": best[b][3]}
                                for (b, sub, _cb) in subs if b in best],
-                     "inputs": r["inputs"], "prod": prod}, f)
+                     "inputs": r["inputs"], "prod": prod,
+                     "__fp__": _engine_fp()}, f)
     print(f"cached {pre}.pkl ({len(subs)} bands)")
 
 

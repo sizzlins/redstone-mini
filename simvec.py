@@ -787,6 +787,13 @@ _CTX = None
 def _init_worker(blocks, io, gates, outputs, ins, tick_cap, stall):
     _W.update(blocks=blocks, io=io, gates=gates, outputs=outputs, ins=ins,
               tick_cap=tick_cap, stall=stall)
+    # ponytail: drop the parsed-tables cache with the inputs. _CTX keys on
+    # nothing; without this, two verify_par calls in one process (compose
+    # check runs four builds back to back) would simulate builds 2-4 with
+    # build 1's tables -- a wrong-build green. One parse per worker per
+    # verify, shared by all its shards.
+    global _CTX
+    _CTX = None
 
 
 def _serial_shard(combos):
@@ -804,7 +811,12 @@ def _serial_shard(combos):
     """
     from sim import _parse_build, _run_vec
     from recipe import eval_net
-    P = _parse_build(_W["blocks"], _W["io"])
+    # ponytail: parse once per worker, not per shard. _serial_shard
+    # re-parsed the whole build for every shard it ran (a 16-worker pool
+    # over 64 shards parsed 64x instead of 16x); the tables are a pure
+    # function of (blocks, io), so the _parse_build_ctx cache is exact.
+    # Saves (shards - workers) parses per verify -- seconds on big builds.
+    P = _parse_build_ctx()
     ins, gates, outs = _W["ins"], _W["gates"], _W["outputs"]
     rec = {"inputs": ins, "gates": gates, "outputs": outs}
     stop = _W.get("stop")

@@ -21,6 +21,20 @@ def main():
     log.write(f"--- {time.strftime('%H:%M:%S')} {pkl} {src}\n")
     d = pickle.load(open(pkl, "rb"))
     log.write(f"bands loaded: {[e['b'] for e in d['bands']]}\n")
+    # ponytail: refuse a stale band cache LOUD. Bands composed under an
+    # older engine route differently; the merge would still sim-gate, but
+    # the failure would read as a stitch wall instead of what it is (see
+    # hier_bands._engine_fp). Re-climb with hier_bands.py.
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        from hier_bands import _engine_fp
+    except ImportError:
+        _engine_fp = None
+    if _engine_fp is not None and d.get("__fp__") != _engine_fp():
+        print(f"STITCH RED: band cache {pkl} built under engine "
+              f"{d.get('__fp__')} (now {_engine_fp()}); re-run "
+              f"hier_bands.py", flush=True)
+        sys.exit(1)
     r = parse_recipe(open(src).read())
     gates = _strip_buffers(expand_gates(r["gates"], r["inputs"]), r["outputs"])
     log.write("recipe parsed\n")

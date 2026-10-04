@@ -120,3 +120,7 @@ sweeps: the banked 36 cobble deletions were retro-audited clean via the
 4219 check, but that was luck plus small numbers, not method.
     Filter validated on the live 4161 build: 0 false negatives across all solid candidates (11 flags are true side-mounted torches, verified by breakdown). FN=0 is the safety property; over-blocking just costs evals, never correctness. (scratch/ is gitignored, so compact.py lives on disk + in this log, not in git.)
     Noted (not mine, not touching): other agent has M scratch/hier_bands.py, M scratch/hier_stitch.py, M simvec.py in workdir. My loop is engine-drift-resilient (resume re-verifies best.pkl; falls back to fresh compose on mismatch) and the final build gets one fresh full verify before DONE regardless.
+
+## Night 2026-10-04 (opt 3: serial fast path, parse-once, band fp)
+
+verify_par skips pool for tiny sweeps (0.26s->0.01s, 26x, same _serial_shard); parse once per worker (was per shard; _CTX reset in _init_worker or sequential verifies reuse build 1's tables); band caches fingerprinted, stale refused LOUD (proven end-to-end, alu1 32/32 re-verified). Pivoted: dirty-bit wake (term-info costs ~= savings -- full analysis in notes). Closed: OP0 orphan (superseded geometry). cpu4 bank smoke GREEN; alu4bank 2/4 RED pre-existing pillar fault. Full trace: MORNING-REPORT.md.
