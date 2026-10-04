@@ -2528,3 +2528,7 @@ pipeline validated end to end. The 12-cell solution needs a 7-dust
 output ROUTE -- which random walks never thread. New op _bridge lays
 dust along L-paths between live dust and lamp-adjacent cells (approach
 #9); still atoms, score decides. NOT stage relaunched with bridges.
+
+## Night 2026-10-04 (opt: footprint cache; survey says stop)
+
+tiles.footprint @lru_cache (callers audited read-only). Marginal on clean placements (28/112 micro1), pays on retries. Full re-profile this pass: router 0.3s, checkers 0.10s, ok() squeezed, sim lean, exporters fine -- nothing left above ~1% except parked structural items. Gates green, compose_check bit-identical.

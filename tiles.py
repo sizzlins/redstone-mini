@@ -1,5 +1,6 @@
 """Tiles: pure stamping builders on an explicit state object (hoisted from layout())."""
 
+import functools
 from types import SimpleNamespace
 
 from core import DIRS
@@ -196,6 +197,12 @@ def stamp_and(ctx, ox, gz, A, B, O):
     return (ox - 2, gz), (ox - 2, gz + 3), (ox + 6, gz + 1)
 
 
+# ponytail: the op/ox/gz space is tiny (a few ops x grid slots) but
+# every placement attempt rebuilds the same 63-cell sets (measured:
+# hundreds of rebuilds per dense compose). Cached; callers are all
+# read-only (isdisjoint/iterate/store -- grep fp.add/discard/update to
+# confirm before adding a mutating caller, shared mutable state bites).
+@functools.lru_cache(maxsize=None)
 def footprint(op, ox, gz):
     if op == "AND":
         # ponytail: reserve what spot_free checks (9x7), not 11x9. Stamped
