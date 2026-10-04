@@ -206,6 +206,25 @@ def _run_vec(vec, init, ctx, until=None, target_hits=None):
     starts blank. until caps the run at a tick (for sim_pulse timelines).
     target_hits maps target cells to (projectile, level[, at]) and fires timed
     Target-block emissions (wiki Target). Returns (lamps, live, torches, ticks, repeaters)."""
+    # ponytail: delegate the ORDINARY case to the table engine. run_scalar is
+    # the same physics over precomputed tables and measures ~2x faster per
+    # vector (1.311s -> 0.515s on alu4merge_g, 71560 blocks; profiled: _run_vec
+    # spends a quarter of its time in wake(), a fifth in its own loop, and
+    # pays a comparison heap where run_scalar uses Dial buckets). It already
+    # answers production traffic -- sim_verify routes here for latch-free
+    # builds -- but ~60 call sites import _run_vec DIRECTLY, so they never
+    # got the fast path. Eligibility is exactly what run_scalar accepts
+    # (it RAISES rather than guessing on init/target_hits, and this stays off
+    # `until` timelines which are diagnostics), and REDSTONE_SERIES_VERIFY=1
+    # forces the authority loop for differential testing. diff_engine.py is
+    # the gate: it demands all six returned quantities agree, every run.
+    if (init is None and until is None and not target_hits
+            and not _os.environ.get("REDSTONE_SERIES_VERIFY")):
+        try:
+            from simvec import run_scalar as _run_scalar
+            return _run_scalar(vec, ctx)
+        except ImportError:
+            pass
     dust, torch, rep, rblk, cob, repdelay, lever, lampnet, attach_rev, comp, leveratt, glass, slab, target = ctx
     # ponytail: transparent power sets (glass/slab feature). pwr = blocks
     # that can hold power (cobble/stone + slabs; glass never). sup3 = blocks
@@ -361,7 +380,16 @@ def _run_vec(vec, init, ctx, until=None, target_hits=None):
             if m in comp:
                 md = comp[m]
                 if (m[0] - md["rear"][0], m[1], m[2] - md["rear"][1]) == c:
-                    return con.get(m, 0)
+                    # ponytail: OR, do not override. A dust cell in front of a
+                    # comparator is driven by the comparator AND by anything
+                    # else adjacent -- vanilla ORs every contribution to a
+                    # cell. This used to `return`, which silently discarded
+                    # every other source and read 0 whenever the comparator
+                    # was off. Found by the sim<->cmc per-cell differential
+                    # (scratch/verify2.py --diff-all) on add2opt: 3 cells in
+                    # 9 of 16 vectors, sim=0 vs cmc=14. Minimal reproducer
+                    # and canary: scratch/motif.py, "comp-side-dust-src".
+                    lv = max(lv, con.get(m, 0))
             # ponytail: chip layers. Dust links ±1 level iff the upper dust
             # sits on a conductive block and no lid covers the lower wire.
             # Direct stacks never link (no support, no link).
@@ -1731,6 +1759,21 @@ if __name__ == "__main__":
     _sg, _, _, _, _, _sc = _run_vec({"r": 1, "s": 1}, None, _sp)
     assert _sc.get((0, 1, 0), 99) == 0 and _sg.get("y", True) is False, "side dust must suppress"
     print("comp-side-dust ok: subtract kills on hot side dust")
+    # ponytail: dust in FRONT of a comparator still reads every OTHER source
+    # (vanilla ORs contributions to a cell). The old `return` above made the
+    # comparator the sole authority, so a wire fed by a hot neighbour read 0
+    # whenever the comparator was off -- a sim-only build that the game would
+    # wire differently. Found by the sim<->cmc differential; cmc agrees with
+    # this assertion (scratch/motif.py).
+    _cs = [(0, 1, 0, "minecraft:redstone_block"), (1, 1, 0, W_),
+           (2, 1, 0, W_),
+           (3, 1, 0, CMP + "[facing=east,mode=subtract]")]
+    _csp, _ = _hand(_cs, {}, {})
+    _csl = _run_vec({}, None, _csp)[1]
+    assert _csl.get((1, 1, 0), 0) == 15, "source dust stays hot"
+    assert _csl.get((2, 1, 0), 0) == 14, \
+        "dust in front of a comparator ORs its other source (must be 14)"
+    print("comp-front-dust ok: front cell ORs the other source")
     _ob = [(0, 1, 0, CB), (1, 1, 0, "minecraft:redstone_wall_torch[facing=east]"),
            (2, 1, 0, W_), (2, 1, 1, W_), (2, 1, 2, W_), (1, 1, 2, W_),
            (0, 1, 2, W_), (0, 1, 1, W_)]

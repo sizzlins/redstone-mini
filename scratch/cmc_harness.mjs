@@ -11,20 +11,25 @@ Usage: node scratch/cmc_harness.mjs <build.json> [--ticks N] [--vectors a,b,..]
   settle N ticks, read lamps, compare vs expected.
 - exit 0 all-green, 1 any mismatch. JSON summary on stdout.
 */
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { World } from '../../put gitrepos here/cmc/src/core/world/world.js';
 import { installSystems } from '../../put gitrepos here/cmc/src/core/systems.js';
-import { BLOCK } from '../../put gitrepos here/cmc/src/core/blocks/blocks.js';
+import { BLOCK, dustPower, lampLit, repeaterPowered } from '../../put gitrepos here/cmc/src/core/blocks/blocks.js';
 import { checkSupport } from '../../put gitrepos here/cmc/src/core/interact/support.js';
-import { lampLit } from '../../put gitrepos here/cmc/src/core/blocks/blocks.js';
 
 const args = process.argv.slice(2);
 const doc = JSON.parse(readFileSync(args[0], 'utf8'));
 let TICKS = 400;
 let only = null;
+let dumpPath = null;
+let dumpVec = 0;
+let dumpAll = false;
 for (let i = 0; i < args.length; i++) {
   if (args[i] === '--ticks') TICKS = parseInt(args[i + 1], 10);
   if (args[i] === '--vectors') only = args[i + 1].split(',').map(Number);
+  if (args[i] === '--dump-cells') dumpPath = args[i + 1];
+  if (args[i] == '--dump-vec') dumpVec = parseInt(args[i + 1], 10);
+  if (args[i] === '--dump-all') dumpAll = true;
 }
 
 // ours-facing (names INPUT side) -> cmc output-dir hfacing idx
@@ -183,6 +188,21 @@ const leverCells = doc.levers;
 }
 const results = [];
 let idx = 0;
+let dumped = null;
+const dumpedAll = {};
+const snap = (w, vec) => {
+  const o = { vec, cells: {}, repeaters: {} };
+  for (const [bx, by, bz, bid] of doc.blocks) {
+    if (bid.split('[')[0] !== 'minecraft:redstone_wire') continue;
+    o.cells[`${bx},${by},${bz}`] = dustPower(w.getBlockMeta(bx, by + OY, bz));
+  }
+  for (const [bx, by, bz, bid] of doc.blocks) {
+    if (bid.split('[')[0] !== 'minecraft:repeater') continue;
+    o.repeaters[`${bx},${by},${bz}`] =
+      repeaterPowered(w.getBlockMeta(bx, by + OY, bz)) ? 1 : 0;
+  }
+  return o;
+};
 for (const vec of doc.vectors) {
   if (only && !only.includes(idx)) { idx++; continue; }
   const leverset = {};
@@ -193,7 +213,25 @@ for (const vec of doc.vectors) {
   const want = doc.expected[doc.vectors.indexOf(vec)];
   const bad = Object.keys(want).filter((k) => !!got[k] !== !!want[k]);
   results.push({ vec, got, want, ok: bad.length === 0, bad });
+  if (dumpPath && dumpAll) dumpedAll[idx] = snap(w, vec);
+  else if (dumpPath && idx === dumpVec) dumped = snap(w, vec);
   idx++;
+}
+if (dumpPath) {
+  if (dumpAll) {
+    if (!Object.keys(dumpedAll).length) {
+      console.error('dump-all requested but no vectors ran');
+      process.exit(2);
+    }
+    writeFileSync(dumpPath, JSON.stringify({ all: dumpedAll }));
+  } else {
+    if (!dumped) {
+      console.error('dump requested but vector ' + dumpVec +
+        ' was not run (only=' + JSON.stringify(only) + ')');
+      process.exit(2);
+    }
+    writeFileSync(dumpPath, JSON.stringify(dumped));
+  }
 }
 const fails = results.filter((r) => !r.ok);
 console.log(JSON.stringify({ ok: fails.length === 0, n: results.length,

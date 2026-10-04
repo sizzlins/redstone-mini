@@ -400,7 +400,15 @@ def _dust_lvl_s(c, st, pw, pbs, tl, ron, con, vec):
             if ron.get(m, False):
                 return 15
         elif code == 7:
-            return con.get(m, 0)      # early return: discards lv, as upstream
+            # ponytail: OR, do not override -- mirrors the sim.py fix. A dust
+            # cell in front of a comparator is driven by the comparator AND by
+            # anything else adjacent (vanilla ORs every contribution to a
+            # cell). The early return here discarded all other sources and
+            # read 0 whenever the comparator was off, so sim and simvec had
+            # to be changed together or diff_engine would diverge.
+            v = con.get(m, 0)
+            if v > lv:
+                lv = v
         if cup is not None:
             v = pw.get(cup, 0) - 1
             if v > lv:
