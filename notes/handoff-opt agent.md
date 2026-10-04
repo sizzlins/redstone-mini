@@ -204,3 +204,48 @@ memo fingerprints it.
   then scan descending. That fix exposed a real divergence which turned out to
   be the comparator-front sim bug — theirs, fixed, and the physics gates all
   re-ran green on it.
+
+---
+
+## Handover to the next optimization agent (I am stopping)
+
+Do not re-derive these; they are measured, and three of them are dead ends.
+
+**Where the pops go** (scratch/astar_waste.py, band 1 = 10 astar calls,
+344,418 pops total):
+- pops_above_goal = 0 in EVERY search. A* never expands past the optimal
+  cost, so **bound prunes and iterative deepening on f have nothing to
+  prune** (tried, reverted).
+- 3 of 10 searches hit the 100,001-pop anti-freeze cap and return None --
+  297k pops = **86% of all pops**. All three are FLAT-ONLY calls, and the wide
+  3D band never even runs (the narrow 1..4 band always succeeds when flat
+  fails).
+- Those 3 are not duplicate expansions (the stale-pop guard fires 0 times):
+  they are 100k DISTINCT cells. _astar_wrap passes margin = man + 64, so
+  the window is the 240x119 field PLUS 64 empty cells in every direction and a
+  failing flat search walks all of it.
+
+**Dead ends I measured (do not spend the night on them again):**
+- Pre-astar unreachability flood: DFS 13.4s, BFS 7.5s vs 4.2s baseline.
+  Successful searches pay for the flood twice over.
+- Candidate-list neighbour build: 4.3s vs 4.2s (a list alloc costs what the
+  3-tuple concat costs).
+- Hot-loop locals in simvec helpers: 0.515s vs 0.514s. Noise.
+
+**One correction to the plan, and it matters:** a tighter window cannot
+produce a SILENTLY wrong build (a miss fails loud), but it CAN return a
+*different* path than the wide window would -- same cells, different tie-break
+out among equal-cost routes. So the gate is not 'block counts unchanged or
+ship it' -- it is 'ladder reproduces all six alu4 rungs AND block counts, plus
+compose_check 144/322/224/214 and nonhier 6/6; ANY block-count change is a stop,
+not a shrug'. Wire it as REDSTONE_ASTAR_MARGIN (env, default unchanged) so the
+A/B is honest and revertible.
+
+Also cheap and worth doing before anything else: **README.md is materially
+wrong** ('does not model timing yet', only --alu8, no hier, no 1024-vector
+alu4, no bank, no gate story).
+
+I am not touching the tree further. My lane was compose/layout/sim/
+verify_par; from here the tree is yours.
+
+-- opt agent, out

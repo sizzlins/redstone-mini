@@ -1,49 +1,59 @@
-# MORNING REPORT — 2026-10-04 (alu4 FULL GREEN)
+# MORNING REPORT — 2026-10-04/05 (band 0 DONE, then the speed shift)
 
-## DONE: full 4-bit ALU verifies 1024/1024 in sim
+Repo `D:\redstone-mini`, branch `phase2-design`. Full detail in
+`notes/handoff-opt agent.md` (mine, current) and `LOG.md`.
 
-- **6/6 bands green** under engine `f462f6f` (`hier_bands.py recipes/alu4.txt`):
-  b0 13304 (Y0 — was RED for the whole campaign) via `3,inputs_first,short`
-  (+long, same blocks); b1 7518; b2 6957; b3 571; b4 2414; b5 4878.
-- **MERGE 71560 blocks** (2198×353), 10 levers, smoke 3/4 → Y2 pillar
-  re-derivation (`y2trace` → 3 glass swaps at 868,2,221 + 868,2,224 +
-  1170,2,218, same fault family as the old 5-pillar fix, new coords) →
-  smoke 4/4 → **`verify_par` VERIFY OK: 1024 vectors, 16 chunks green**.
-- **Paste-ready:** `build_alu4full.schem` (hash-verified copy already in
-  `.../worldedit/schematics/`), + `.mcfunction` (4.7 MB) + `.html` (7.9 MB)
-  in repo root (gitignored by design).
-- Engine gates all hold: `compose_check` bit-identical 144/322/224/214,
-  nonhier suite 6/6 identical (2925/5499; alu1-flat RED by design since
-  124d179), `hier_verify alu1` VERIFY OK 32/32.
-- Commits: `ee61873` (corridor blame + pull-early), `f462f6f` (hop-cond2 +
-  diode-drop). Probes in `scratch/` (`reachmap`, `corridor_map`,
-  `shortdiag`, `stampwho`, `loopdiag`) — gitignored, kept for forensics.
+## Builds that work now
 
-## What changed in the engine (all green-neutral by construction + gated)
+| build | verdict | evidence |
+|---|---|---|
+| **alu4** (10 inputs, 1024 vectors) | **GREEN 1024/1024** | `VERIFY OK: 1024 vectors, 16 chunks green`, 71,560 blocks (2198×353), 10 levers. Bands 6/6: b0 13304 · b1 7518 · b2 6957 · b3 571 · b4 2414 · b5 4878 |
+| **alu1 hier** | **GREEN 32/32** | band 0 pinned via `recipes/alu1.skip` (10124) · band 1 494 · MERGE 15104 |
+| examples / latch / xor / micro1 / ctrl_decode | GREEN, bit-identical | 144 / 322 / 224 / 214 / 2925 / 5499 |
+| alu1 **flat** (nonhier suite) | RED **by design** since `124d179` | 22-gate banded recipe, `22 < _TERR_MIN_GATES=40`; the suite's `EXPECT 13300` is a stale number, not a failure |
+| cpu4 | RED by inheritance (pre-dates tonight) | Y2 cross-band coupling class |
 
-1. `lwire` tags `first_err` with cands[0] corridor; `_blame` counts foreign
-   wires within 2 of it — a fence (≥10, beats pocket) outranks endpoint blame.
-2. `_order` pulls gates-that-precede-inputs before lanes (stable partition)
-   and drops auto-satisfied input preds (inputs_first).
-3. `_hop_free` cond2 counts committed `sup`/`ctx.sup` (was own-supports only).
-4. Compose tail: on `repeater loop`, bisect router diodes via `_loop_rep`
-   mirror, drop the single closer (cap 9); sim judges decay.
-5. Stall guard: duplicate blame pair fails fast (was 24-restart grind).
-6. Tried and REMOVED: flight veto, span-refusal, lower-role lids, lever-at-load
-   (unfired / orphaned hop-chains / wrong layer — see LOG).
+Paste-ready: **`build_alu4full.schem`** (hash-verified copy already in
+`…/worldedit/schematics/`), plus `.mcfunction` / `.html` in the repo root
+(gitignored). `build_alu4.*` and `build_alu4bank.*` are **stale** — do not
+paste those.
 
-## Still red / known limits (no action unless you say so)
+## Still failing, with the log
 
-- `gates_first` rungs on band 0 die input-phase repeater loops theDrop can't
-  always clear (multi-diode/tile) — inputs_first covers, no campaign need.
-- One `4,inputs_first,long` attempt: loop dropped, then SIM MISMATCH x1
-  (decay from the drop — sim gate correctly rejected; other rungs green).
-- Old `build_alu4.*` / `build_alu4bank.*` are STALE (pre-b0, unverified) —
-  paste `build_alu4full.schem`, not those.
-- GA agent's files untouched: `scratch/evo_blocks.py`, `scratch/rig_verify.py`
-  (their commits `c439751` etc.), `build.*.bak`. `scratch/` stays gitignored.
+1. **No build has ever been pasted into Minecraft.** sim + cmc (second engine)
+   are the verification pair; the RCON rig is not an oracle (GA's finding).
+   A real paste is the only missing proof.
+2. **cpu4** — not attempted tonight.
+3. **`gates_first` band-0 rungs** — input-phase repeater loops the diode-drop
+   can't clear (multi-diode/tile geometry). `inputs_first` covers it.
 
-## Needs you (human)
+## What changed tonight (measured, all gates green)
 
-1. **Game paste test** of `build_alu4full.schem` (in your schematics folder).
-2. Nothing else. No passwords, no payments, no secrets blocked anything.
+- **Band 0 unblocked** → first-ever full alu4: corridor blame (pocket blame
+  ordered around the wrong net while B0 owned 207 near-corridor cells),
+  gate-pull-early, hop-guard seeing committed supports, post-hoc diode-drop,
+  stall guard.
+- **verify_par ran the slow engine**: `_vec_child` called `sim._run_vec`
+  everywhere → **104s → 47s per 64-vector chunk (2.2x)**.
+- **`_run_vec` delegates to the table engine** when eligible →
+  **1.311s → 0.678s per vector (1.93x)** for every direct caller (incl. the
+  GA agent's evals).
+- **Router**: `ok()` tuple hoist, `_support` memo, stale-pop guard, dead code
+  deleted — bit-identical, band 1 4.4s → 4.2s.
+- **Two gate bugs fixed** (both made "green" a lie): `hier_verify` swallowed
+  stage exit codes (a RED stitch then "VERIFIED" a stale merge), and
+  `diff_engine`'s frozen reference was stale + missing helpers (`mkref` now
+  freezes `HEAD:sim.py` verbatim).
+- **alu1 hier re-greened** with a durable pin (`recipes/alu1.skip`), because
+  the GA agent's comparator-front physics fix re-greened band 0 at a spread
+  whose compact shape walled the stitch.
+
+## What I need from you
+
+1. Paste `build_alu4full.schem` in-game (never tested).
+2. Decide whether the stale `build_alu4.*` / `build_alu4bank.*` /
+   `build.*.bak` files get deleted (I never delete).
+3. `README.md` is materially wrong (timing, `--alu8`-only, no hier/alu4 story)
+   — left for the next optimization agent.
+4. Unstaged in the tree: `notes/handoff.md` deleted (your reorganization),
+   `build.*.bak`. The GA agent's `scratch/` files are theirs.
