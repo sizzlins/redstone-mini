@@ -2560,3 +2560,8 @@ b1 SIM MISMATCH traced to A0B0 boundary stuck lit (y=3 flight over torch zone); 
 ## Night 2026-10-04 (blame covers input seals; alu4 b1/b2 green, b0 parked)
 
 alu4 bands 1 (7518) and 2 (6957) green via existing ladder diversity (inputs_first/long jogs) -- no code. Band 0 OP1 port in sealed pocket: bulk of session. Root-caused to lane-vs-lane seals (99 wire vs 8 solid) that blame could not see (refused non-gate nets). Fix: inputs blame + input precede order (green-neutral by construction, suite bit-identical). 10 approaches on b0 failed (sidestep/astar, reorder, seeds, NOFLAT, maze, TERR, IN-order, arg-swap-useless); parked with precise TODO (placement reachability gate vs lane keep-out). Probes force-added: sidestep/banddiag/jmap/boxmap/srcmax/maze_one/one_ladder_ext. Method: PYTHONHASHSEED=0 for deterministic forensics.
+
+## Night 2026-10-04 (stall-check; lever-at-load reverted)
+
+Stall guard: blame returning an already-constraining (net,owner) pair replays the death identically (same precede -> same order -> same field-or-worse, rings only accumulate) -- fail fast instead of grinding 24 restarts (5 lines, compose.py). Lever-at-load fallback REVERTED same session: fired on alu4 b0 OP1 (3,12) but exposed (8,12)->(111,29), next wall identical shape -- placement, not delivery, is the wall. Gates: compose_check bit-identical 144/322/224/214; nonhier 6/6 identical (2925/5499; alu1 flat RED by design since 124d179, 22g banded < TERR_MIN 40); hier_verify alu1 exit 0 VERIFY OK 32/32.
+

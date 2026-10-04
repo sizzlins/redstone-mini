@@ -1617,6 +1617,11 @@ def _compose_once(recipe):
                 owner = _blame(net, ordered, wsnap[0])
                 if owner is None:
                     raise
+                if (net, owner) in precede:
+                    # ponytail: stalled blame (same pair, same order, same
+                    # field -- the next 24 restarts would replay this death
+                    # identically). Fail fast instead of grinding the cap.
+                    raise
                 if (owner, net) in precede:
                     # direct cycle: order can't separate them; displace the
                     # sealer's wire once, then resume remaining nets.
