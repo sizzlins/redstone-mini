@@ -2565,3 +2565,8 @@ alu4 bands 1 (7518) and 2 (6957) green via existing ladder diversity (inputs_fir
 
 Stall guard: blame returning an already-constraining (net,owner) pair replays the death identically (same precede -> same order -> same field-or-worse, rings only accumulate) -- fail fast instead of grinding 24 restarts (5 lines, compose.py). Lever-at-load fallback REVERTED same session: fired on alu4 b0 OP1 (3,12) but exposed (8,12)->(111,29), next wall identical shape -- placement, not delivery, is the wall. Gates: compose_check bit-identical 144/322/224/214; nonhier 6/6 identical (2925/5499; alu1 flat RED by design since 124d179, 22g banded < TERR_MIN 40); hier_verify alu1 exit 0 VERIFY OK 32/32.
 
+
+## Night 2026-10-04 (b0: corridor blame + gate-pull-early; n1_0 solved, n0_0 SHORT3D wall)
+
+Reachability diagnostic (scratch/reachmap.py + corridor_map.py): n1_0 (8,12)->(111,29) corridor 90% free (110/122), pinched by B0 fence (207 near cells, 5 parallel rivers z=9,10,15,17,20) + tile doorstep (m00 cobble, A0B0_0 wire). Pocket blame saw endpoints only (OP1) and restarted around the wrong net. Fix: lwire tags first_err with cands[0] corridor; _blame counts foreign wires within 2 of corridor, fence (>=10, >pocket) wins; _order honors gate->input via pull-early stable partition + ignores auto-satisfied input preds (inputs_first). Result: inputs_first rungs all route n1_0 now (via (n1_0,OP1) AND (n1_0,B0) precedes on different spreads), die later on n0_0 SHORT3D slope-link (new wall). Gates: compose_check identical; nonhier 6/6 identical; hier_verify alu1 VERIFY OK 32/32. gates_first rungs die on input-phase repeater loops (untouched).
+

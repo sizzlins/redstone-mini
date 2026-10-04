@@ -259,6 +259,12 @@ def lwire(ctx, sup, guard, a, b, net, avoid=frozenset()):
         except RuntimeError as e:
             if first_err is None:
                 first_err = e
+                # ponytail: blame corridor. Pocket blame (endpoints) misses
+                # mid-corridor fences (measured b0: n1_0 blamed OP1's pocket
+                # while B0 owned 207 near-corridor cells); the restart then
+                # orders around the wrong net and dies identically. cands[0]
+                # is the reported death, so its corridor is the blamed one.
+                first_err.corridor = [(c[0], c[2]) for c in cells]
             sw, ss, sc, so, sb = snap
             ctx.wires.clear()
             ctx.wires.update(sw)
@@ -1270,6 +1276,13 @@ def _compose_once(recipe):
         # constraints (topo: only nets with placed predecessors are ready).
         preds = {}
         for e, l in precede:
+            if _ORDER == "inputs_first" and l in gate_nets \
+                    and e not in gate_nets:
+                # ponytail: input-before-gate is the phase order already
+                # (inputs route first), so the constraint holds trivially.
+                # Without this the gate waits for a net that never enters
+                # `out` below and every such restart dies as order cycle.
+                continue
             preds.setdefault(l, set()).add(e)
         pending = list(gate_nets)
         out = []
@@ -1330,10 +1343,37 @@ def _compose_once(recipe):
             _iout.append(_rdy[0])
             _ipend.remove(_rdy[0])
         if _ORDER == "inputs_first":
+            # ponytail: pull gates that must precede an input before the
+            # lanes. A thin gate leg cannot cross a fat routed fence (hops
+            # need free feet; measured b0: B0's 5 parallel rivers fence
+            # n1_0's corridor, 207 near cells) but the fence's later march
+            # hops one thin wire fine -- first router wins. Stable
+            # partition of `out` (closure under gate preds), so with no
+            # cross-type edges this is exactly _iout + out as before.
+            _need = {e for (e, l) in precede
+                     if e in gate_nets and l in inps}
+            if _need:
+                _pg = {}
+                for e, l in precede:
+                    if e in gate_nets and l in gate_nets:
+                        _pg.setdefault(l, set()).add(e)
+                _closed = set(_need)
+                _grew = True
+                while _grew:
+                    _grew = False
+                    for _l, _ps in _pg.items():
+                        if _l in _closed:
+                            for _p in _ps:
+                                if _p not in _closed:
+                                    _closed.add(_p)
+                                    _grew = True
+                _early = [n for n in out if n in _closed]
+                _rest = [n for n in out if n not in _closed]
+                return _early + _iout + _rest
             return _iout + out
         return out + _iout
 
-    def _blame(failed, ordered, stub_wires):
+    def _blame(failed, ordered, stub_wires, corridor=None):
         # top foreign wired-net owner on the failed net's driver+load
         # pockets (y=1 BFS: solid/foreign-wire/foreign-ring/foreign-rep/
         # guard/sup/adacency; hops span singles, pockets are the seal).
@@ -1343,6 +1383,12 @@ def _compose_once(recipe):
         # tile stubs never move, so blaming them burns restarts:
         # alu1 O blamed m2/m3 stubs 5x).
         # None if the seal is tile geometry.
+        # corridor (cands[0]'s cells from the death error): pocket blame
+        # sees endpoints only, so a mid-corridor fence blames whoever owns
+        # the pocket (measured b0: OP1) while the fence owner (B0, 207 near
+        # cells) goes free and the restart orders around the wrong net. A
+        # single crossed wire puts ~5 cells near the corridor (hoppable,
+        # pocket territory); >=10 is a fence. Same guards as pocket blame.
         from collections import deque, Counter
         # ponytail: inputs blame too (failed AND owners). Lane-vs-lane seals
         # were invisible: blame refused non-gate nets, so a field where lanes
@@ -1402,6 +1448,28 @@ def _compose_once(recipe):
             cut = ordered.index(failed)
         except ValueError:
             return None
+        if corridor:
+            _corr = Counter()
+            _cseal = {}
+            for (cx, cz) in set(corridor):
+                for ax in range(-2, 3):
+                    for az in range(-2, 3):
+                        w = ctx.wires.get((cx + ax, 1, cz + az))
+                        if w is None or w == failed:
+                            continue
+                        _corr[w] += 1
+                        _cseal.setdefault(w, []).append(
+                            (cx + ax, 1, cz + az))
+            _cok = [o for o, _ in _corr.most_common()
+                    if ((o in gate_nets or o in inps) and o != failed
+                        and o in ordered[:cut]
+                        and (o, failed) not in precede
+                        and any(c not in stub_wires
+                                for c in _cseal.get(o, ())))]
+            _pcount = own.most_common()[0][1] if own else 0
+            if _cok and _corr[_cok[0]] >= 10 \
+                    and _corr[_cok[0]] > _pcount:
+                return _cok[0]
         for owner, _ in own.most_common():
             # ponytail: the owner's SEALING cells must postdate the snapshot.
             # A net with runs elsewhere but only stubs on the seal (alu1 O
@@ -1614,7 +1682,8 @@ def _compose_once(recipe):
                     raise
                 if first_err is None:
                     first_err = sys.exc_info()[1]
-                owner = _blame(net, ordered, wsnap[0])
+                owner = _blame(net, ordered, wsnap[0],
+                               getattr(first_err, "corridor", None))
                 if owner is None:
                     raise
                 if (net, owner) in precede:
