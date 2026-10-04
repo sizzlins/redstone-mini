@@ -100,10 +100,20 @@ category in two engines, not the `rblk` shortcut (which would over-power
 neighbours). No oracle here to adjudicate.
 
 **B. `alu4bank_ins.pkl`: 21619/103260 cells and 3017/14764 repeaters disagree.**
-Reproduced fresh, so it is not a stale cache. Classified: 87.7% of cells agree;
-3069 are `sim=0/cmc=powered` with a clean cmc decay ladder; only 45 are
-both-powered-at-different-levels. So it is a propagation/structure
-disagreement, not a decay or lock rule gap. Open.
+Reproduced fresh, so not a stale cache. **Sharper than I first wrote, and my
+first write was over-read from a single probe** -- correcting it here:
+- 87.7% of dust cells agree.
+- The disagreement resolves into **633 scattered connected components, the
+  largest 17 cells (1%)**. Not one stuck region.
+- **No comparator, repeater or lamp lies inside any disagreement component**,
+  and **14 of the 18 comparators have identical output cells in both engines**.
+  The 4 that differ go both ways (one is sim-higher).
+- So: many small, local, bidirectional dust-level differences, with every
+  component agreeing. That points at how each engine decides which dust
+  neighbours are *connected* (sim reads blockstate `east/west/north/south`
+  params; cmc derives connectivity itself), not at a power, comparator or decay
+  rule. Next thing to test; `scratch/compdiff.py` does the classification in one
+  pass. Not proven.
 
 **C. Our sim has no support stage.** cmc refuses builds structurally (its
 `support` stage popped 24 wire-on-wire blocks in `alu4mergeNEW` and never
@@ -171,3 +181,4 @@ and no `evo_*`, `compact*`, or `verify_par.py`.
 
 **Do not trust any gate that has not been run this session.** Four of them were
 quietly wrong on arrival.
+

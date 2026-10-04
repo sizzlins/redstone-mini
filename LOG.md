@@ -3738,3 +3738,44 @@ NOTE, mid-session: the optimisation agent is editing simvec.py in this shared
 tree RIGHT NOW (uncommitted in the worktree while I wrote this). Not staged,
 not reverted, not mine. My diff_engine run above is the current committed
 engine; re-run coldstart after their work lands before trusting anything.
+
+------------------------------------------------------------
+alu4bank_ins, sharper -- and my earlier "propagation/structure"
+read was WRONG. Corrected with scratch/compdiff.py.
+------------------------------------------------------------
+Earlier I wrote that the disagreement was "a PROPAGATION/STRUCTURE difference,
+not a decay or lock rule gap", on the basis of one probe hole at (829,1,206).
+That was over-read from a single probe. The component analysis says something
+different:
+
+  3163 disagreeing cells (vector 0) resolve into 633 CONNECTED COMPONENTS.
+  The largest is 17 cells -- 1% of the total disagreement.
+  => scattered, not one stuck region.
+
+  No comparator, repeater or lamp sits inside ANY disagreement component.
+  => the disagreement is confined ENTIRELY to dust. No component fires
+     differently in the two engines.
+
+  14 of the build's 18 comparators have IDENTICAL output cells in both engines.
+  4 disagree, and NOT in one direction:
+     (969,1,193)   sim 0  / cmc 6
+     (989,1,208)   sim 5  / cmc 0     <- sim HIGHER
+     (1521,1,213)  sim 0  / cmc 13
+     (1895,1,193)  sim 0  / cmc 11
+  All 18 are mode=subtract. => not a subtract-rule difference; the one sim-higher
+  case rules out a uniform "cmc over-reads" story.
+
+So the honest statement is: many small, local, bidirectional dust-level
+differences spread across the whole build, with every component agreeing. That
+points at how the two engines decide which dust neighbours are CONNECTED (sim
+reads the blockstate's east/west/north/south params; cmc derives connectivity
+itself), not at any power-source, comparator or decay rule. Not proven -- it is
+the next thing to test, and it is a much narrower question than the one I was
+chasing.
+
+Also a self-inflicted false signal worth recording: my first version of the
+comparator table reported ALL 18 comparators as DISAGREE, because sim's power
+map is SPARSE (absent = 0) and I compared an absent key against cmc's dense 0.
+One-line fix (absent means 0). The same trap is documented in verify2.py's diff
+and in the 10/4 LOG's "wire[power=N] is an exact match" note -- third time this
+project has been bitten by sparse-vs-dense power maps.
