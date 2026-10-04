@@ -4134,3 +4134,77 @@ reports **0 needed of 32438 dropped on alu1 and 0 of 152120 on alu4**.
     compose_check   144 / 322 / 224 / 214; nonhier 6/6
     hier alu1       VERIFY OK 32/32 exit 0 (37.5s)
     alu4            VERIFY OK 1024/1024 exit 0, cold (30.7s)
+
+## 2026-10-05 (session 2, final) -- closing state, and the next big idea with its blocker
+
+### Final numbers, all re-verified on the final HEAD (39b7bc0)
+
+    mkref + refcheck        BASELINE OK (worktree sim.py == HEAD:sim.py)
+    diff_engine             ALL IDENTICAL  (3-way: frozen HEAD:sim.py ==
+                            live sim._run_vec == table engine)
+    sim.py                  all 8 physics canaries ok
+    simvec.py               run_scalar bit-identical to sim._run_vec
+    compose / compose_check ok; 144 / 322 / 224 / 214 identical
+    nonhier_suite           6/6 exit 0
+    hier_verify alu1        VERIFY OK 32/32, exit 0, 38.9s
+    alu4 merge_g            VERIFY OK 1024/1024, exit 0, COLD 35.7s
+    verify2 vs cmc (alu1)   DUAL-ENGINE PASS, 0 / 204224 dust cells differ
+    engine vs ORIGINAL      2.78x - 2.86x, IDENTICAL on every vector tried
+
+    per vector (alu4 spread, interleaved)   0.529s -> ~0.19s
+    full 1024-vector sweep, 16 workers       108.7s -> 35.7s   (3.0x)
+    tables per worker                       112.5 MB -> 40.6 MB (2.8x)
+    peak heap during one vector             230.8 MB -> 75.6 MB (3.05x)
+    Python-level calls per 5 vectors        11.52M -> 1.72M  (6.7x fewer)
+
+Session total: seven shipped optimisations, and the banked alu4 1024/1024 plus
+alu1 32/32 re-earned from cold on the new engine with the strongest gates in
+the repo green, including an independent engine agreeing per cell.
+
+### Two more things measured and NOT banked tonight
+
+- Reading each changed cell's state once instead of twice (dust, solid,
+  repeater, comparator): 0.97x / 1.00x / 0.97x. Bytearray reads are already
+  cheap enough that removing one per evaluation does not register.
+- Turning `_dust_lvl_s` / `_cob_state_s` into CLOSURES over run_scalar's locals,
+  so their ~22 `st[...]` dict lookups per call become cell reads instead:
+  0.98x / 1.02x / 1.04x, i.e. ~1.01x. Realised afterwards that the earlier
+  "hoist the locals" attempt failed for the same reason and in the opposite
+  direction -- hoisting inside a helper does nothing when the argument still
+  arrives as one dict, and switching to cells does not help either once the
+  engine is dominated by the ring loop rather than the helpers. Reverted both;
+  neither is worth the indirection.
+
+### The next big idea, and the specific reason it is hard
+
+A whole-field bit-parallel engine (one big int per bitplane over the grid, a
+tick as a handful of big-int ops) is the only remaining idea with a 10x-class
+ceiling: it would collapse the ~250k cell evaluations per vector into ~20
+operations on 71k-bit integers. Two things stop it being a drop-in:
+
+1. **Tick fidelity.** `run_scalar` returns `ticks`, and diff_engine compares all
+   six returned values. The scalar engine is a Dial-bucket worklist whose
+   settle time is an artefact of the schedule; a synchronous bitmask sweep has a
+   different schedule, so it would agree on LAMPS and disagree on `ticks`. It
+   could still serve verification (which only reads lamps), but it could not
+   pass the existing 3-way gate without that gate being redefined -- and
+   redefining a gate to accommodate a new engine is how false greens happen.
+2. **Precedent.** A SWAR engine already lived here and was cut at 68dd094 for
+   being slower on alu4 (22.7s vs 21.5s) with burnout never reimplemented. Its
+   restore point and notes are still in the file.
+
+So it wants to be an ADDITIVE, separately gated engine with its own lamp-level
+oracle, never a replacement for run_scalar. That is a multi-hour project with a
+real chance of ending in a revert, which is why it is written down as the next
+idea rather than started in the last hour of a shift whose deliverable was a
+verified-green tree.
+
+### Generation side, deliberately untouched
+
+The band ladder is 88s of a ~200s full alu4 build (bands 88s, verify 36s), so
+generation is now the bigger half. But the bar the opt agent set is EXACT
+reproduction -- all six rungs and their block counts -- and pruning the ladder
+means changing the order rungs are tried, which changes which rung is chosen.
+`REDSTONE_ASTAR_MARGIN` (Opt F) is the one generation lever measured: the
+window is load-bearing, 16 breaks band 0. Left for whoever owns cpu4 and the
+GA agent's live files.
