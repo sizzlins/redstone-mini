@@ -2773,3 +2773,85 @@ Gates after the change: diff_engine ALL IDENTICAL, compose_check identical
 design), hier_verify alu1 VERIFY OK 32/32, alu4 1024/1024.
 
 
+## 2026-10-04 night 2 (GA agent) -- cross-engine differential finds a REAL sim bug (comparator front cell)
+
+New tool: `scratch/verify2.py`, one-command dual-engine gate
+(`python scratch/verify2.py <recipe.txt> <build.pkl> --diff-all`). It runs our
+sim AND cmc (D:/put gitrepos here/cmc), each in a child process under a hard
+timeout so it cannot hang, then diffs the two engines **per cell** (every dust
+level and every repeater state, for every vector), not just the lamps.
+`--diff-all` adds `cmc_harness.mjs --dump-all`. Motif reproducer:
+`scratch/motif.py`; triage helpers `scratch/diffwhy.py`, `scratch/simwhy.py`.
+
+Why per cell: both engines agree on the LAMPS for every banked build, so a
+lamp-only gate cannot see a physics disagreement that a future build might
+depend on. The per-cell diff is the only thing that found this.
+
+### The bug (fixed, commits 38b872f + 4b8de55)
+
+`sim.py dust_lvl()`:
+
+    if m in comp:
+        md = comp[m]
+        if (m[0] - md["rear"][0], m[1], m[2] - md["rear"][1]) == c:
+            return con.get(m, 0)        # <-- early return
+
+The cell on a comparator's output side took the comparator's level as its
+ONLY input, so it read 0 whenever the comparator was off -- even with a 15
+dust next to it pointing at it. Vanilla ORs every contribution to a cell.
+`simvec.py` carried the identical early return (its comment literally said
+"as upstream"), so both changed together or diff_engine would diverge.
+
+Fingerprint on add2opt: 3 cells, 9 of 16 vectors, always `sim=0 cmc=14`, and
+all three are one motif -- a dust cell sandwiched between a powered dust and a
+`facing=east` comparator:
+
+    197,1,57   (next to comparator 198,1,57 facing=east,mode=subtract)
+    228,1,26   (next to comparator 229,1,26)
+     48,1,26   (next to comparator  49,1,26)
+
+`scratch/motif.py` reduces it to 6 cells / 4 variants: 3/4 divergent before,
+0/4 after.
+
+Note this is the SAME family as the live-server anomaly in my earlier note
+(compact deck, B0/B1 nets): a wire that runs past a comparator side and
+carries power onward. Under the old rule such a wire read 0 in sim, so a
+build could be green in sim and wire differently in the game. That is exactly
+the sim-overfit class the gate now catches.
+
+### Evidence it is a fix, not a regression
+
+- `python sim.py` green, with a NEW canary `comp-front-dust ok` locking the
+  semantics in next to the existing `comp-side-dust ok` (which only asserted
+  the comparator's own output level and so did not cover this).
+- add2opt: sim 16/16, cmc 16/16, **0 / 25872** dust cells differ (was 14).
+- alu1glass: sim 32/32, cmc 32/32, **0 / 179296** differ.
+- alu4glass7 / alu4merge / alu4merge_g / alu4_av7: both engines green.
+- `compose_check.py` unchanged: 144 / 322 / 224 / 214 (the fix is sim-side).
+- NOT a regression: `alu4_build.pkl` and `alu4bank.pkl` FAIL both engines, and
+  they fail **identically on the pristine engine** (checked by reverting) --
+  stale artifacts. `alu4_build.pkl` still shows the old Y2 stitch-coupling
+  fault on 8 of 16 vectors; `alu4glass7` is the green one.
+- `cpu4retry_merge.pkl` (129953 blocks): sim raises `TORCH BURNOUT` by design,
+  cmc says green. verify2 now reports a raised engine as a first-class verdict
+  instead of a bare `None`.
+
+### Housekeeping the other agent should know
+
+- `scratch/ref_sim.py` is re-baselined (mkref extracts from git HEAD, so a
+  deliberate semantics fix must be followed by a re-extract or diff_engine
+  calls the fix a regression forever). diff_engine is ALL IDENTICAL again.
+- verify2 reports an engine RAISE and a TIMEOUT as verdicts, and every child
+  process runs under a timeout -- nothing in the gate can hang.
+- I did NOT touch dustcmp.py, evo_*, compact.py, enum_*, verify_par.py,
+  bench_scalar.py, prof_scalar.py, compose.py. Two files I did change were
+  shared-core: sim.py and simvec.py, deliberately, with the canary and the
+  committed baseline so they are reviewable and revertible.
+
+### Still open, unchanged by this
+
+- The live vanilla rig remains unusable (earlier note: no power propagation
+  from setblock on either 26.3 or 1.21.11). sim + cmc is the verification pair.
+- `setblock` dust needs a supporting block or it is silently deleted -- any
+  future paste must give dust a floor.
+
