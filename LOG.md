@@ -3315,3 +3315,55 @@ BOTH DIRECTIONS TESTED, because a gate only ever seen passing is untested:
           exit 0.
 Test artifacts left in place (never delete): build_testgreen.{mcfunction,
 schem,html}.
+
+------------------------------------------------------------
+RESOLVED: alu4mergeNEW / alu4mergeNEW4 were NOT a sim-overfit
+class, and the gate was conflating two different verdicts
+------------------------------------------------------------
+The 10/4 handoff's next step 1 said: "Anything with sim=True cmc=False
+(alu4mergeNEW, alu4mergeNEW4) is the interesting class: our sim accepts it and
+the independent engine does not." CLOSED -- not that class at all.
+
+Their verdicts had no diff block despite --diff-all, and cmc ok=False with an
+EMPTY fails list and n=None, i.e. cmc's output never parsed. Running the
+harness directly:
+
+  node scratch/cmc_harness.mjs <doc> --ticks 400 --dump-cells ... --dump-all
+  {"ok":false,"stage":"support","popped":24,"examples":[[8,2,25],[8,3,22],...]}
+
+cmc REFUSES the build at its `support` stage -- 24 wire-on-wire blocks popped --
+and NEVER SIMULATES IT. So there is no physics disagreement to read. The popped
+cells are not floating dust (the failure mode the live rig taught us); they are
+vertical wire stacks, which is cmc's own support rule.
+
+The real defect was in OUR reporting: `cmc=False` cannot distinguish
+  (a) "both engines simulated it and disagree"     <- a physics finding
+  (b) "cmc refused the build before simulating"     <- a build-validity finding
+and (b) was being read as (a). verify2 now carries cmc's `stage` and `popped`
+into the verdict, prints STAGE=..., and says in plain words when a build was
+rejected without simulating. Verified:
+
+  CMC : ok=False n=None 4s STAGE=support popped=24
+    NOTE: cmc rejected this build at its 'support' stage WITHOUT simulating
+    it; there is no physics disagreement to read here.
+
+Note our sim has NO support stage at all, which is why it reported green. That
+is a genuine asymmetry between the engines and worth someone's attention, but
+it is a build-validity gap, not a physics gap, and I am not changing sim on the
+strength of one engine's structural opinion.
+
+ALU4 ARTIFACT RECONCILIATION (10/4 next step 2) -- RESOLVED, no contradiction.
+The "1024/1024" claim rests on the 71560-block builds:
+    alu4ab.pkl  alu4ab2.pkl  alu4merge.pkl  alu4merge_g.pkl
+all green in BOTH engines, 0/122328 cells differing. alu4ab2.pkl is exactly the
+file the opt agent's handoff names, and 71560 is exactly the block count it
+quotes. The red alu4_build.pkl / alu4bank.pkl family is a DIFFERENT, smaller
+artifact. Both agents were describing different files; nobody was wrong.
+
+Full alu4 picture (both engines, per-cell diff):
+    green   12 builds: alu4ab, alu4ab2, alu4merge, alu4merge_g (71560 blk)
+            alu4fix (61090), alu4_av2, alu4_av7, alu4_tailA, alu4_tp4, alu4_tp5,
+            alu4glass7 (60724), alu4merge.preflip (35516)
+    cmc-refused structurally (sim green): alu4mergeNEW, alu4mergeNEW4
+    red both engines (15): alu4_build, alu4bank, alu4bank2, alu4bank_ins,
+            alu4fresh, alu4_av, alu4ctrl..6, alu4mergeNEW5

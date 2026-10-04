@@ -279,10 +279,26 @@ def main():
                       'ok': cmcres.get('ok') if cmcres else None,
                       'n': cmcres.get('n') if cmcres else None,
                       'fails': cmcres.get('fails') if cmcres else None,
+                      'stage': cmcres.get('stage') if cmcres else None,
+                      'popped': cmcres.get('popped') if cmcres else None,
                       'stderr': None if cmcres else out[-400:]}
-    print('CMC : ok=%s n=%s %s%.0fs' % (
+    print('CMC : ok=%s n=%s %s%.0fs%s' % (
         verdict['cmc']['ok'], verdict['cmc']['n'],
-        'TIMEOUT ' if to else '', dt), flush=True)
+        'TIMEOUT ' if to else '', dt,
+        '' if not verdict['cmc']['stage'] else
+        ' STAGE=%s%s' % (verdict['cmc']['stage'],
+                         (' popped=%s' % verdict['cmc']['popped'])
+                         if verdict['cmc']['popped'] else '')), flush=True)
+    # ponytail: cmc REFUSES some builds structurally (its `support` stage pops
+    # blocks that lack support) and never simulates them. That is a completely
+    # different verdict from "we both simulated it and the lamps disagree", and
+    # reporting both as `cmc=False` made a structural rejection look like a
+    # physics disagreement. It is how alu4mergeNEW/alu4mergeNEW4 read as the
+    # "interesting sim-overfit class" for a day: cmc never ran. Now it says so.
+    if cmcres and cmcres.get('stage') and not cmcres.get('n'):
+        print('  NOTE: cmc rejected this build at its %r stage WITHOUT '
+              'simulating it; there is no physics disagreement to read here.'
+              % cmcres['stage'], flush=True)
 
     # --- per-cell differential ---
     if diff and simres and os.path.exists(cells_p):
