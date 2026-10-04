@@ -2637,3 +2637,21 @@ a floating wall torch that only passes because of it.
 
 SHORT3D wall root-caused: t00's short-hop dusts coupled n0_0's committed deck, but _hop_free cond2 saw only the hop's own supports (layout bridge_free takes pre-existing cond; the adaption dropped it). Fix: committed sup/ctx.sup count in _cs. That exposed pre-existing input-mesh repeater loops (SHORT3D check ran first and masked them). Fix: post-hoc diode-drop at compose tail (catch loop from checks/finish, bisect router diodes via _loop_rep mirror, drop single culprit, cap 9, sim judges decay). Tried and REMOVED: flight-time veto + y2 span-refusal (never fired in any measured run; veto not airtight vs upper-pass lids; lower-role lids orphaned hop-chains -- measured OPEN). Lean tree: corridor blame + pull-early + hop-cond2 + diode-drop. Gates: compose_check identical; nonhier 6/6 identical; hier_verify alu1 VERIFY OK 32/32. b0 GREEN 13304 via 3,inputs_first,short+long (sim-verified). Next: hier_verify recipes/alu4.txt end-to-end.
 
+
+## Night 2026-10-04 (16): RCON ground-truth rig (operator asked, built)
+
+scratch/rcon.py (stdlib Valve-RCON client, timeouts everywhere),
+scratch/rig_verify.py (driver), scratch/rcon_selftest.py (mock-server
+proof: auth/roundtrip/multipart/reject/silence-bounded -- caught a real
+framing bug pre-launch: single-null packets (length 9) rejected, fixed
+to spec double-null). Driver: build JSON in -> translated datapack
+(b0-anchored) -> gamerules/reload/function paste -> per vector lever
+setblocks + settle sleep + lamp queries (`execute if block lit=true`,
+pass/fail parse with raw bodies logged; EN-client assumption
+documented) -> JSON verdict + exit code + full trace. Password file-
+only, never argv/logged. Dry-run validated on add2opt (3730 setblocks,
+6 paste cmds, 128 steps, 4 levers/3 lamps/16 vectors, all resolved).
+Open items for the live run (operator): pack_format 81 is a GUESS for
+26.x (wrong value fails loud at /reload with unknown-function -- easy
+fix); lamp parse assumes EN wording (raw bodies logged either way).
+Needs from operator: server+rcon+password, world dir, b0 anchor.
