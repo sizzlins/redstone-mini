@@ -94,3 +94,27 @@ verify_par skips the spawn pool for tiny sweeps (<=8 vectors AND <=100k cell-vec
     confirm slice 300e seed13: 4260 -> 4260 (0 acc). Wire tier exhausted at single-deletion level (5,4,0). Tier sweeps next: cobble, torch, comparator, stone-sample.
     cobble-focus 350e: 4260 -> 4224 (36 acc, 10%). Cobble tier was rich (funnel/clearance blocks the router over-provisions). NOTE: cobble removals change support/geometry, so wire must be re-swept after tiers (interactions). Promoted.
     torch-focus: 1 acc (4224->4223). comparator-focus: 0/6 (all load-bearing I/O fanout, as expected). wire re-sweep post-cobble: 4 acc (4223->4219, interactions confirmed). Promoted 4219. Stone sample next, then DONE.
+
+## Night 2026-10-04 (6): the sim-exploitation trap, caught live
+
+Stone-focus slice went 300/300 accepts (4219->3919). Impossible yield
+for real slack -- and it was: the sim does NOT model structural support
+(dust popping when its floor is removed). Verified by grep: support
+appears in sim.py only as POWER terms (dust reading the block below),
+never as integrity. 242 of the 300 removed stones held up live dust;
+in-game the build would have disintegrated on paste. The x12 lock
+ambiguity should have taught me: sim-green is not game-true.
+
+Salvage (temp salvage.py, one-off): diffed 4219 (audited clean, 0
+support violations by static check) vs 3919; restored the 242
+load-bearing stones, kept the 58 legit border trims out. Restored build
+4161: sim-green AND 0 support violations by independent static audit.
+Promoted to build_add2opt.*. The 3919 was NEVER promoted -- no
+contaminated artifact left the workdir.
+
+Rule learned and now enforced: the sim is BLIND to support, so solid
+(stone/cobble) deletions are pre-screened by a static load-bearing
+check before a single sim eval is spent. Wire/repeater/torch deletions
+need no screen (nothing is supported BY them). Same for future cobble
+sweeps: the banked 36 cobble deletions were retro-audited clean via the
+4219 check, but that was luck plus small numbers, not method.
