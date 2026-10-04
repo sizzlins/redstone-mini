@@ -3139,3 +3139,56 @@ PROPAGATION/STRUCTURE disagreement, not a decay or lock rule gap. sim powers
 87.7% of the build INCLUDING the neighbours of a probe hole at (829,1,206),
 whose blockstate is east=none,west=none,south=side into glass -- a
 north/south-only stub. Still open; not_full.pkl is the cheaper target.
+
+============================================================
+FINDING 3 (2026-10-05) -- sim CANNOT POWER A NON-PIN LEVER.
+cmc is right, sim is wrong, and the project's NOT-gate search
+may have been discarding valid solutions because of it.
+============================================================
+
+FOUND VIA the recovered sweep. not_full.pkl -- a 20-cell (146-block)
+comparator-subtract INVERTER, recipe recipes/not1.txt -- shows 9/20 cells
+differing, sim=False cmc=True, on its only vector (A=0, want Y=1):
+
+  cmc: (3,1,2)=15 (3,1,3)=14 (3,1,4)=13 (3,1,5)=12 (3,1,6)=11
+       (2,1,6)=10 (1,1,6)=9            -> a clean decay ladder to the lamp
+  sim: all seven cells 0               -> lamp dark
+
+THE CIRCUIT (scratch/diffclass.py + sim.py:956 for the convention):
+  lever A (0,1,0) -> wire (1,1,0) (2,1,0) -> wire (2,1,1) = comparator SIDE
+  comparator (2,1,2) facing=west mode=subtract. Per sim's own convention
+  facing points output->input, so rear = +facing = WEST = (1,1,2), which
+  holds a lever whose blockstate is powered=true, and output = EAST =
+  (3,1,2), which is the ladder cmc powers.
+  So the gate is subtract: rear(constant 15) - side(A) = NOT A. Correct.
+
+ROOT CAUSE, proved by direct inspection of _parse_build output, not inferred:
+  sim.py:542  elif rear in lever and vec.get(lever[rear], False): rl = 15
+  lever maps the lever CELL -> its io pin key, and for a lever that is not a
+  declared input that key is the lever's own floor COORDINATE:
+      lever[(1,1,2)] == (1,0,2)
+  while `vec` is keyed by pin NAME ('A'). So vec.get((1,0,2), False) is False
+  forever: a non-pin lever is permanently unpowered in sim no matter what its
+  blockstate says. cmc reads powered=true and powers it.
+
+  Vanilla is unambiguous here: a placed, flipped lever IS a power source.
+  sim's model (levers exist only as vector-driven input pins) is narrower
+  than vanilla, and this construct depends on the difference.
+
+BLAST RADIUS, measured before touching shared core (scratch/leveraudit.py
+across 104 pkls): exactly ONE build uses a non-pin lever -- not_full.pkl
+itself. Every banked build's levers are declared pins (alu4bank: 10 levers,
+10 io pins; direct census). So this gap is LATENT for router output and only
+  reachable by hand/search-built candidates.
+
+WHY IT MATTERS MORE THAN ONE RED BUILD: the handoff records the NOT/full-adder
+search as open, and not_full.pkl is a NOT-gate candidate. If candidates were
+rejected because sim reported Y=false on a construct sim cannot represent,
+the search was pruning valid solutions with a simulator blind spot -- the same
+sim-overfit class this whole verification layer exists to catch, except here
+it is our own engine being wrong rather than overfit.
+
+NOT YET CHANGED. Next step is the sim.py + simvec.py fix (mirrored, per the
+hard mirror requirement), gated by the full cold-start chain plus a full
+forced re-sweep, because a physics change must be paid for with evidence.
+Recorded here first so the finding survives whatever happens next.

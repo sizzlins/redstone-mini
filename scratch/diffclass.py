@@ -69,6 +69,9 @@ def main():
             else:
                 buckets['both_diff'] += 1
         print('\n== %s : %d cells compared ==' % (field, len(keys)))
+        if not keys:
+            print('  (none)')
+            continue
         for name in ('both_same', 'sim0_cmc+', 'sim+_cmc0', 'both_diff'):
             n = buckets[name]
             print('  %-11s %7d  %5.1f%%' % (name, n, 100.0 * n / len(keys)))
