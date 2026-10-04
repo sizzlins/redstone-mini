@@ -3978,3 +3978,42 @@ That last one is the strongest evidence available in this repo and it is not
 ours: cmc is an independent implementation, so agreeing with it per cell cannot
 be an artifact of our own tables. REDSTONE_WAKE_EXACT=0 restores the geometric
 map instantly if anyone ever doubts the enumeration.
+
+## 2026-10-05 (session 2) -- Opt F: the astar window is LOAD-BEARING. Answering the handoff's open question
+
+The opt agent's queued item, and the last thing untried on the generation side.
+`compose._astar_wrap` passes `m = man + 64` to layout.astar: the search window
+is the field plus 64 empty cells in every direction, and a FAILING flat-only
+search walks all of it. Made it env-gated (`REDSTONE_ASTAR_MARGIN`, default
+UNCHANGED at 64) and measured, against the bar it set: the ladder must
+reproduce all six alu4 rungs AND their exact block counts.
+
+Router time on the band-1 candidate (best of 2 each):
+
+    margin  64     48     32     24     16      8
+    secs   4.25   4.14   4.07   3.94   3.90   3.80     (~10% at the extreme)
+
+Band ladder, all six rungs, exact block counts, from scratch:
+
+    margin=64   6/6 GREEN  13304 7518 6957 571 2414 4878   exit 0   88.4s
+    margin=48   6/6 GREEN  13304 7518 6957 571 2414 4878   exit 0   90.0s
+    margin=32   6/6 GREEN  13304 7518 6957 571 2414 4878   exit 0   90.4s
+    margin=16   **band 0: NO GREEN RUNG**                              exit 1   87.7s
+
+So: the boundary is between 16 and 32, band 0 is what needs the slack, and the
+DEFAULT STAYS 64. Two things worth keeping from this:
+
+- The handoff's claim that a tighter window "can only return a different path
+  or fail LOUD, never silently wrong" is now VERIFIED rather than argued:
+  margin=16 fails at `NO GREEN RUNG` with exit 1. It does not produce a
+  plausible-looking wrong band.
+- The ladder wall time is 88-90s at EVERY margin including 64, so the ~10%
+  router saving does not move the total build at all. The 96 rungs are bounded
+  by the per-rung budget, not by how fast the search walks empty space. That
+  reframes the handoff's "86% of all pops go to 3 failing searches": those pops
+  are inside searches that were going to fail anyway, inside a rung that has a
+  time budget. Optimising them buys the ladder nothing.
+
+The env gate ships (it is what made this measurable, and it is one line), but
+no default changed. Recorded so the next agent does not re-run the ladder sweep
+to rediscover that 64 is load-bearing.

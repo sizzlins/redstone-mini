@@ -536,7 +536,14 @@ def _astar_wrap(ctx, sup, guard, a, b, net, avoid, flat=True,
     man = abs(a[0] - b[0]) + abs(a[1] - b[1])
     if man > 2000:
         return None
-    m = man + 64
+    # ponytail: the window is the search field plus this much empty space in
+    # every direction, and a FAILING flat-only search walks all of it. REDSTONE
+    # _ASTAR_MARGIN makes the slack measurable: a tighter window can only
+    # return a different path or fail LOUD (never a silently wrong one), so it
+    # is safe to A/B -- but default stays 64 until the ladder reproduces with
+    # and without it. See LOG.md for the measurement and why the bar is "all
+    # six alu4 rungs and their exact block counts", not "it still passed".
+    m = man + int(os.environ.get("REDSTONE_ASTAR_MARGIN", "64"))
     ox = max(0, -min(a[0], b[0])) + 2
     oz = max(0, -min(a[1], b[1])) + 2
     solid2 = {(x + ox, z + oz): v for (x, z), v in ctx.solid.items()}
