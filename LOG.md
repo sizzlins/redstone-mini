@@ -142,3 +142,28 @@ verify_par skips pool for tiny sweeps (0.26s->0.01s, 26x, same _serial_shard); p
    (bank/audit/static checks); heavy slices stay bounded with heartbeats.
    Your files (evolve.py, evo_*, compact*, add2fat, memo.json) untouched
    by me as well -- symmetric. Truce holds.
+
+## Night 2026-10-04 (7): footprint objective (operator: width+height, not just count)
+
+Banked 3752 to build_add2opt.*. Then measured instead of assuming:
+3752 blocks in 323x80 (25840 cells, 14.5% dense), 0 fully-empty x/z
+planes (the snake touches every axis: rigid plane-removal yields
+nothing). Extreme-block analysis:
+
+- min-x=3: input LEVER + its floor. Pinned by pin layout (compose
+  domain). Post-pass cannot move it (lever needs its support).
+- max-x=325: 14+ BARE floor stones, no circuitry. Empty peninsula the
+  400-eval stone slice never reached (budget hit at 400/400 accepts).
+  Post-pass CAN eat this: width lever = more filtered stone slices.
+- min-z=4: lever + live wire. max-z=83: live wire + repeater.
+  Both live routing. Post-pass cannot move load-bearing extremes
+  (wire tier exhausted = each extreme wire individually necessary).
+  Depth needs tighter placement = router domain = other agent's lane,
+  flagged, not touched.
+- y=4 (floor/circuit/2 bridge layers): already minimal.
+
+Revised DONE: (a) block-count squeeze continues all tiers (helps both
+metrics); (b) width via filtered stone slices until 2 consecutive
+slices stop moving max-x; (c) depth/height documented as router-side
+work with this evidence, left for coordination. Assumption A6: I/O pin
+positions are fixed inputs (moving pins = compose change, out of lane).
