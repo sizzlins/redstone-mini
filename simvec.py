@@ -550,23 +550,34 @@ def _tables_from(P, inp):
     if _os.environ.get("REDSTONE_WAKE_EXACT", "1") == "1":
         SH = 24                      # packs (target, reader) into one int
         pairs = set()
+        bpairs = set()               # subset that only wants TRUTHINESS
         add = pairs.add
-
-        def _e(t, r):
+        addb = bpairs.add
+        # ponytail: a boolean edge only needs waking when the value CROSSES
+        # zero. A wire decaying 15->14->13 changes three times and crosses
+        # once, so most boolean wakes are pure waste. Measured on alu4: 57.4%
+        # of the exact edges are boolean-only, and only dust and comparator
+        # outputs are multi-valued enough for a crossing to exist -- solids,
+        # torches and repeaters are already 0/1, so every one of their changes
+        # IS a crossing and they are never suppressed.
+        def _e(t, r, level=False):
             if t >= 0:
-                add((t << SH) | r)
+                key = (t << SH) | r
+                add(key)
+                if not level and (kind[t] == 0 or kind[t] == 6):
+                    addb(key)
 
         for i in range(nid):
             k = kind[i]
             if k == 0:               # dust READS these
                 for m in d_dust[i]:
-                    _e(m, i)
+                    _e(m, i, True)
                 for m in d_cup[i]:
-                    _e(m, i)
+                    _e(m, i, True)
                 for m in d_cdn[i]:
-                    _e(m, i)
+                    _e(m, i, True)
                 for m in d_comp[i]:
-                    _e(m, i)
+                    _e(m, i, True)
                 for m in d_cob[i]:
                     _e(m, i)
                 for m in d_torch[i]:
@@ -605,6 +616,8 @@ def _tables_from(P, inp):
                 _e(t_att[i], i)
         for j, i in lock_edges:     # repeater lock sides (already exact)
             add((j << SH) | i)
+        if _os.environ.get("REDSTONE_WAKE_BOOL", "1") == "0":
+            bpairs = set()
         for i in range(nid):
             w = wake[i]
             if w:
@@ -612,7 +625,17 @@ def _tables_from(P, inp):
                 # is the TARGET and m is the READER. Getting this backwards
                 # drops almost every edge and the engine settles in one tick
                 # with nothing lit -- it is the whole ballgame.
-                wake[i] = [m for m in w if ((i << SH) | m) in pairs]
+                #
+                # A boolean edge is stored NEGATED (~m) so the SAME list keeps
+                # the SAME order whether or not the suppression is on: the ring
+                # queue stays a subsequence of the geometric one, which is what
+                # makes skipping them safe rather than merely fast.
+                out = []
+                for m in w:
+                    key = (i << SH) | m
+                    if key in pairs:
+                        out.append(~m if key in bpairs else m)
+                wake[i] = out
 
     return {"cell": cell, "cid": cid, "nid": nid, "kind": kind,
             "dust_ids": dust_ids, "pwr_ids": pwr_ids, "torch_ids": torch_ids,
@@ -1028,13 +1051,25 @@ def run_scalar(vec, ctx, init=None, until=None, tick_cap=None, step_cap=None,
             if k == 0:                       # dust
                 v = _dust_lvl_s(c, st, pw, pbs, tl, ron, con, vec)
                 if pw[c] != v:
+                    # ponytail: a boolean edge only needs waking if this
+                    # change CROSSED zero. A wire decaying 15->14->13 wakes
+                    # nothing boolean until the 1->0 at the end, which is the
+                    # whole point: 57.4% of edges are boolean-only and most
+                    # changes are not crossings. Level edges (adjacent dust,
+                    # cup/cdn slopes, comparator outputs) are always walked.
+                    old = pw[c]
                     pw[c] = v
+                    crossing = (old != 0) != (v != 0)
                     flips[c] += 1
                     g = steps - last_change
                     if g > max_gap:
                         max_gap = g
                     last_change = steps
                     for c2 in wake[c]:
+                        if c2 < 0:
+                            if not crossing:
+                                continue
+                            c2 = ~c2
                         if not qc[c2]:
                             qc[c2] = 1
                             here.append(c2)
@@ -1116,12 +1151,20 @@ def run_scalar(vec, ctx, init=None, until=None, tick_cap=None, step_cap=None,
                     ksched[c] = 0
                     v = _comp_out_s(c, st, pw, pbs, tl, ron, con, vec)
                     if con[c] != v:
+                        # a comparator output is multi-valued (0..15), so it
+                        # gets the same crossing rule as dust
+                        old = con[c]
                         con[c] = v
+                        crossing = (old != 0) != (v != 0)
                         g = steps - last_change
                         if g > max_gap:
                             max_gap = g
                         last_change = steps
                         for c2 in wake[c]:
+                            if c2 < 0:
+                                if not crossing:
+                                    continue
+                                c2 = ~c2
                             if not qc[c2]:
                                 qc[c2] = 1
                                 here.append(c2)

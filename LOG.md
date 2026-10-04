@@ -4079,3 +4079,58 @@ NOT FIXED tonight: this is physics forensics in the GA agent's lane, it needs
 a semantics change to sim.py on the last hour of an optimisation shift with no
 second pair of eyes on the tree. It is reported instead, with the exact
 commands. Note `recipes/alu4.skip` is NOT involved -- that only pins alu1.
+
+## 2026-10-05 (session 2) -- Opt G: boolean edges only wake on a CROSSING. ~1.06x, engine now 2.86x
+
+Follows directly from the exact wake map. `scratch/wake_split.py` (new) splits
+the exact edges by what the reader actually wants:
+
+    edges wanting the LEVEL : 54024    (adjacent dust decay, cup/cdn slopes,
+                                       comparator output)
+    edges wanting only TRUE : 72922    (a solid tests `pw >= 1`; dust tests
+                                       pbs/tl/ron truthily; a torch tests its
+                                       attachment's pb; repeaters and
+                                       comparators test their one input)
+    boolean share           : 0.574
+
+So 57.4% of the edges do not care HOW MUCH a cell changed. A wire decaying
+15 -> 14 -> 13 changes three times and crosses zero once, so on a boolean edge
+two of those three wakes cannot change the reader's answer.
+
+Suppression rule: a boolean edge is stored NEGATED (`~m`) in the same wake
+list, and walked only when the change crosses zero. Only dust and comparator
+outputs are multi-valued enough for a crossing to exist -- solids, torches and
+repeaters are already 0/1, so every change of theirs IS a crossing and they are
+never suppressed.
+
+Storing them negated rather than in a second list is the load-bearing detail:
+the list keeps the SAME ORDER either way, so the ring queue stays a subsequence
+of the geometric one and skipping edges remains safe rather than merely fast.
+
+    A/B vs the committed engine (null 0.99x): 1.01x / 1.07x / 1.06x
+    vs the ORIGINAL tuple engine, alu4:        2.86x   IDENTICAL
+    full 1024-vector alu4 sweep, 16 workers:   30.7s   (108.7s at session start)
+
+`REDSTONE_WAKE_BOOL=0` restores the unsuppressed exact map.
+
+### Third inversion of the same kind, caught the same way
+
+`wake_miss.py` itself had the target/reader inversion -- it asked "does i read
+m?" instead of "does reader m read target i?" -- and after the encoding change
+it started reporting 1284 confident false positives. Two notes for the next
+person: the engine's inversion and the probe's were the SAME bug in two places,
+and a probe that starts reporting problems right after you change the data
+format is usually the thing that changed meaning, not the thing that broke. It
+now scans the table set GENERICALLY (never a hand-written second copy) and
+reports **0 needed of 32438 dropped on alu1 and 0 of 152120 on alu4**.
+
+### Gates
+
+    tbl_diff        IDENTICAL, alu4 6 spread + alu1 4
+    wake_miss       filter clean (0 needed) on both builds
+    simvec          self-check, run_scalar bit-identical to sim._run_vec
+    sim.py          all 8 canaries
+    diff_engine     ALL IDENTICAL (3-way vs frozen authority)
+    compose_check   144 / 322 / 224 / 214; nonhier 6/6
+    hier alu1       VERIFY OK 32/32 exit 0 (37.5s)
+    alu4            VERIFY OK 1024/1024 exit 0, cold (30.7s)

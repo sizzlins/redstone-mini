@@ -59,35 +59,28 @@ def main():
 
     dropped = 0
     bad = 0
+    # `wake[i]` is the cells to re-evaluate when cell i CHANGES, so i is the
+    # TARGET and m is the READER. The question is therefore "does the READER m
+    # reference the TARGET i?", NOT "does i reference m" -- asking it the
+    # other way round is the exact inversion that cost the engine a debugging
+    # session, and it reports confident nonsense here.
     for i in range(nid):
         g = geo["wake"][i]
         e = exc["wake"][i]
-        if len(g) == len(e):
-            continue
-        es = set(e)
+        # the exact map stores boolean-only edges NEGATED (~m) so the list keeps
+        # its order whether or not suppression is on; normalise before comparing
+        es = {m if m >= 0 else ~m for m in e}
         gone = [m for m in g if m not in es]
-        dropped += len(gone)
         if not gone:
             continue
-        # everything cell i's tables name, generically
-        named = set()
-        for k in keys:
-            v = exc[k][i]
-            if v is None:
-                continue
-            if k == "t_att" and exc["kind"][i] != 2:
-                continue                    # meaningless off a torch
-            ints_in(v, named)
-        named.discard(-1)
+        dropped += len(gone)
         for m in gone:
-            if m in named:
+            if i in readers(exc, m):          # reader m reads target i
                 bad += 1
-                hits = [k for k in keys
-                        if (exc[k][i] is not None
-                            and (k != "t_att" or exc["kind"][i] == 2)
-                            and m in (ints if False else _flat(exc[k][i])))]
-                print(f"  NEEDED but dropped: reader {ids[i]} "
-                      f"kind={exc['kind'][i]} target {ids[m]} via {hits}")
+                if bad <= 12:
+                    print(f"  NEEDED but dropped: target {ids[i]} "
+                          f"kind={exc['kind'][i]} reader {ids[m]} "
+                          f"kind={exc['kind'][m]} via {named_by(exc, m, i)}")
     print(f"\nedges dropped: {dropped}   of which NEEDED: {bad}")
     print("MISSED RELATIONS" if bad else "filter is clean (generic scan agrees)")
 
@@ -95,6 +88,28 @@ def main():
 def _flat(v):
     out = set()
     ints_in(v, out)
+    return out
+
+
+def readers(st, i):
+    """Every cell id that cell i's tables REFERENCE (i.e. i reads).
+
+    Generic over the table set rather than hand-listed, because hand-listing is
+    how the original bug stayed hidden.
+    """
+    out = set()
+    for k, v in st.items():
+        if k in EXCLUDE or not isinstance(v, list) or len(v) != st["nid"]:
+            continue
+        if k == "t_att" and st["kind"][i] != 2:
+            continue                      # meaningless off a torch
+        if k == "wake":
+            continue                      # edges, not reads
+        val = v[i]
+        if val is None:
+            continue
+        ints_in(val, out)
+    out.discard(-1)
     return out
 
 
