@@ -86,12 +86,21 @@ def run_gate(pkl, recipe, doc, max_vectors, sim_to, cmc_to, diff):
         p = subprocess.run(cmd, capture_output=True, text=True,
                            timeout=sim_to + cmc_to + 300, cwd=ROOT)
         out = p.stdout + p.stderr
+        rc = p.returncode
     except subprocess.TimeoutExpired as e:
         out = 'GATE TIMEOUT: %s' % (e.stdout or b'')
         if isinstance(out, bytes):
             out = out.decode('utf8', 'replace')
         return {'gate': 'timeout', 'secs': round(time.time() - t0, 1),
                 'raw': out[-300:]}
+    # ponytail: never discard the child's exit code (the opt agent's
+    # hier_verify did: check=False, return value dropped, so a RED stage
+    # went on to verify the PREVIOUS artifact and printed a green that
+    # certified a build that no longer existed). verify2 exits 0 green /
+    # 1 red / 2 usage; anything else is a crash and must be loud.
+    if rc not in (0, 1):
+        return {'gate': 'crash', 'gate_rc': rc,
+                'secs': round(time.time() - t0, 1), 'raw': out[-300:]}
     v = None
     vp = doc + '.verdict.json'
     if os.path.exists(vp):
@@ -100,9 +109,9 @@ def run_gate(pkl, recipe, doc, max_vectors, sim_to, cmc_to, diff):
         except ValueError:
             v = None
     if v is None:
-        return {'gate': 'no-verdict', 'secs': round(time.time() - t0, 1),
-                'raw': out[-300:]}
-    r = {'gate': 'ok', 'secs': round(time.time() - t0, 1),
+        return {'gate': 'no-verdict', 'gate_rc': rc,
+                'secs': round(time.time() - t0, 1), 'raw': out[-300:]}
+    r = {'gate': 'ok', 'gate_rc': rc, 'secs': round(time.time() - t0, 1),
          'sim': v.get('sim', {}).get('ok'),
          'cmc': v.get('cmc', {}).get('ok'),
          'sim_raised': (v.get('sim', {}).get('raised') or '')[:60],
