@@ -2510,3 +2510,21 @@ Assumption A8: frozen DISCOVERED patterns as later-stage building blocks
 is evolution, not prebuilt gates (nothing hand-designed enters any
 genome; operator can veto in the morning -- the pure alternative costs
 more compute, noted in report if relevant).
+
+## Night 2026-10-04 (12): lamp vindicated, NOT reachability proven, bridge op
+
+Legwork that unblocked everything: my hand-NOT probe failed twice, and
+both failures were MY routing errors, not sim bugs. (1) Rear-lever
+probe had the comparator facing backwards (rear is +facing; lever sat
+on the output side). (2) Output chain passed BY the lamp instead of
+terminating INTO it -- and the sim was RIGHT to stay dark (wiki Lamp
+page verbatim: dust must point AT the lamp or be directionless;
+pointing-away stays dark; our dust_points + lamp rule match wiki AND
+cmc exactly). The "lamp artifact" was my geometry error. Correction
+logged so nobody re-litigates it.
+Hand-placed canonical torchless NOT (subtract comp + lever-ON rear +
+A side + 7-dust output route to lamp): 2/2 GREEN. Reachability PROVEN,
+pipeline validated end to end. The 12-cell solution needs a 7-dust
+output ROUTE -- which random walks never thread. New op _bridge lays
+dust along L-paths between live dust and lamp-adjacent cells (approach
+#9); still atoms, score decides. NOT stage relaunched with bridges.
