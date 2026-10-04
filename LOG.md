@@ -3617,3 +3617,69 @@ way:
 - wall-clock change -> best-of-N with N>=3, and interleave the variants.
 - NEVER measure timing under tracemalloc.
 - a speedup claimed from one run of each variant is a hypothesis, not a result.
+
+============================================================
+THE AUTHORITATIVE GATE WAS MISSING A LOAD-BEARING STEP.
+`hier_verify.py recipes/alu4.txt` could not pass. Repaired.
+============================================================
+Ran the cold-start chain. hier_verify alu1 = VERIFY OK 32/32 exit 0 (as
+documented). hier_verify alu4 = EXIT 1:
+
+    band 0: 3,inputs_first,short 13304 blocks (513, 171)
+    band 1: 1,inputs_first,short  7518
+    band 2: 1,inputs_first,long   6957
+    band 3: 2,gates_first,short    571
+    band 4: 2,gates_first,short   2414
+    band 5: 1,inputs_first,short  4878
+    MERGE 71560 blocks (2198, 353)
+    SMOKE 0000000000 OK
+    SMOKE 1111111111 OK
+    SMOKE 0101010101 OK
+    SMOKE 1010101010 MISMATCH ['Y2']        <-- exit 1
+
+Every band and the merge reproduce the recorded numbers EXACTLY. The failure
+is the Y2-on-1010101010 fault the 10/4 handoff describes as fixed by the
+`ins_target` pillar swap, which it calls "load-bearing: without it the merge
+smokes 3/4". Its own cold-start reproduce lists ins_target between stitch and
+verify.
+
+hier_verify.py -- "the authoritative gate for hier recipes" per the same
+handoff -- NEVER CALLED IT. Two omissions, not one:
+  1. it did not run ins_target, and
+  2. it passed the RAW merge.pkl to verify_par, not the swapped <merge>_g.pkl.
+So the gate verified a build that is known-wrong, and could only ever exit 1.
+
+Confirmed by hand before touching anything: running the documented chain
+  ins_target alu4merge.pkl alu4merge_g.pkl 868,2,221 868,2,224 1170,2,218
+  -> SMOKE 4/4 OK, `targeted: GREEN`
+  verify_par alu4merge_g.pkl recipes/alu4.txt 8 900 8 16   (x2 rounds)
+  -> VERIFY OK: 1024 vectors, 16 chunks green
+So the 1024/1024 claim is TRUE and reproducible tonight -- just not through the
+gate.
+
+FIX, following the convention hier_bands.py already established with
+<recipe>.skip:
+  recipes/alu4.ins_target   (new) the three pillars, with the warning that they
+                            are MERGE-SPECIFIC and must be re-derived with
+                            y2trace.py if the ladder moves
+  hier_verify.py            reads that sibling, runs ins_target after the
+                            stitch, and verifies <merge>_g.pkl. Prints which
+                            build it is verifying, and says so loudly when
+                            there is no sibling.
+  hier_stitch.py            its smoke is ADVISORY when the sibling exists: a
+                            pre-swap mismatch is reported and the stage
+                            continues, because the swap has not run yet and
+                            lives downstream. This was the subtle part -- the
+                            smoke is inside hier_stitch, which hard-exited, so
+                            hier_verify could never reach its own new step.
+                            With no sibling, the smoke is exactly as strict as
+                            before (alu1 confirms: 4/4, no advisory).
+
+AFTER: `python scratch/hier_verify.py recipes/alu4.txt` -> VERIFY OK: 1024
+vectors, 16 chunks green, exit 0. alu1 unchanged -> VERIFY OK 32/32 exit 0.
+
+Worth noting how long the gate was broken with everything LOOKING fine: the
+bands reproduced, the merge reproduced, the block count reproduced, and the
+only visible symptom was one MISMATCH line -- which the handoff had already
+documented as a known, fixed-by-a-manual-step fault. A gate whose missing step
+is documented as "someone runs this by hand" is not a gate.

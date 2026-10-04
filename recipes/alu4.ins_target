@@ -1,0 +1,16 @@
+# ins_target pillar swap for alu4 -- LOAD-BEARING, do not remove.
+#
+# Without it the merge smokes 3/4: Y2 is wrong on 1010101010, because three
+# repeaters on the Y2 net are fed from the wrong side and need the mirror swap.
+# scratch/ins_target.py rewrites the merge into <merge>_g.pkl with these
+# pillars exchanged; the gate then verifies THAT build, not the raw stitch
+# output.
+#
+# These coordinates are MERGE-SPECIFIC. The bands and the stitch both reproduce
+# exactly, so they are still correct tonight -- but if the ladder ever changes
+# shape, re-derive them with scratch/y2trace.py rather than trusting this file.
+#
+# Format: x,y,z triples, whitespace separated, # comments allowed.
+868,2,221
+868,2,224
+1170,2,218
