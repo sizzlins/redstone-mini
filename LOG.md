@@ -2655,3 +2655,4 @@ Open items for the live run (operator): pack_format 81 is a GUESS for
 26.x (wrong value fails loud at /reload with unknown-function -- easy
 fix); lamp parse assumes EN wording (raw bodies logged either way).
 Needs from operator: server+rcon+password, world dir, b0 anchor.
+RIG server staged at D:/put gitrepos here/mc-server (vanilla 26.3 jar from piston-meta, run.bat on bundled Java 25, server.properties with rcon). Operator runs it (EULA is theirs to accept, not mine), sets password, sends host/port/password-file/b0. Then rig_verify.py drives ground-truth verdicts.
