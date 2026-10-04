@@ -4300,3 +4300,47 @@ old/new/old/new within one process and compare paired runs, or to pin the
 process to isolated cores. Not done tonight; written down so the next session
 does not have to rediscover that 0.61x on identical code means the instrument,
 not the code, moved.
+
+------------------------------------------------------------
+REGRESSION SEAM for the non-pin lever (scratch/notmin.py).
+The fix is still NOT applied; now it cannot be forgotten.
+------------------------------------------------------------
+`diagnose` Phase 5 says: write the regression test before the fix, but only
+where there is a correct seam. There is one here: a hand-placed, router-free,
+16-block comparator-subtract inverter with a glass floor (so cmc's support
+stage accepts it), run through BOTH engines on A=0 and A=1.
+
+    python scratch/notmin.py
+    SIM  A=0 -> Y=False (want True ) WRONG
+    SIM  A=1 -> Y=False (want False) ok
+    OUT  A=0  (3,1,2) sim=0 cmc=15  DISAGREE
+    OUT  A=1  (3,1,2) sim=0 cmc=2   DISAGREE
+    ENGINES DISAGREE: non-pin lever -- see Finding 3
+    exit 1
+
+Two seconds, two vectors, one node call under a hard timeout. The day someone
+implements the constant-lever source category both engines need, this goes
+green. I broke its output formatting twice while trimming it (a join over a
+string iterates its characters, and a probe column for a lamp read as dust);
+both were visible on the first run, because I ran it.
+
+------------------------------------------------------------
+COVERAGE, stated precisely (scratch/coverage.py).
+------------------------------------------------------------
+I twice misstated what the sweep does not cover. The true numbers, verified
+against the pkl headers:
+
+  98 pkls
+  48 real circuit builds -- ALL GATED (21 green both engines, 27 red)
+   1 real build no recipe matches: stackfail.pkl (2464 blk, in=a,b,c
+     out=c2,t,y) -- the only genuine hole
+  49 not builds at all: band caches and state dumps (alu4bands.pkl,
+     alu4_states.pkl and friends), i.e. pipeline INPUTS rather than circuits.
+
+The 49 are NOT junk -- the first time I looked I called them junk, which was
+wrong; the largest is 235 MB. They are correctly out of scope for a gate that
+takes a finished circuit, but they are also worth an operator look: scratch/
+is 1051 MB across 1496 files, with three `_states.pkl` state dumps alone at
+~550 MB and 25 MB + 14.6 MB of memo.json. Nothing deleted. My own sweep's
+per-cell dumps contribute (a 30 MB cmc cells file for alu4merge_g), which is
+the honest storage cost of the gate.
