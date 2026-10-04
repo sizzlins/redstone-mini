@@ -69,3 +69,12 @@ alu1 VERIFY OK 32/32 (hier gate, BANK=1 default). recipes/alu1.txt promoted to 2
     never reached because wire always yields first): adding tier-focus
     so a slice can sweep the full repeater tier (286 blocks) instead of
     grinding wire at ~7/slice.
+
+    repeater-focus slice 400e: 4326 -> 4278 (48 acc, 12%). The tier-focus
+    switch paid off immediately: repeaters had 48 removable (redundant
+    refresh on short runs, sim confirms timing still closes). Promoted.
+    NOTE: operator reports another agent on optimization (prof_router.py
+    on decode3, pid 27652, since 11:03). Pausing slices while their
+    timing run is live -- my sim pool would skew their measurements.
+    Doing read-only analysis meanwhile; zero engine edits (their profiler
+    imports the router; I touch nothing it reads except by import).
