@@ -547,42 +547,46 @@ def astar(starts, goal, net, W, D, solid, rings, wires, junctions, margin=None, 
     for (rx, ry, rz) in reps:
         if ry == 1:
             hard.add((rx, 1, rz))
-    jget2 = junctions.get
     wg2 = wires.get
+    # ponytail: pre-key the junction allow-set to 3-tuples ONCE per search.
+    # ok() ran 1.65M times on a band compose (measured) and built a fresh
+    # (x, z) tuple for the junction probe every single call; the allow-set is
+    # static for the search, so hoist it. Same membership, one set lookup.
+    jset = frozenset((x, 1, z) for (x, z), v in junctions.items()
+                     if net in v)
     def ok(cell):
         x, y, z = cell
         if not (x0 <= x <= x1 and z0 <= z <= z1 and ymin <= y <= ymax):
             return False
         if cell == goal:
             return True
-        if wg2(cell) not in (None, net):
+        # (None, net) allocated a tuple per call; compare directly instead.
+        wv = wg2(cell)
+        if wv is not None and wv != net:
             return False
         if y == 1:
-            j = jget2((x, z))
-            if j is not None and net in j:
+            if cell in jset:
                 return True
             if cell in hard:
                 return False
         elif cell in cob:
             return False  # inside a pillar (tile/bridge/stamped): no dust here
         return True
+    # ponytail: memoize _support per search. It is a pure function of the
+    # STATIC field (solid/wires/sup/reps/guard + net + cell) and nothing stamps
+    # during a search, so one verdict per cell is exact. astar asked 381k
+    # times per band compose (measured) for far fewer distinct cells. Only
+    # `is False` is tested at either call site, so cache the boolean; True
+    # stands for None-or-cell, which those sites treat alike.
+    supf = {}
 
-        if cell in wires and wires[cell] != net:
-            return False
-        if y == 1:
-            if (x, z) in junctions and net in junctions[(x, z)]:
-                return True
-            if (x, z) in solid:
-                return False
-            if (x, z) in rings and net not in rings[(x, z)]:
-                return False
-            if (x, 1, z) in sup:
-                return False
-            if cell in reps:
-                return False
-        elif cell in cob:
-            return False
-        return True
+    def _sup_ok(m):
+        r = supf.get(m)
+        if r is None:
+            r = supf[m] = (_support(m, net, solid, wires, sup, reps,
+                                    guard) is not False)
+        return r
+
     open_h = [(abs(s[0] - goal[0]) + abs(s[2] - goal[2]), 0, s, s, None) for s in starts]
     heapq.heapify(open_h)
     came, cost = {s: None for s in starts}, {s: 0 for s in starts}
@@ -610,12 +614,12 @@ def astar(starts, goal, net, W, D, solid, rings, wires, junctions, margin=None, 
                     # level change: support under the upper endpoint (stamped
                     # once by route(), never during search) + lid over the
                     # lower endpoint clear, else the slope never conducts.
-                    if my != 1 and _support(m, net, solid, wires, sup, reps, guard) is False:
+                    if my != 1 and not _sup_ok(m):
                         continue
                     lo = cell if my > y else m
                     if lid((lo[0], lo[1] + 1, lo[2])):
                         continue
-                elif my != 1 and _support(m, net, solid, wires, sup, reps, guard) is False:
+                elif my != 1 and not _sup_ok(m):
                     continue
                 if m == goal and (m[0], m[2]) in junctions and net in junctions[(m[0], m[2])]:
                     pass  # OR junction: wired-OR is the gate

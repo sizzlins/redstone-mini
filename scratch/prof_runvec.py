@@ -1,7 +1,7 @@
 """Bounded profile of the serial engine on the cached alu4 build.
 
 NEVER HANGS: fixed small vector count, and cProfile only. No pool, no compose.
-Usage: python scratch/prof_runvec.py [nvec]
+Usage: python scratch/prof_runvec.py [nvec] [build.pkl]
 """
 import os, sys, pickle, cProfile, pstats, io, time
 
@@ -12,7 +12,7 @@ from recipe import parse_recipe
 
 n = int(sys.argv[1]) if len(sys.argv) > 1 else 3
 r = parse_recipe(open(r"D:\redstone-mini\scratch\cand_alu4hier.txt").read())
-d = pickle.load(open(r"D:\redstone-mini\scratch\alu4_build.pkl", "rb"))
+d = pickle.load(open(r"D:\redstone-mini\scratch\alu4merge_g.pkl", "rb"))
 blocks, io_ = d["blocks"], d["io"]
 ins = r["inputs"]
 
