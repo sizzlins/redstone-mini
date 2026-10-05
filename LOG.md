@@ -4800,3 +4800,35 @@ Self-review of _vec_child engine wiring found a silent cliff: ENGINE=numba with 
 
 ## 2026-10-05 (reg8 blocked) -- latch+fanout past router wall both paths
 reg8.txt (8x D-latch bit + WE/RE, micro1 pattern): hier bands sim-RED (latch never sets in partition: partition path breaks the loop), flat RED (WE sealed by D6/D7, D6 no-ground at x=1174). Single latch bit composes (micro1 greens) -- shared WE/RE fanout + loops together wall the router. Evidence: band0 standalone 1291 blocks but Y0 stuck dark; flat ladder 175s then bridge-support fail. NOT attempted: 8 discrete single-bit cells + hand-merged buses (stitch-class work), decoder-addressed writes. Owner: router fanout (opt lane) or hand-assembly.
+
+## 2026-10-05 (rig, live truth) -- add2opt GREEN 2/2 in-game, add8 0/4 and NOT trustworthy
+
+Rig facts measured on 1.21.11 (mc-server-1.21, rcon 25576):
+
+1. A player online is REQUIRED for `tp` and for chunk loading. `forceload`
+   works with no player but caps at **256 chunks per call** -- add8 needs
+   2394, so it must be forceloaded in ~10 slices.
+2. An RCON reply of "no response" only means the server was busy; the command
+   RAN. Proof: a repaste reporting 3 ERRs left 60/60 sampled blocks present.
+3. add2opt (3,730 blocks) pasted 40/40 and reads **2/2 vectors GREEN on real
+   redstone**. Our sim+cmc green DOES survive to the game at small scale.
+4. add8 (46,502 blocks) pasted 60/60 present but reads **0/4**: S3 and S6 lit
+   with every input 0, and the lit lamp at (823,65,261) has AIR on two sides --
+   leftover/partial-paste state, not a physics verdict.
+
+Conclusion: a 46k-block, 2000-cell-span build is **not** established in-game.
+The dual-engine gate is necessary, not sufficient, at this scale. Do not cite
+add8 as hardware-verified.
+
+Signs DO work, verified live:
+`oak_wall_sign[facing=north]{front_text:{messages:["TXT","","",""],color:"black",has_glowing_text:0b},back_text:{same}}`
+- `rotation` was removed in 1.21 -- use `facing`.
+- `oak_sign` takes no `facing`; `oak_wall_sign` does.
+- BOTH `front_text` and `back_text` are required or the setblock is refused.
+- `messages` must carry 4 slots; a 1-slot list is accepted then silently dropped.
+- `TextComponent:'...'` is accepted and ignored.
+
+New tools: `scratch/lamp_pin_check.py` (lamps == declared pins, 0 missing /
+0 extra on 4 banked builds), `scratch/rig_read.py` (live lever-set + lamp-read
+verdict), `scratch/repaste_add8.py`, `scratch/forceload_add8.py`,
+`scratch/sign_probe*.py`, `scratch/forceload_probe.py`.
