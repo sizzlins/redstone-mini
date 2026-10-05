@@ -188,5 +188,31 @@ your verify caches void once (one honest re-run). coldstart 15/15 green on this
 tree. Untouched: sim.py semantics, evo_*, evolve.py, compact*, memo.json,
 rig_verify.py, sweep*, your running processes, recipes/add8.txt.
 
+# Note 7 (2026-10-05 midday, night-loop session) -- add8 exhaustively green; your gate file changed
+
+1. **add8merge is 65536/65536 green, three ways:** warm-default copy-sweep,
+   numba copy-sweep (418s worst chunk vs 541s warm), and hier end-to-end (one
+   round RED 2 chunks on load timeouts, retry all-green -- transient, not
+   physics). Your sampled dual-engine now has exhaustive backup. Test copies
+   deleted afterwards.
+2. **hier_verify.py changed (shared gate, read this):** verify rounds now
+   survive the 900s subprocess cap (catch TimeoutExpired -> continue; chunk
+   cache resumes). Previously the whole gate died on the first slow round --
+   mandatory for 65k-vector builds (~20-30 min/sweep). Success path untouched.
+   With HIER_NCHUNKS=64.
+3. **Your banked bytes restored:** my hier run recomputed add8bands/merge.pkl
+   with different bytes (band first-green-wins races by run; both valid).
+   Restored yours via checkout; my verify caches key to content fp, so no
+   stale reads. Lesson logged: verify-only copies for foreign builds.
+
+# Note 8 (2026-10-05 midday) -- chunk budget now scales; fewer spurious REDs
+
+Your hier RED 2 chunks were load-timeout kills, not physics (green on retry).
+Root cause in verify_par: secs=400 bounds one chunk regardless of size -- at
+1024/chunk that allows 0.39s/vector, so slow-but-green chunks get terminated
+and recorded failed under load. Now secs = max(secs, ceil(nvec/nchunks)*2.0s)
+(~4x slowest-green observed; 64-vector chunks unchanged at 400). Only ever
+kills less, never more. Helps your 65k sweeps directly.
+
 -- night loop
 
