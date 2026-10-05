@@ -10,13 +10,15 @@
   "scratch/add8merge.pkl",
   "--diff-all",
   "--max-vectors",
-  "64"
+  "64",
+  "--cmc-timeout",
+  "2400"
  ],
  "unrepresentable_levers": [],
  "sim": {
   "rc": 0,
   "timeout": false,
-  "secs": 7.6,
+  "secs": 74.8,
   "ok": true,
   "n": 64,
   "raised": null,
@@ -25,7 +27,7 @@
  "cmc": {
   "rc": 0,
   "timeout": false,
-  "secs": 412.2,
+  "secs": 1678.7,
   "ok": true,
   "n": 64,
   "fails": [],
@@ -35,392 +37,392 @@
  },
  "diff": {
   "vectors": 64,
-  "cells": 1347904,
+  "cells": 1273920,
   "mismatches": 0,
-  "repeaters": 194368,
+  "repeaters": 181184,
   "rep_mismatches": 0,
   "per_vector": [
    {
     "vec": "0",
-    "cells": 21061,
+    "cells": 19905,
     "mismatches": 0,
     "rep_mismatches": 0
    },
    {
     "vec": "1",
-    "cells": 21061,
+    "cells": 19905,
     "mismatches": 0,
     "rep_mismatches": 0
    },
    {
     "vec": "2",
-    "cells": 21061,
+    "cells": 19905,
     "mismatches": 0,
     "rep_mismatches": 0
    },
    {
     "vec": "3",
-    "cells": 21061,
+    "cells": 19905,
     "mismatches": 0,
     "rep_mismatches": 0
    },
    {
     "vec": "4",
-    "cells": 21061,
+    "cells": 19905,
     "mismatches": 0,
     "rep_mismatches": 0
    },
    {
     "vec": "5",
-    "cells": 21061,
+    "cells": 19905,
     "mismatches": 0,
     "rep_mismatches": 0
    },
    {
     "vec": "6",
-    "cells": 21061,
+    "cells": 19905,
     "mismatches": 0,
     "rep_mismatches": 0
    },
    {
     "vec": "7",
-    "cells": 21061,
+    "cells": 19905,
     "mismatches": 0,
     "rep_mismatches": 0
    },
    {
     "vec": "8",
-    "cells": 21061,
+    "cells": 19905,
     "mismatches": 0,
     "rep_mismatches": 0
    },
    {
     "vec": "9",
-    "cells": 21061,
+    "cells": 19905,
     "mismatches": 0,
     "rep_mismatches": 0
    },
    {
     "vec": "10",
-    "cells": 21061,
+    "cells": 19905,
     "mismatches": 0,
     "rep_mismatches": 0
    },
    {
     "vec": "11",
-    "cells": 21061,
+    "cells": 19905,
     "mismatches": 0,
     "rep_mismatches": 0
    },
    {
     "vec": "12",
-    "cells": 21061,
+    "cells": 19905,
     "mismatches": 0,
     "rep_mismatches": 0
    },
    {
     "vec": "13",
-    "cells": 21061,
+    "cells": 19905,
     "mismatches": 0,
     "rep_mismatches": 0
    },
    {
     "vec": "14",
-    "cells": 21061,
+    "cells": 19905,
     "mismatches": 0,
     "rep_mismatches": 0
    },
    {
     "vec": "15",
-    "cells": 21061,
+    "cells": 19905,
     "mismatches": 0,
     "rep_mismatches": 0
    },
    {
     "vec": "16",
-    "cells": 21061,
+    "cells": 19905,
     "mismatches": 0,
     "rep_mismatches": 0
    },
    {
     "vec": "17",
-    "cells": 21061,
+    "cells": 19905,
     "mismatches": 0,
     "rep_mismatches": 0
    },
    {
     "vec": "18",
-    "cells": 21061,
+    "cells": 19905,
     "mismatches": 0,
     "rep_mismatches": 0
    },
    {
     "vec": "19",
-    "cells": 21061,
+    "cells": 19905,
     "mismatches": 0,
     "rep_mismatches": 0
    },
    {
     "vec": "20",
-    "cells": 21061,
+    "cells": 19905,
     "mismatches": 0,
     "rep_mismatches": 0
    },
    {
     "vec": "21",
-    "cells": 21061,
+    "cells": 19905,
     "mismatches": 0,
     "rep_mismatches": 0
    },
    {
     "vec": "22",
-    "cells": 21061,
+    "cells": 19905,
     "mismatches": 0,
     "rep_mismatches": 0
    },
    {
     "vec": "23",
-    "cells": 21061,
+    "cells": 19905,
     "mismatches": 0,
     "rep_mismatches": 0
    },
    {
     "vec": "24",
-    "cells": 21061,
+    "cells": 19905,
     "mismatches": 0,
     "rep_mismatches": 0
    },
    {
     "vec": "25",
-    "cells": 21061,
+    "cells": 19905,
     "mismatches": 0,
     "rep_mismatches": 0
    },
    {
     "vec": "26",
-    "cells": 21061,
+    "cells": 19905,
     "mismatches": 0,
     "rep_mismatches": 0
    },
    {
     "vec": "27",
-    "cells": 21061,
+    "cells": 19905,
     "mismatches": 0,
     "rep_mismatches": 0
    },
    {
     "vec": "28",
-    "cells": 21061,
+    "cells": 19905,
     "mismatches": 0,
     "rep_mismatches": 0
    },
    {
     "vec": "29",
-    "cells": 21061,
+    "cells": 19905,
     "mismatches": 0,
     "rep_mismatches": 0
    },
    {
     "vec": "30",
-    "cells": 21061,
+    "cells": 19905,
     "mismatches": 0,
     "rep_mismatches": 0
    },
    {
     "vec": "31",
-    "cells": 21061,
+    "cells": 19905,
     "mismatches": 0,
     "rep_mismatches": 0
    },
    {
     "vec": "32",
-    "cells": 21061,
+    "cells": 19905,
     "mismatches": 0,
     "rep_mismatches": 0
    },
    {
     "vec": "33",
-    "cells": 21061,
+    "cells": 19905,
     "mismatches": 0,
     "rep_mismatches": 0
    },
    {
     "vec": "34",
-    "cells": 21061,
+    "cells": 19905,
     "mismatches": 0,
     "rep_mismatches": 0
    },
    {
     "vec": "35",
-    "cells": 21061,
+    "cells": 19905,
     "mismatches": 0,
     "rep_mismatches": 0
    },
    {
     "vec": "36",
-    "cells": 21061,
+    "cells": 19905,
     "mismatches": 0,
     "rep_mismatches": 0
    },
    {
     "vec": "37",
-    "cells": 21061,
+    "cells": 19905,
     "mismatches": 0,
     "rep_mismatches": 0
    },
    {
     "vec": "38",
-    "cells": 21061,
+    "cells": 19905,
     "mismatches": 0,
     "rep_mismatches": 0
    },
    {
     "vec": "39",
-    "cells": 21061,
+    "cells": 19905,
     "mismatches": 0,
     "rep_mismatches": 0
    },
    {
     "vec": "40",
-    "cells": 21061,
+    "cells": 19905,
     "mismatches": 0,
     "rep_mismatches": 0
    },
    {
     "vec": "41",
-    "cells": 21061,
+    "cells": 19905,
     "mismatches": 0,
     "rep_mismatches": 0
    },
    {
     "vec": "42",
-    "cells": 21061,
+    "cells": 19905,
     "mismatches": 0,
     "rep_mismatches": 0
    },
    {
     "vec": "43",
-    "cells": 21061,
+    "cells": 19905,
     "mismatches": 0,
     "rep_mismatches": 0
    },
    {
     "vec": "44",
-    "cells": 21061,
+    "cells": 19905,
     "mismatches": 0,
     "rep_mismatches": 0
    },
    {
     "vec": "45",
-    "cells": 21061,
+    "cells": 19905,
     "mismatches": 0,
     "rep_mismatches": 0
    },
    {
     "vec": "46",
-    "cells": 21061,
+    "cells": 19905,
     "mismatches": 0,
     "rep_mismatches": 0
    },
    {
     "vec": "47",
-    "cells": 21061,
+    "cells": 19905,
     "mismatches": 0,
     "rep_mismatches": 0
    },
    {
     "vec": "48",
-    "cells": 21061,
+    "cells": 19905,
     "mismatches": 0,
     "rep_mismatches": 0
    },
    {
     "vec": "49",
-    "cells": 21061,
+    "cells": 19905,
     "mismatches": 0,
     "rep_mismatches": 0
    },
    {
     "vec": "50",
-    "cells": 21061,
+    "cells": 19905,
     "mismatches": 0,
     "rep_mismatches": 0
    },
    {
     "vec": "51",
-    "cells": 21061,
+    "cells": 19905,
     "mismatches": 0,
     "rep_mismatches": 0
    },
    {
     "vec": "52",
-    "cells": 21061,
+    "cells": 19905,
     "mismatches": 0,
     "rep_mismatches": 0
    },
    {
     "vec": "53",
-    "cells": 21061,
+    "cells": 19905,
     "mismatches": 0,
     "rep_mismatches": 0
    },
    {
     "vec": "54",
-    "cells": 21061,
+    "cells": 19905,
     "mismatches": 0,
     "rep_mismatches": 0
    },
    {
     "vec": "55",
-    "cells": 21061,
+    "cells": 19905,
     "mismatches": 0,
     "rep_mismatches": 0
    },
    {
     "vec": "56",
-    "cells": 21061,
+    "cells": 19905,
     "mismatches": 0,
     "rep_mismatches": 0
    },
    {
     "vec": "57",
-    "cells": 21061,
+    "cells": 19905,
     "mismatches": 0,
     "rep_mismatches": 0
    },
    {
     "vec": "58",
-    "cells": 21061,
+    "cells": 19905,
     "mismatches": 0,
     "rep_mismatches": 0
    },
    {
     "vec": "59",
-    "cells": 21061,
+    "cells": 19905,
     "mismatches": 0,
     "rep_mismatches": 0
    },
    {
     "vec": "60",
-    "cells": 21061,
+    "cells": 19905,
     "mismatches": 0,
     "rep_mismatches": 0
    },
    {
     "vec": "61",
-    "cells": 21061,
+    "cells": 19905,
     "mismatches": 0,
     "rep_mismatches": 0
    },
    {
     "vec": "62",
-    "cells": 21061,
+    "cells": 19905,
     "mismatches": 0,
     "rep_mismatches": 0
    },
    {
     "vec": "63",
-    "cells": 21061,
+    "cells": 19905,
     "mismatches": 0,
     "rep_mismatches": 0
    }

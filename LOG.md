@@ -4785,3 +4785,6 @@ Bounded flat/hier probe (COMPOSE_SECS=600, Temp-only) to find a live ladder witn
 
 ## 2026-10-05 (day loop 9) -- first exhaustive add8 sweep: 65536/65536 green
 GA banked add8merge (OR-less carry, 49k blocks) with sampled dual-engine only. Ran first FULL sweep (verify_par warm default, nchunks=64, 1024/chunk): VERIFY OK 65536 vectors, 64 chunks green, exit 0. Slowest chunk 540.9s (straggler skew, same class as HIER_NCHUNKS note). Warm chain held across 1024+ chains. No code change; verification value only. Next: straggler distribution for chunk sizing.
+
+## 2026-10-05 (add8 squeeze) -- NAND carry wins: 46502 blocks, dual PASS 0/1273920
+XOR-carry add8 (49070) -> NAND carry (C = NOT((NOT ca) AND (NOT u))): bands 1231 vs 1525 (-19%), merge 46502 (-5% after streets). Smoke 4/4, verify2 64-vector SAMPLED dual PASS (sim 75s, cmc 1679s -- NOT/torch-heavy builds cost cmc ~20x sim; needed --cmc-timeout 2400 after a 900s timeout that read as FAIL with partial-dump diffs). Evo per-band pilot: evals crawl on loaded box (0 evals/30min, full ladder per mutant) -- parked, not deleted (scratch/evo_add8b1). OR-carry 42161 stays red (stale OR recs, owner lane).
