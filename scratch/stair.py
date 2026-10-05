@@ -43,7 +43,12 @@ BUILD = [
 
 IO = {'levers': {(0, 0): 'A'}, 'lamps': {(4, 0): 'Y'}}
 VECS = [{'A': 1}]
-WANT = [{'Y': True}]
+# WANT is dust-only. The lamp at (4,3,0) is NOT evaluated: sim's io maps keys
+# to (x,1,z) via _y(), so pins of either kind exist only at y=1 -- a lamp
+# above y=1 is invisible to sim by design (same y=1 limitation as levers,
+# found while building stairdown.py). That is a probe-design constraint, not
+# physics; this probe is the staircase dust, which is what disagrees in alu4.
+WANT = None
 
 
 def sim_run():
@@ -65,7 +70,10 @@ def cmc_run(ticks, timeout):
         'levers': [['%d,%d' % k, v] for k, v in IO['levers'].items()],
         'lamps': [['%d,%d' % k, v] for k, v in IO['lamps'].items()],
         'vectors': VECS,
-        'expected': [{o: bool(v) for o in ('Y',)} for v in WANT],
+        # dust-only probe: no lamp expectation (sim io is y=1-only). cmc's
+        # ok is meaningless here; only its cells dump is read.
+        'expected': [{} for _ in VECS] if WANT is None else
+                    [{o: bool(v) for o in ('Y',)} for v in WANT],
         'sampled': False, 'n_inputs': 1,
     }
     json.dump(doc, open(doc_p, 'w'))
@@ -108,11 +116,16 @@ def main():
         timeout = int(a[a.index('--cmc-timeout') + 1])
 
     simres = sim_run()
-    for i, (vec, want) in enumerate(zip(VECS, WANT)):
-        got = simres[i]['lamps'].get('Y', False)
-        print('SIM  A=%d -> Y=%-5s (want %-5s) %s'
-              % (vec['A'], got, want['Y'],
-                 'ok' if got == want['Y'] else 'WRONG'), flush=True)
+    for i, vec in enumerate(VECS):
+        if WANT is None:
+            print('SIM  A=%d (lamp not evaluated: sim io is y=1-only)'
+                  % vec['A'], flush=True)
+        else:
+            want = WANT[i]
+            got = simres[i]['lamps'].get('Y', False)
+            print('SIM  A=%d -> Y=%-5s (want %-5s) %s'
+                  % (vec['A'], got, want['Y'],
+                     'ok' if got == want['Y'] else 'WRONG'), flush=True)
 
     cmcres, to = cmc_run(ticks, timeout)
     if cmcres is None:
@@ -121,7 +134,7 @@ def main():
         return 2
     dump = cmcres.get('dump') or {}
     agree, sim_wrong = True, False
-    for i, (vec, want) in enumerate(zip(VECS, WANT)):
+    for i, vec in enumerate(VECS):
         if dump.get('all'):
             cc = {tuple(int(v) for v in k.split(',')): int(p)
                   for k, p in dump['all'][str(i)]['cells'].items()}
@@ -137,7 +150,7 @@ def main():
                   % (vec['A'], sval[0], cval[0], sval[1], cval[1],
                      sval[2], cval[2],
                      'agree' if agreed else 'DISAGREE'), flush=True)
-        if simres[i]['lamps'].get('Y', False) != want['Y']:
+        if WANT is not None and simres[i]['lamps'].get('Y', False) != WANT[i]['Y']:
             sim_wrong = True
     print('\n%s' % ('ENGINES AGREE' if agree and not sim_wrong else
                     'ENGINES DISAGREE on the staircase -- vertical rule'),

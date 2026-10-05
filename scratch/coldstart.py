@@ -56,10 +56,11 @@ GATES = [
     # constant-lever source category exists.
 ('wireconn', ['scratch/wireconn.py'], 600,
      'params do not overrule geometry'),
-    # stair_rise is deliberately NOT here although its dust agrees: sim leaves
-    # its lamp dark while cmc lights it, and that lamp split is an open
-    # question, not a settled shape. Locking it in would enshrine whichever
-    # engine is wrong. It stays a standalone probe.
+    # stair_rise rejoined once its lamp verdict was removed: sim io pins exist
+    # only at y=1, so a lamp at y=3 is invisible by design and was never
+    # physics. The probe is dust-only now and says so.
+    ('stair_rise', ['scratch/stair.py'], 600,
+     'vertical rise dust agrees 15/15 14/14 13/13'),
     ('stair_fall', ['scratch/stairdown.py'], 600,
      'isolated fall agrees 14/14 13/13'),
     ('lid', ['scratch/lid.py'], 600,
