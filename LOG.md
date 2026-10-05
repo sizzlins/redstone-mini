@@ -4984,3 +4984,42 @@ a 206k field create a loop the per-stitch guards do not catch.
 Committed as an incomplete build, stated as such: the recipe is
 logic-correct and band-green, and the merge oscillation is the open item.
 Not claiming a working ALU.
+
+## 2026-10-05 (night loop, close) -- pinned lamp: FULL root cause, reverted again
+
+Fourth attempt, and this one found the actual chain rather than a symptom.
+Three separate facts, each measured:
+
+1. **`build_netspec` treats `OUT` as a no-op** -- literally
+   `elif op == "OUT": pass  # lamp taps the driver wire; no stub`
+   (`layout.py:919`). So the router is NEVER asked to route to a lamp. For a
+   normal output that is correct and free: `tap_lamps` stamps one cell against
+   the net's own driver, and that zero-wire tap IS the connection. For a lamp
+   160 cells away it means nothing is ever routed -- which is exactly the dark
+   lamp, and exactly why every band composed "successfully" with all 9 lamp
+   blocks present at their pins.
+2. **The `ring()` halo around a pinned lamp reserves the very cell the route
+   must arrive at.** Dropping the ring cut band 0 from 11,775 to **819
+   blocks** -- the halo was the entire cost, not the routing.
+3. **A self-AND buffer output has no driver of its own.** `pos[COUTR]` resolves
+   to `pos[COUT]`, the boundary stub. So even after registering the tap as a
+   real load (via a distinct `OUTX` op, leaving the no-pin path byte-identical
+   for all 21 banked green builds), there is no distinct driver to route
+   FROM: netspec had `drv` and `loads` pointing at the same neighbourhood and
+   `io["nets"]` came back with no `COUTR` wire at all.
+
+So a remote lamp needs a genuine electrical endpoint, not a placement hint: a
+repeater buffer whose output cell IS the pinned lamp's tap, placed by the
+router and read as a load. That is a real tile (a repeater + its load
+registration + a power readout at the pin), and it is the honest shape of the
+work. Reverted `layout.py`, `tiles.py`, `recipes/add8.txt` to HEAD again --
+nothing unproven banked. The pin mechanism itself is committed and opt-in,
+and its two failure modes are now documented rather than mysterious.
+
+Cost ledger for the feature, all measured, for whoever picks it up:
+| approach | blocks | result |
+|---|---|---|
+| one buffer band per readout | 135,260 | works, lamps mid-field not at levers |
+| all readouts in band 0, no pin | 20,390 (band 0) | bank stitch dies |
+| pin, no ring, load registered | 819 (band 0) | composes, lamp dark (no driver) |
+| pin + repeater endpoint | not built | the actual fix |
