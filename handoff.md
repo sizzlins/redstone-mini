@@ -15,14 +15,39 @@ and a survey of downloaded redstone computers.
 
 | what | state | evidence |
 |---|---|---|
-| full coldstart | 15/15 green | hier_alu4 1024/1024 in 207s |
-| alu4merge_g 49k diff | CLOSED (cmc settling) | 64-vector re-gate 0/1957248 dust, 0/279552 rep |
+| **add8 + 16 indicators, pitch 2** | **GREEN LIVE, 44,650 blocks** | **19/19 in real Minecraft, overflow included** |
+| full coldstart | **16/16 green** | new `pin_lamp` gate |
+| LAMP pin | **now a routed load** | band S0 pinned to lever row: 1,054 blocks (vs 135,260 naive) |
 | sweep (99 builds) | 21 green / 28 red characterized / 2 DIFFs | sweep.json at 1200 ticks |
-| add8 (NAND carry) | green, 46,502 blocks | smoke 4/4, 64-vector sampled dual PASS 0/1273920 |
 | add8 exhaustive | 65536/65536 green (opt lane, XOR version) | commit 83fbd60 |
-| alu8 recipe | logic correct, NOT yet routed | recipe-check 0 fails; bands 0-6 red (double-NOT wall, retest pending) |
+| alu8 | all 8 bands ROUTE (first time) | merge oscillates: churn 52,985, max_gap 205,950 |
 | known diverges | stairglass 0v13, notmin (Finding 3) | contained, gated, re-confirmed |
 | cpu4 | red by inheritance, untouched | not this lane |
+
+### Live rig: ONE BUILD PER REGION
+
+| region | what | state |
+|---|---|---|
+| **z 803..973** | **add8 pitch-2 + indicators** | **19/19 green** — `/tp 2 68 820` |
+| z 404..483 | add2opt | re-pasted, intact |
+| z 303..403 | orphaned first add8 paste | ignore |
+| z 3..293 | four-deep stale add8 debris | **ignore** |
+
+Use `scratch/live_check.py` (reads levers back, 20s settle). Do **not** use
+`rig_read` for anything big: it never reads the levers back and settles too
+briefly, so a slow carry chain reads as a wrong bit.
+
+### The one trap that cost the whole night
+
+Every in-game add8 failure until now was **my own pastes overlapping**, not the
+circuit. `build1..4` were one add8 pasted four times at z offsets 0/0/1/2, and
+add2opt (z 404..483) sat inside tonight's add8 (z 303..473). **Read the paste
+log — the rig's datapack still holds every function ever pasted, with
+coordinates — before believing any live measurement.**
+
+Related: never compare a wire's full NBT with `execute if block`; the game
+recalculates `east/west/south/north/power` on placement, so it always says
+false. Compare the type.
 
 ## What changed (this lane's commits, newest last)
 
@@ -62,6 +87,16 @@ carry), alu8.txt, add8b0-7.txt (band seeds). New tools: census_world.py
 7. **PMC profile download blocked** — Cloudflare challenge, no headless
    bypass. Mirror had 2 maps; GitHub BatPU/BatPU-2/Graphing-Calculator cloned
    to D:\put gitrepos here\. Survey at survey/REPORT.md + census.txt.
+8. **Sum lamps at the lever row — architecture, not a pin bug.** The pin
+   mechanism is DONE and gated (`pin_lamp`, 1,054 blocks per run). What blocks
+   the 9-lamp version is that `hier_bands` composes each band in its OWN frame
+   and `_last_shift` (compose.py:1797) is only known AFTER that band is
+   composed and centred. A per-band pin therefore cannot know where the merged
+   lever bank will be, and `hier_bands` does not pass `lamps_at` into
+   sub-recipes at all. The fix is a **post-merge routing pass** in the merged
+   field: after the stitch places the bank, drive each sum net to a lamp at the
+   bank. S0's band proves the shape works standalone; S7/COUT cannot even be
+   composed alone (they consume earlier bands' carries).
 
 ## Files touched (this lane)
 
