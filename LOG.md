@@ -4865,3 +4865,39 @@ Two rig quirks cost time here, both measured not guessed:
 - A 46k-block build spans 2,394 chunks and `forceload` caps at 256 per call.
   RCON replying "no response" only means the server was busy -- the command
   ran. Verified by a repaste that reported 3 errors and left 60/60 present.
+
+## 2026-10-05 (sum readouts) -- pin mechanism prototyped, REVERTED, reason recorded
+
+Goal: the wire that powers each sum lamp run back to the lever row, ending in
+lamps there (the operator's words, twice). Prototyped the enabling mechanism,
+hit two structural limits, reverted. Findings so the next attempt starts at
+the right place:
+
+1. **A lamp cannot be pinned to a build coordinate today.** `tiles.py`
+   `tap_lamps` picks the first free cell 1-2 from the net's own driver, so any
+   output meant to be read elsewhere lands mid-field. Prototyped
+   `LAMP <name> AT <x> <z>` (parse in `recipe.py`, honour in a `_tap_pinned`
+   helper, loud failure with a reason instead of a silent relocate). It WORKS
+   at band level: band 0 composed 150 blocks with the pin honoured and refused
+   loudly with `pin (3,168) holds wire S0R` when pins were spaced 1 apart --
+   correct behaviour, the tap of one pin steals the next pin's cell.
+2. **The pin resolves in BAND-LOCAL coordinates, not build coordinates.** This
+   is the real limit. The merge shifts each band by `offs[b]` on x plus the
+   band's internal `_last_shift`, so a pin authored at build (2,168) landed at
+   merged (19,241). Making pins build-absolute needs merge-coordinate
+   resolution inside `compose_hier_parts`, which also has to emit the readout
+   names into `io['lamps']` -- today `io['lamps']` has **no** `COUT`/`COUTR`
+   key at all after a merge, so even a correctly placed readout lamp is
+   invisible to the sim gate and the rig.
+3. Cost of the naive alternative, measured: one buffer band per readout =
+   135,260 blocks; all readouts in band 0 = 20,390 for that band and the bank
+   stitch then dies (`no ground for A2`).
+
+Reverted `recipe.py`, `tiles.py`, `recipes/add8.txt` to HEAD rather than bank
+a mechanism that has never produced a correct result. `coldstart --only`
+9/9 green after the revert. No unproven code left in the tree.
+
+Delivered and proven instead: 41 signs live on the rig (16 levers, 16
+indicators, 9 sums), text verified by `data get block`; 16 lever-side
+indicator lamps for **16 blocks**, sim 64/64, dual-engine PASS, live 16/16 on
+/ 0/16 off / A0-alone lights exactly one.
