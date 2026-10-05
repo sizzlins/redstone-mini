@@ -257,3 +257,34 @@ turned out to be a coverage artifact (the first was the resumed `CACHED` rows
 with no numbers). The pattern is that a gate which *looks* exhaustive but is
 sampled will be read as exhaustive. Making coverage a visible field is the
 durable fix.
+
+## Status refresh -- probes, containment, corrections (same night, later)
+
+**Probe matrix, all 2-second runs** (`coldstart --probes` runs them
+informationally; gates stay green):
+| probe | result | meaning |
+|---|---|---|
+| `wireconn.py` | AGREE 15/14 | neither engine reads params over geometry |
+| `stairdown.py` | AGREE 14/13 + lamp | isolated fall on cobble fine |
+| `lid.py` | AGREE 15/14/13 + lamp | horizontal flow under a lid fine |
+| `stair.py` | dust AGREE, lamp SPLIT | rise fine; sim leaves riser-tip lamp dark, cmc lights it (open) |
+| `stairglass.py` | **DIVERGE 0 vs 13** | down-flow onto glass: sim refuses, cmc powers |
+| `notmin.py` | **DIVERGE 0 vs 15** | non-pin lever: sim blind (Finding 3) |
+
+**Containment for Finding 3** (after a fresh-context adversarial review that
+called "do nothing" survivorship bias): `verify2` now lists every lever sim
+cannot power in the verdict and prints `GATE WARNING`; sweep rows surface it.
+Zero physics risk. Full directional fix still deferred (other agent mid-flight
+on `simvec.py`).
+
+**Corrections to my own claims:** (1) stackfail.pkl is sim-green/cmc-red, NOT
+green/green -- cmc miscomputes its AND, so the hole is upgraded to a surfaced
+divergence, not closed; (2) alu4 "0 diff" was 4-of-1024 vectors, corrected to
+the 64-vector 49814-cell finding with coverage fields now on every sweep row;
+(3) "49 junk files" are 235 MB of legitimate band caches/state dumps.
+
+**alu4merge_g 49k, current:** localized to vertical staircases, both
+directions, narrowed past sources/locks/decay/params/settling/rise/fall to a
+cobble-lidded joint; basic lid agrees so it needs staircase+lid combined.
+`coldstart` runs 8 gates green in ~5 min; `--probes` reports the 3 known
+divergences without touching the exit code.
