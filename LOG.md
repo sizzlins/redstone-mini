@@ -4681,3 +4681,20 @@ NEXT, designed not run: a lid probe in the wireconn.py pattern (wire joint
 with an opaque lid over it, both engines, one vector), then the side-by-side
 of sim.py:404-411 against cmc engine.js:275-295 on that shape. That is the
 narrowest remaining question and it is bounded.
+
+------------------------------------------------------------
+lid.py: a lid over straight wire agrees 15/15 14/14 13/13.
+The alu4 joint needs staircase+lid combined, still open.
+------------------------------------------------------------
+Minimal lid shape (straight wire, opaque cobble lid over the middle cell,
+lever on, lamp at the end):
+
+    OUT  (1,1,0) sim=15 cmc=15  (2,1,0)* sim=14 cmc=14  (3,1,0) sim=13 cmc=13
+    ENGINES AGREE / exit 0
+
+So horizontal flow under a lid is identical in both engines. The alu4 joint --
+dust, opaque lid, dust stacked vertically at one x,z with the runs continuing
+past -- is NOT this shape, and remains the narrowest open question. The probe
+matrix now covers: connectivity-from-geometry (agree), rise (agree), fall on
+cobble (agree), fall on glass (DISAGREE 0 vs 13), straight lid (agree),
+non-pin lever (DISAGREE, sim blind). Each is a 2-second run.
