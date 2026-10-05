@@ -4744,3 +4744,6 @@ repface.py now tests east/west/south/north, lever on the input side per sim conv
 
 ## 2026-10-05 (GA night loop, close) -- 64-vector PROOF: 0/1957248 dust, 0/279552 repeaters
 Full --diff-all re-gate of alu4merge_g at 1200 ticks: SIM ok=True n=64 13s, CMC ok=True n=64 865s, DUAL-ENGINE PASS. The 49814-cell finding is retracted as a coverage artifact squared: first 4-of-1024 sampling, then 400-tick settling. stairglass (0v13) and notmin re-confirmed DIVERGE on tiny builds -- rule gaps, not settling, still correctly contained/gated. Verdict JSON committed as the receipt.
+
+## 2026-10-05 (GA night loop, cont.) -- slab support is a cmc boundary, out of scope
+slabfall.py (faller on cobble slab): cmc structural REFUSAL at support stage, pops dust-on-slab [2,2,0] and [3,1,0]. sim accepts slab support (sup3). No banked build uses slabs, so this cannot explain alu4; kept as refusal probe (exit 2), not a gate. Glass-vs-slab discriminator stays open until cmc models slab support. Assumption: banked builds are slab-free (spot-checked alu4merge_g block kinds; full census in sweep).
