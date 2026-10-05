@@ -90,6 +90,11 @@ def row_from_verdict(v, doc):
          'vectors_sampled': json.load(open(doc)).get('sampled'),
          'engine': v.get('engine'),
          'cmc_stage': v.get('cmc', {}).get('stage')}
+    # Builds sim cannot fully represent (Finding 3). A green here would be
+    # reported on physics sim did not compute, so it must be visible.
+    ul = v.get('unrepresentable_levers') or []
+    if ul:
+        r['unrepresentable_levers'] = ul
     d = v.get('diff')
     if d:
         r['diff_cells'] = d.get('mismatches')

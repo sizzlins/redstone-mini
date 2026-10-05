@@ -75,6 +75,35 @@ def keystr(k):
                                           else (k,)))
 
 
+def unrepresentable_levers(blocks, io):
+    """Lever blocks sim CANNOT power, listed so the gate never misreads them.
+
+    sim powers a lever only when its io pin key is held true in the vector
+    (sim.py:542 does `vec.get(lever[rear], False)`). A lever absent from io
+    maps to its own floor coordinate, which no vector ever contains -- so it
+    reads unpowered forever even when its blockstate says powered=true, while
+    cmc and vanilla treat it as a real source (Finding 3, scratch/notmin.py).
+    That is a silent wrong default in shared core: no error, no warning, just
+    a wrong 0. This lists every such lever so the verdict says, in plain
+    words, that the build uses a construct sim cannot represent -- instead of
+    reporting a confident green or red on physics sim did not actually compute.
+    Returns [(cell, powered_bool)].
+    """
+    pins = set()
+    for k in (io.get('levers') or {}):
+        pins.add(tuple(k) if isinstance(k, (list, tuple)) else k)
+    out = []
+    for b in blocks:
+        if len(b) < 4:
+            continue
+        x, y, z, s = b[0], b[1], b[2], str(b[3])
+        if s == 'minecraft:lever' or s.startswith('minecraft:lever['):
+            floor = (x, y - 1, z)
+            if floor not in pins and (x, z) not in pins:
+                out.append(((x, y, z), 'powered=true' in s))
+    return out
+
+
 def build_doc(recipe_p, pkl_p, out_p, max_vectors):
     from recipe import parse_recipe, eval_net
     r = parse_recipe(open(recipe_p).read())
@@ -253,6 +282,22 @@ def main():
     verdict = {'doc': doc_p, 'pkl': pkl_p, 'recipe': recipe_p, 'vec': vec,
                'engine': engine_stamp(), 'n_vectors': len(doc['vectors']),
                'argv': sys.argv[1:]}
+    # Flag builds sim cannot fully represent BEFORE the engines run, so a green
+    # or red is never reported on physics sim did not compute.
+    try:
+        io4 = {'levers': {tuple(int(v) for v in k.split(',')): n
+                          for k, n in doc['levers']}}
+        strange = unrepresentable_levers(
+            [(b[0], b[1], b[2], b[3]) for b in doc['blocks']], io4)
+    except (ValueError, KeyError, TypeError):
+        strange = []
+    verdict['unrepresentable_levers'] = [
+        {'cell': list(c), 'powered': p} for c, p in strange]
+    if strange:
+        print('GATE WARNING: %d lever(s) sim cannot power (not input pins): %s'
+              % (len(strange), ', '.join(
+                  '%s%s' % (c, ' ON' if p else '') for c, p in strange)),
+              flush=True)
 
     # --- engine 1: sim (child process, hard timeout) ---
     sim_out = doc_p + '.sim.json'

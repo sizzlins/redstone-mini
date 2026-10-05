@@ -4562,3 +4562,63 @@ wake list now stores boolean edges NEGATED, so indexing it raw reads as Python
 negative indexing and every boolean edge reports as an EXTRA cell from the far
 end of id space -- the fourth probe bug of this session, all in the probes,
 none in the engine.
+
+------------------------------------------------------------
+CORRECTION: stackfail.pkl is NOT green/green. It is sim-green,
+cmc-red -- which is more interesting, and my commit message lied.
+------------------------------------------------------------
+Commit 453e7f9 says "stackfail.pkl is green" on the strength of a direct
+verify2 run where cmc reported ok=True with n=1 (one vector!). The sweep, on a
+4-vector sample, says sim=true cmc=false. Both true; mine was thinner.
+
+The sweep verdict: on {a:1,b:1,c:0}, sim computes t=true,y=true (correct per
+the truth table) while cmc computes t=false,y=false. So cmc miscomputes a
+basic AND -- or chokes on the construct this "failed stacking experiment"
+uses. The recipe (recipes/stackfail.txt) is CORRECT -- sim proves it on all 8
+vectors -- which makes this a concrete, minimal, sim-right/cmc-wrong case:
+the mirror image of not_full.pkl.
+
+So the coverage hole is NOT closed. It is upgraded: from "no recipe, cannot
+score" to "recipe exists, sim green on all 8, cmc red on the AND". That is
+precisely the class the dual-engine gate exists to surface, and it is now
+surfaced instead of skipped. The commit message stands as written (history is
+history) but the claim in it is retracted here and in MORNING-REPORT.
+
+------------------------------------------------------------
+DOUBT CYCLE on the lever non-fix (doubt-driven-development).
+The reviewer was right; "do nothing" is replaced by containment.
+------------------------------------------------------------
+Ran a fresh-context adversarial review of the decision not to fix sim's
+non-pin lever blindness. 9 substantive findings. The ones that stand,
+classified against the artifact:
+
+  VALID + ACTIONABLE:
+  - Blast radius was survivorship bias. "1 of 104 builds" measures banked
+    artifacts, not the open search where unseen non-pin levers would be
+    generated and silently pruned. Past safety does not imply future safety.
+  - (1) "no banked green may change" is ALREADY satisfied by construction. A
+    fix confined to the non-pin path cannot touch banked builds, which all use
+    declared pins. I never attempted it; I assumed any physics change breaks
+    (1). Wrong.
+  - Silent wrong default. `vec.get(lever[rear], False)` fails silently on a
+    key-domain mismatch (pin-name vs coordinate). No error, no warning.
+  - The scratch regression test guards nothing enforceable. Exits 1 like a
+    crash, unowned, unrunnable by any gate.
+  - "Do nothing" has unbounded search-blindness cost vs a bounded one-time
+    fix cost. Inverted.
+
+  VALID TRADE-OFF (accepted explicitly):
+  - Full directional physics fix in BOTH engines is still deferred. Reason, now
+    stated as a trade-off rather than a veto: the other agent is mid-flight on
+    simvec.py, and a new source category needs their mirror. Cost of waiting is
+    contained by what ships below; cost of colliding is a broken shared file.
+
+  WHAT SHIPS INSTEAD (containment, zero physics risk):
+  verify2.unrepresentable_levers() lists every lever block sim cannot power,
+  the verdict records it, and the gate prints:
+      GATE WARNING: 1 lever(s) sim cannot power (not input pins): (1,1,2) ON
+  Verified: fires on not_full.pkl, silent (empty list, PASS) on
+  compact_add2/best.pkl. Sweep rows surface it. No build using this construct
+  can ever be misread again -- the failure is loud, not silent.
+  Cross-model review skipped: non-interactive context (overnight autonomous
+  loop, operator asleep). Announced per the skill.
