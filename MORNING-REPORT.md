@@ -7,21 +7,39 @@ claim below is a run, not a plan. Gate command: `python scratch/coldstart.py`.
 
 | what | state | evidence |
 |---|---|---|
-| **add8 + 16 lever indicators** | **GREEN, 46,518 blocks** | dual-engine PASS (sim n=8, cmc n=8), lamp_pins 25/25, live 16/16 |
-| add8 | 46,502 blocks, exported | `.schem` / `.mcfunction` / `.html`, now with 41 labels baked in |
+| **add8 + 16 lever indicators** | **GREEN, 44,650 blocks** (was 46,518) | dual-engine PASS, lamp_pins 25/25, indicators 64/64 |
+| add8 at bank pitch 2 | 44,634 blocks | dual PASS, 32 vectors, **0/610,816 dust**, 0/86,848 rep |
+| add8 (default pitch 10) | 46,518 blocks | still exported and green |
 | alu8 (8-bit ALU, add/sub/and/or/xor + ZNC) | **all 8 bands route** (first time) | recipe 0 mismatches; merge oscillates — not a working ALU |
 | full coldstart | **15/15 green** | incl. hier_alu1 32/32 |
 
+**The lever pitch question, answered with measurements.** The 10-block spacing
+is load-bearing: the bank is a set of routing corridors, and the drop from each
+row to its band crosses every row south of it, so the gap must hold a 5-cell
+hop. Range measured, all smoke 4/4: **10 → 46,502 · 6 → 45,542 · 4 → 45,062 ·
+3 → 44,822 · 2 → 44,634 · 1 → STITCH RED** (`wire B0 touches A0` — adjacent
+lever cells share dust, so 1-apart is physically impossible, not just tight).
+
+Pinned to **2** for add8 via `recipes/add8.bank` — **1,868 blocks smaller
+(-4.0%)** than this morning, dual-engine clean. It is a *per-recipe pin*, not a
+new default, because **alu4 goes red at pitch 2** (`no ground for A2`) while
+alu1 stays green. That is exactly why it had to be measurable first.
+
 ## 2. Live on the 1.21 rig (`localhost:25566`)
 
-The add8 world is up and standing at `y=65`, levers at `x=3, z=3..153`.
-`/tp 2 65 78` and look: 16 levers, a sign naming each, and an indicator lamp
-that lights with its own lever. Verified this session: **16/16 levers,
-16/16 signs, 16/16 indicator lamps**, and toggling gives 16/16 lit / 0/16 off /
-A0-alone lights exactly one.
+**The tighter build is at `z+300`** (pitch 2, 50/50 sampled blocks present).
+`/tp 2 65 320` — the 16 levers are now only 2 apart, and each has a sign and
+an indicator lamp. The indicator lamps are **perfect live**: they track their
+levers on every vector read.
 
-`add2opt` (3,730 blocks) is also on the rig at z+400 and reads **2/2 vectors
-green on real redstone** — the only build with in-game proof of correctness.
+The older 10-apart copy is still at `z 3..153` if you want to compare.
+
+`add2opt` (3,730 blocks) is at z+400 and reads **2/2 vectors green on real
+redstone** — still the only build with in-game proof of correctness. add8's sum
+lamps do not read correctly in-game (some latch lit; a clear pass re-latches),
+which is a **paste** problem, not a circuit one: at 44k the chunked setblock
+paste is not reliably complete, and the leftover fragments hold lamps lit. The
+build is bit-identical in sim and cmc.
 
 ## 3. What I could not deliver, and exactly why
 
