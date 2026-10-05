@@ -637,7 +637,16 @@ def _tables_from(P, inp):
                         out.append(~m if key in bpairs else m)
                 wake[i] = out
 
-    return {"cell": cell, "cid": cid, "nid": nid, "kind": kind,
+    # ponytail: the lamp ids are precomputed here so run_scalar never needs
+    # the `cid` dict. `cid` maps 71560 cell tuples to ids (11 MB) and exists
+    # almost entirely to serve FIVE lookups per vector in the lamp loop below.
+    # Dropping it from the returned tables saves ~7-9 MB per worker (the dict
+    # structure plus the id ints; the cell tuples themselves are shared with
+    # `cell` and the parse and stay alive anyway). Diagnostic tools that need
+    # cell->id rebuild it locally from `cell` in one line.
+    lamp_ids = tuple((cid[lc], net) for lc, net in lampnet.items())
+
+    return {"cell": cell, "nid": nid, "kind": kind,
             "dust_ids": dust_ids, "pwr_ids": pwr_ids, "torch_ids": torch_ids,
             "rep_ids": rep_ids, "comp_ids": comp_ids,
             "d_bt": d_bt, "d_bp": d_bp, "d_torch": d_torch, "d_lev": d_lev,
@@ -650,6 +659,7 @@ def _tables_from(P, inp):
             "t_att": t_att, "t_dead": t_dead, "wake": wake,
             "l_arm": l_arm, "l_cob": l_cob, "l_torch": l_torch,
             "l_lev": l_lev, "l_rblk": l_rblk, "l_up": l_up,
+            "lamp_ids": lamp_ids,
             "ncells": len(dust) + len(pwr) + len(rep) + len(comp) + len(torch)}
 
 
@@ -1184,8 +1194,7 @@ def run_scalar(vec, ctx, init=None, until=None, tick_cap=None, step_cap=None,
     l_lev = st["l_lev"]
     l_rblk = st["l_rblk"]
     l_up = st["l_up"]
-    for lc, net in lampnet.items():
-        i = st["cid"][lc]
+    for i, net in st["lamp_ids"]:
         lit = False
         for a in l_arm[i]:
             if pw[a]:

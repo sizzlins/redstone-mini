@@ -40,7 +40,8 @@ def main():
     st = simvec._tables(P)
     nid = st["nid"]
     ids = st["cell"]
-    cid = st["cid"]
+    # rebuilt locally; `cid` left the hot tables (11 MB) for `lamp_ids`
+    cid = {c: i for i, c in enumerate(ids)}
 
     need = [set() for _ in range(nid)]
 

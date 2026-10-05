@@ -63,7 +63,10 @@ def main():
     O = simvec_old._tables_from(P, {})
     N = simvec._tables_from(P, {})
     ids = N["cell"]
-    cid = N["cid"]
+    # `cid` is no longer in the tables (it cost 11 MB to serve the lamp loop,
+    # so the tables carry precomputed `lamp_ids` instead). Rebuild it locally;
+    # this is a diagnostic tool, not the hot path.
+    cid = {c: i for i, c in enumerate(ids)}
     KIND = {0: "d", 1: "c", 2: "t", 4: "r", 6: "k", 9: "?"}
 
     print(f"{os.path.basename(dp)}: ncells old={O['ncells']} new={N['ncells']} "
@@ -87,9 +90,11 @@ def main():
             dead += 1
             continue
         old_set = {m for _, m in oldw}
-        # the new engine stores IDS; convert back to cells or the comparison is
-        # ids against tuples and everything looks like an EXTRA
-        new_set = {ids[m] for m in N["wake"][cid[c]]}
+        # the new engine stores boolean-only edges NEGATED (~m) so the list
+        # keeps its order; normalise before comparing, or ids[~m] reads as
+        # Python negative indexing and every boolean edge looks like an EXTRA
+        # cell from the far end of the id space
+        new_set = {ids[m if m >= 0 else ~m] for m in N["wake"][cid[c]]}
         extra = new_set - old_set
         if extra:
             bad += 1

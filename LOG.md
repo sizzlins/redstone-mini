@@ -4536,3 +4536,29 @@ shape cannot see a whole class of builds; now it handles both.
 
 Coverage is now complete: every real circuit build in the tree gates, and this
 one is green.
+
+## 2026-10-05 -- Opt H: drop the `cid` dict from the hot tables. 40.6 -> 38.1 MB
+
+`scratch/tbl_sizes.py` re-run after the wake work showed a new biggest table:
+`cid` itself, 11.03 MB -- the cell->id dict, whose only hot-path use was FIVE
+lookups per vector in the lamp loop. Precomputed those into `lamp_ids`
+((id, net) pairs) at build time and removed `cid` from the returned tables.
+
+Saving is ~2.5 MB not the full 11, because tracemalloc/deep-size counts the
+cell tuples which are shared with `cell` and the parse and stay alive anyway;
+what leaves is the dict structure plus the id ints. At 16 workers that is still
+~40 MB, and it is the cheapest kind of memory: pure overhead with no physics
+attached.
+
+Gates: tbl_diff IDENTICAL both builds, tbl_equiv back to its 2 known l_arm
+diffs, simvec self-check, all sim.py canaries, compose, compose_check
+144/322/224/214, nonhier 6/6, diff_engine ALL IDENTICAL, hier alu1 32/32,
+alu4 1024/1024 cold exit 0 (38.5s).
+
+Five diagnostic tools (`tbl_equiv`, `wake_need`, `dump_cell`, plus `wake_miss`
+and `evlog` which only ever needed `cell`) rebuild `cid` locally in one line
+from `st["cell"]`. And `tbl_equiv` needed one more fix in the same commit: the
+wake list now stores boolean edges NEGATED, so indexing it raw reads as Python
+negative indexing and every boolean edge reports as an EXTRA cell from the far
+end of id space -- the fourth probe bug of this session, all in the probes,
+none in the engine.
