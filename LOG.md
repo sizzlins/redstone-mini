@@ -5285,4 +5285,63 @@ off the end of it.
 live-verified **where the circuits end** (19/19, overflow included), plus 16
 live lever indicators. Mirroring all nine bits back to the levers is the one
 open item, and it now has a measured cost ceiling and a known-good pattern to
-follow — instead of three reverted attempts and a wrong theory.
+follow — instead of three reverted attempts and a wrong theory.## Lever-bank pitch is now PERMANENT: a ladder, not a pin
+
+The operator asked whether the tight spacing would apply to future builds. As of
+this commit: yes, automatically, and without me having to remember to pin it.
+
+`hier_verify.py` now walks a pitch LADDER per rung = **stitch -> ins_target ->
+verify**, and only a green VERIFY settles the pitch:
+
+```
+LADDER = 2, 3, 4, 6, 10        # a <recipe>.bank pin overrides: one attempt only
+```
+
+Measured on both existing hier recipes:
+
+| recipe | ladder outcome |
+|---|---|
+| alu1 | **settles at 2** (green, 32/32) |
+| alu4 | 2 STITCH RED -> 3,4,6 VERIFY RED -> **10 VERIFY OK 1024/1024** |
+
+Only the STITCH re-runs per rung. The bank is laid during the merge
+(`hier_stitch._apply_bank_pin`), not per band, so the band cache is valid at
+every rung and a rerun costs seconds instead of a band compose.
+
+**Two bugs this ladder had before it worked, both caught by running it:**
+1. Escalating on the STITCH exit code alone turned a green alu4 gate RED.
+   alu4 *stitches* cleanly at pitch 3 and then verifies red, so "it built" was
+   never a sufficient rung test. The rung has to survive verification.
+2. `verify_par` caches chunk verdicts keyed by TARGET FILE, and every rung
+   wrote `alu4merge_g.pkl`, so rung 4 read rung 3's cached RED. Visible as the
+   same "4 bad chunks" line repeating verbatim across rungs. Each rung now
+   writes its own `_p<NN>.pkl`.
+
+So: 1-block-apart levers are the default *attempt* for every new build, and a
+build that cannot do it gets a roomier bank automatically instead of failing.
+
+## Sum lamps at the lever row: 3/9, and the reason is leg length
+
+Still the open item. What the attempts established, each by measurement:
+
+- direct from the driver: S0 (30/31 targets) and S1 only; S2..S7 and COUT give
+  "no ground" on all 31 bank targets.
+- perimeter (driver -> free lane z=2, then west): S2, in a 529-cell west leg.
+- so the ceiling is **LEG LENGTH ~500 cells**, not the field being 2,000 wide.
+- chained stages: S3 (38 + 319 + 502 = 859 cells) and S4 (4 legs, 1,105 cells)
+  both route. A repeater's output is strong power, so each stage's last
+  repeater is a genuine driver for the next leg -- chaining is sound here.
+
+So the scalable shape is proven. What is NOT done is a reliable driver for all
+nine: `bank_route.py` reached 3/9, then regressed when I found it stamped a
+FAILED chain's legs into the field and double-stamped a successful one, and the
+fixed version then ran past 45 min. Chained routing over a 2,000-wide field is
+seconds-to-minutes per net and my search order is bad, not the approach.
+
+**The permanent implementation should not be a post-merge router at all.** These
+nine lamps are exactly the shape the stitch already carries: long hauls between
+distant points across a dense field. Declaring them as cross-band nets and
+letting the existing stitch route them reuses the one path in this codebase
+that is proven over that distance, instead of hand-rolling a second router.
+That is the next piece of work, and it is a change to `hier_bands` spec
+generation, not to the router.
