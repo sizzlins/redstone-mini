@@ -4647,3 +4647,37 @@ replacing the vaguer "support/lid conditions".
 scratch/stairglass.py is the failing probe (exit 1). Together stair.py (rise,
 dust agrees), stairdown.py (fall on cobble, agree), stairglass.py (fall on
 glass, DISAGREE) form a complete material matrix for the down-flow question.
+
+------------------------------------------------------------
+alu4 staircase, the sharpest cut yet: a COBBLE LID over the joint.
+Measured, not inferred. Audit pauses here by design.
+------------------------------------------------------------
+The x1091..1099 z182 staircase (sim 15->7, cmc 0 on all nine) runs on stone
+and cobblestone -- NO glass anywhere, so the stairglass.py material split,
+though real, is NOT this. What IS here, at the middle of the run:
+
+  (1097,1,182) dust  below=stone        above=cobblestone  <- LIDDED
+  (1097,3,182) dust  below=cobblestone  above=-
+
+Two dust levels at x=1097 with an opaque lid over the lower. sim.py:402 says
+"Lids cut only when opaque in both terms, so glass/slab lids never appear".
+cmc engine.js:277 has `aboveOwnCuts = IS_OPAQUE[...]` gating its up-slope.
+Both engines HAVE a lid rule; they disagree on this joint.
+
+Preceding eliminations that hold (each a run, not an argument):
+  - not sources (repeater splits are downstream, sides dead in both)
+  - not locks, not decay (45 both-diff cells out of 2260)
+  - not params-vs-geometry (wireconn.py: both push 15->14 across a join whose
+    params deny it)
+  - not settling (2x cmc ticks: 21619 -> 21563)
+  - not simple rise (stair.py agrees 15/15 14/14 13/13)
+  - not simple fall (stairdown.py agrees 14/14 13/13, lamp on)
+  - not glass support generally (zero UP-blocked cells in alu4merge_g,
+    alu4glass7, alu4ab2, add2 -- measured across 95k dust cells)
+  - IS material-specific on a minimal fall (stairglass.py: sim=0 vs cmc=13
+    onto glass, clean A/B vs cobble) -- real, but not this staircase.
+
+NEXT, designed not run: a lid probe in the wireconn.py pattern (wire joint
+with an opaque lid over it, both engines, one vector), then the side-by-side
+of sim.py:404-411 against cmc engine.js:275-295 on that shape. That is the
+narrowest remaining question and it is bounded.
