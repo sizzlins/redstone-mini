@@ -9,6 +9,7 @@ def parse_recipe(text):
     inputs, outputs, gates = [], [], []
     band = None
     edge = {}
+    lamps_at = {}
     for raw in text.strip().splitlines():
         line = raw.split("#")[0].strip()
         if not line:
@@ -29,6 +30,22 @@ def parse_recipe(text):
             except (ValueError, AssertionError):
                 raise ValueError(f"bad EDGE (use: EDGE foo W): {raw!r}")
             edge[line[5:].split()[0].strip()] = _s
+        elif up.startswith("LAMP ") and " AT " in up:
+            # ponytail: pin an output's lamp to a chosen cell. Same precedent
+            # as EDGE -- file syntax, absent = exact old behaviour. Needed
+            # because a lamp otherwise always lands beside its own driver, so
+            # a readout meant for a DIFFERENT part of the build (a sum bit
+            # mirrored back to the input bank) can only be built by paying an
+            # extra band plus a cross-field stitch: measured +88,000 blocks
+            # for 9 readouts, versus a routed cable with this pin.
+            try:
+                _t = up.split()
+                if len(_t) != 5 or _t[0] != "LAMP" or _t[2] != "AT":
+                    raise ValueError
+                _nm = line[5:].split()[0].strip()
+                lamps_at[_nm] = (int(_t[3]), int(_t[4]))
+            except (ValueError, IndexError):
+                raise ValueError(f"bad LAMP (use: LAMP S0 AT 12 300): {raw!r}")
         elif up.startswith("BAND "):
             # ponytail: optional datapath columns (adder8 pattern). Untagged
             # recipes auto-band exactly as before; nothing else changes.
@@ -53,6 +70,10 @@ def parse_recipe(text):
     if not inputs or not gates:
         raise ValueError("need at least IN ... and one gate line")
     _r = {"inputs": inputs, "outputs": outputs, "gates": gates}
+    if edge:
+        _r["edge"] = edge
+    if lamps_at:
+        _r["lamps_at"] = lamps_at
     if edge:
         _r["edge"] = edge
     return _r

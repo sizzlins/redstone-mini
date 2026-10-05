@@ -524,8 +524,55 @@ def place_not(ctx, place, g, i, ox, gz, pos):
         raise RuntimeError(f"NOT blocked for {o}")
 
 
+def _tap_pinned(ctx, pos, name, tx, tz, W, D):
+    """Route `name` to a lamp the recipe pinned at (tx, tz).
+
+    The tap cell is chosen as the free neighbour of the pinned lamp that
+    already carries (or can carry) the net, walking outward from the lamp.
+    Fails LOUD rather than silently relocating: a pin the user asked for that
+    cannot be honoured must not become a lamp somewhere else.
+    """
+    if not (0 <= tx < W and 0 <= tz < D):
+        return False
+    lx = (tx, tz)
+    if lx in ctx.solid or (lx[0], 1, lx[1]) in ctx.wires:
+        return False
+    src = pos.get(name)
+    for dx, dz in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+        fx = (tx + dx, tz + dz)
+        if not (0 <= fx[0] < W and 0 <= fx[1] < D):
+            continue
+        if fx in ctx.solid or (fx[0], 1, fx[1]) in ctx.wires:
+            continue
+        if any(ctx.wires.get((fx[0] + ax, 1, fx[1] + az)) not in (None, name)
+               for ax, az in DIRS):
+            continue
+        stamp_wire(ctx, [fx], name)
+        ctx.blocks.append((lx[0], 1, lx[1], "minecraft:redstone_lamp"))
+        ctx.solid[lx] = ("lamp", name)
+        for ddx, ddz in DIRS:
+            ring(ctx, lx[0] + ddx, lx[1] + ddz, own(name))
+        ctx.recs.append(("OUT", name, [name], fx))
+        pos[name] = fx
+        return True
+    return False
+
+
 def tap_lamps(ctx, recipe, pos, W, D):
+    # ponytail: LAMP <name> AT <x> <z> pins an output's lamp to a chosen cell.
+    # Without it a lamp always lands beside its own driver, so an output that
+    # exists to be read somewhere ELSE (a sum bit mirrored back to the input
+    # bank) can only be built by paying a full extra band + cross-field
+    # stitch -- measured at +88,000 blocks for 9 readouts. The pin is the
+    # whole difference between that and a routed cable. Same precedent as
+    # EDGE: file syntax, absent = exact old behaviour.
+    pins = recipe.get("lamps_at") or {}
     for name in recipe["outputs"]:
+        pin = pins.get(name)
+        if pin is not None:
+            if _tap_pinned(ctx, pos, name, int(pin[0]), int(pin[1]), W, D):
+                continue
+            raise RuntimeError(f"pinned lamp spot unusable for {name} at {pin}")
         ox_, oz = pos[name]
         done = False
         for dx, dz in ((1, 0), (0, 1), (0, -1), (-1, 0)):
