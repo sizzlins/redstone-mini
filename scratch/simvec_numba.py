@@ -72,14 +72,57 @@ def _spec_pair(spec):
     return (spec[0], spec[1])
 
 
-def build_np(ctx, inputs):
-    """Convert simvec tables to numpy. Memoised per (ctx, inputs)."""
-    k = (id(ctx), tuple(inputs))
+def _bundle_load(tag, fp):
+    # ponytail: cross-process bundle cache. The filename carries the fp AND
+    # the payload carries it; both must match, otherwise rebuild. Atomic
+    # save (tmp + replace) means readers only ever see complete files, so a
+    # racing build is benign (identical content, last writer wins). Own
+    # files only -- never a trust boundary, pickle is fine.
+    try:
+        with open(tag, "rb") as f:
+            import pickle as _pk
+            d = _pk.load(f)
+    except Exception:  # noqa: BLE001 -- missing/corrupt/racing: rebuild
+        return None
+    if not isinstance(d, dict) or d.get("_fp") != fp:
+        return None
+    return d
+
+
+def _bundle_save(tag, d):
+    try:
+        import pickle as _pk
+        tmp = "%s.tmp-%d" % (tag, _os.getpid())
+        with open(tmp, "wb") as f:
+            _pk.dump(d, f, protocol=4)
+        _os.replace(tmp, tag)
+    except Exception:  # noqa: BLE001 -- cache best-effort, never fatal
+        pass
+
+
+def build_np(ctx, inputs, tag=None, fp=None):
+    """Convert simvec tables to numpy. Memoised per (ctx, inputs).
+
+    tag/fp enable the cross-process bundle file: with both given, a matching
+    bundle loads in ~0.5s instead of converting (~2.4s) in every worker.
+    ponytail: inputs are canonicalized to sorted order HERE, once, because
+    two callers disagreed (parent pre-build used recipe order, run_scalar
+    uses sorted) and the bundle silently carried the wrong input mapping --
+    every worker then fed scrambled inputs and went RED. One canonical order
+    makes memo keys, bundles and varr agree by construction.
+    """
+    inputs = tuple(sorted(inputs))
+    k = (id(ctx), inputs)
     e = _NP.get(k)
     if e is not None and e[0] is ctx:
         return e[1]
     if len(_NP) > 8:
         _NP.clear()
+    if tag is not None and fp is not None:
+        d = _bundle_load(tag, fp)
+        if d is not None:
+            _NP[k] = (ctx, d)
+            return d
     st = _simvec._tables(ctx)
     nid = st["nid"]
     idx = {p: i for i, p in enumerate(inputs)}
@@ -172,7 +215,11 @@ def build_np(ctx, inputs):
     d["torch_index"] = _np.full(nid, -1, dtype=_np.int64)
     for k2, tid in enumerate(d["torch_ids"]):
         d["torch_index"][int(tid)] = k2
+    if fp is not None:
+        d["_fp"] = fp
     _NP[k] = (ctx, d)
+    if tag is not None and fp is not None:
+        _bundle_save(tag, d)
     return d
 
 
@@ -616,7 +663,8 @@ def run_scalar(vec, ctx, init=None, until=None, tick_cap=None, step_cap=None,
     step_cap = _STEP_CAP if step_cap is None else step_cap
     stall = _STALL if stall is None else stall
     inputs = sorted(vec.keys())
-    d = build_np(ctx, inputs)
+    d = build_np(ctx, inputs, tag=_os.environ.get("REDSTONE_NB_BUNDLE"),
+                 fp=_os.environ.get("REDSTONE_NB_FP"))
     nid = d["nid"]
     varr = _np.zeros(len(inputs), dtype=_np.bool_)
     idx = {p: i for i, p in enumerate(inputs)}

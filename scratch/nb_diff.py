@@ -77,11 +77,53 @@ def main():
             print(f"vec{i:5d} ok ticks={a[3]:5d}/{b[3]:5d} "
                   f"live={len(a[1]):6d}/{len(b[1]):6d}", flush=True)
     print(f"\n{n} vectors: old {told:.2f}s new {tnew:.2f}s "
-          f"speedup {told/max(1e-9, tnew):.2f}x divergences={bad}")
+          f"speedup {told/max(1e-9,tnew):.2f}x divergences={bad}")
     if bad:
         print("NB DIFF: DIVERGED")
         sys.exit(1)
     print("NB DIFF: IDENTICAL")
+    # ponytail: bundle-path proof (permanent). A mapping bug once shipped
+    # where the parent pre-built the bundle in recipe order while workers
+    # read it in sorted order -- memo-path A/B above cannot see that class
+    # because both sides share one order. This round-trips a bundle built
+    # in a DELIBERATELY shuffled input order through the file cache and
+    # re-proves two vectors through it.
+    import tempfile as _tf
+    _tag = os.path.join(_tf.gettempdir(), "nb-selftest-bundle.pkl")
+    try:
+        os.remove(_tag)
+    except OSError:
+        pass
+    _shuf = list(reversed(ins))
+    nb._NP.clear()  # force the file path: memo must not mask the bundle
+    nb.build_np(P, _shuf, tag=_tag, fp="selftest")
+    nb._NP.clear()
+    os.environ["REDSTONE_NB_BUNDLE"] = _tag
+    os.environ["REDSTONE_NB_FP"] = "selftest"
+    _bbad = 0
+    for i in (idxs[0], idxs[-1]):
+        vec = {ins[j]: (i >> j) & 1 for j in range(len(ins))}
+        if hasattr(sim, "_BOUT"):
+            sim._BOUT.clear()
+        a = simvec.run_scalar(vec, P)
+        if hasattr(sim, "_BOUT"):
+            sim._BOUT.clear()
+        b = nb.run_scalar(vec, P)
+        for f, x, y in zip(FIELDS, a, b):
+            if cmp_field(f, i, x, y):
+                print("BUNDLE-DIVERGED  " + cmp_field(f, i, x, y), flush=True)
+                _bbad += 1
+                break
+    del os.environ["REDSTONE_NB_BUNDLE"]
+    del os.environ["REDSTONE_NB_FP"]
+    try:
+        os.remove(_tag)
+    except OSError:
+        pass
+    if _bbad:
+        print("NB DIFF: BUNDLE DIVERGED")
+        sys.exit(1)
+    print("NB DIFF: BUNDLE IDENTICAL")
 
 
 if __name__ == "__main__":

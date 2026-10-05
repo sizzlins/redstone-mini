@@ -50,9 +50,11 @@ sys.path.insert(0, ROOT)
 # recipe.py are what this script evaluates; simvec/layout/compose/tiles/core
 # are hashed too so any engine edit anywhere voids every cache. Over-hashing
 # only ever forces a re-run; under-hashing silently lies. Bump by hand to force.
+# scratch/simvec_numba.py is hashed for the same reason: ENGINE=numba verdicts
+# are cached under this fp, so a port change must void them (gap fixed 2026-10-05).
 ENGINE = tuple(os.path.join(ROOT, f + ".py") for f in
                ("sim", "simvec", "recipe", "layout", "compose", "tiles",
-                "core"))
+                "core", "scratch/simvec_numba"))
 
 
 def _vec_child(conn, blocks, io, recipe, jobs):
@@ -273,6 +275,28 @@ def main():
             json.dump(cache, f)
 
     t0 = time.time()
+    # ponytail: numba bundle pre-build (parent, serial, once). Workers each
+    # pay ~2.4s converting tables in parallel contention; the parent pays it
+    # once here and every worker loads the pickle (~0.5s, page-cached).
+    # Bundle path carries the fp; older fps for this dp are pruned so stale
+    # 40MB files never accumulate. Later sweeps reuse the bundle at zero
+    # conversion cost.
+    if os.environ.get("REDSTONE_VERIFY_ENGINE", "fast") == "numba" and todo:
+        import glob as _glob
+        _bpath = "%s.nb-%s.pkl" % (dp, fp)
+        os.environ["REDSTONE_NB_BUNDLE"] = _bpath
+        os.environ["REDSTONE_NB_FP"] = fp
+        for _old in _glob.glob(dp + ".nb-*.pkl"):
+            if _old != _bpath:
+                try:
+                    os.remove(_old)
+                except OSError:
+                    pass
+        if not os.path.exists(_bpath):
+            from sim import _parse_build as _pb
+            import simvec_numba as _nbmod
+            _nbmod.build_np(_pb(blocks, io), list(r["inputs"]),
+                            tag=_bpath, fp=fp)
     queue = list(todo)
     live = {}
     failed = []
