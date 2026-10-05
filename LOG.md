@@ -4698,3 +4698,28 @@ past -- is NOT this shape, and remains the narrowest open question. The probe
 matrix now covers: connectivity-from-geometry (agree), rise (agree), fall on
 cobble (agree), fall on glass (DISAGREE 0 vs 13), straight lid (agree),
 non-pin lever (DISAGREE, sim blind). Each is a 2-second run.
+
+------------------------------------------------------------
+Repeater disagreements are 97% downstream of dust. The 11
+"independents" are NOT claimed -- facing-convention unresolved.
+------------------------------------------------------------
+Vec 47, alu4merge_g: 329 repeater state disagreements. For each, compared its
+input dust in both engines: 318 have inputs that ALREADY disagree (downstream,
+confirming the dust story), 11 have agreeing inputs but differing repeater
+states, all sim=ON/cmc=OFF.
+
+I did NOT claim those 11 as a repeater-model gap, because the facing
+convention does not resolve from the JSON. sim.py:946-950 says facing points
+output->input (rear at +facing, output at the negated travel vector); cmc
+engine.js:144-148 powers the cell at +facing (output at +facing, input at
+-facing). On paper those are opposite -- yet the engines agree on 4000+
+repeaters, so at least one of those two readings is wrong about the shared
+coordinate frame (possibly a mirrored x axis in one engine's DIRS), and I
+cannot tell which from verdict tables. Claiming an independent repeater gap on
+the strength of picking a side would be exactly the kind of inference this
+log keeps retracting.
+
+What IS claimed (measured, convention-free): 318/329 repeater disagreements
+are downstream of dust that already disagrees, and the dust disagreement is
+the staircase/lid story above. The 11 need a facing-convention test (one
+repeater, known input side, both engines) before anyone cites them.
