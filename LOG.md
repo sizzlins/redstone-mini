@@ -4477,3 +4477,32 @@ format-string join iterating characters); both visible on the first run.
 scratch/stair.py is committed as the rise probe. A fall probe (dust stepping
 DOWN, and a glass-vs-cobble support variant) is the obvious next pair, and
 together they would pin the UP/DN asymmetry if one exists.
+
+------------------------------------------------------------
+stairdown.py: the isolated FALL agrees too. The split needs
+support/lid conditions, not just direction.
+------------------------------------------------------------
+After stair.py showed the RISE agrees, built the isolated FALL: lever at y=1,
+dust (1,1,0), up-step to (2,2,0) on cobble, down-step to (3,1,0) on glass,
+lamp. Result:
+
+    SIM  A=1 -> Y=True (want True) ok
+    OUT  rise (2,2,0) sim=14 cmc=14  fall (3,1,0) sim=13 cmc=13  agree
+    exit 0
+
+So a simple fall works in both engines, same as the simple rise. The
+alu4merge_g staircase split needs the SUPPORT/LID conditions both shapes lack
+-- sim.py:399-403 (UP needs the upper on opaque conductive; DN needs support;
+lids cut only when opaque) -- or the falling direction on longer runs.
+
+First version of this probe was VOID, and the reason matters: I put the input
+lever at y=4, but sim's io keys map to (x,1,z) via _y(k) (sim.py:1036-1038),
+so pins ONLY exist at y=1. The lever was invisible, sim read 0 on the very
+first dust, and I nearly reported "the fall splits completely" -- which would
+have been my THIRD false positive from an unexamined probe setup, after the
+hash-compare and the single-probe read. Rebuilt with the lever at y=1 and an
+isolated fall; that is the version committed.
+
+Both stair.py (rise, agree) and stairdown.py (fall, agree) now stand as
+regression coverage for the simple shapes. The open question narrows to
+support/lid variants (glass-vs-cobble under the faller, a lid over the joint).
