@@ -41,14 +41,13 @@ BUILD = [
     (4, 3, 0, 'minecraft:redstone_lamp'),
 ]
 
-IO = {'levers': {(0, 0): 'A'}, 'lamps': {(4, 0): 'Y'}}
+IO = {'levers': {(0, 0): 'A'}, 'lamps': {(4, 3, 0): 'Y'}}
 VECS = [{'A': 1}]
-# WANT is dust-only. The lamp at (4,3,0) is NOT evaluated: sim's io maps keys
-# to (x,1,z) via _y(), so pins of either kind exist only at y=1 -- a lamp
-# above y=1 is invisible to sim by design (same y=1 limitation as levers,
-# found while building stairdown.py). That is a probe-design constraint, not
-# physics; this probe is the staircase dust, which is what disagrees in alu4.
-WANT = None
+# 3-tuple lamp key: sim maps 2-tuple keys to (x,1,z) via _y, so a lamp above
+# y=1 MUST be addressed by its full (x,y,z) -- a 2-tuple evaluates an empty
+# cell and reports a phantom dark lamp. That phantom consumed an hour here
+# before the keying was checked. 3-tuples pass through _y untouched.
+WANT = [{'Y': True}]
 
 
 def sim_run():
@@ -63,12 +62,17 @@ def sim_run():
     return out
 
 
+def keystr(k):
+    return ','.join(str(int(v)) for v in
+                    (k if isinstance(k, (tuple, list)) else (k,)))
+
+
 def cmc_run(ticks, timeout):
-    doc_p = os.path.join(HERE, '_notmin.v2doc.json')
+    doc_p = os.path.join(HERE, '_stair.v2doc.json')
     doc = {
         'blocks': [[int(x), int(y), int(z), str(b)] for x, y, z, b in BUILD],
-        'levers': [['%d,%d' % k, v] for k, v in IO['levers'].items()],
-        'lamps': [['%d,%d' % k, v] for k, v in IO['lamps'].items()],
+        'levers': [[keystr(k), v] for k, v in IO['levers'].items()],
+        'lamps': [[keystr(k), v] for k, v in IO['lamps'].items()],
         'vectors': VECS,
         # dust-only probe: no lamp expectation (sim io is y=1-only). cmc's
         # ok is meaningless here; only its cells dump is read.

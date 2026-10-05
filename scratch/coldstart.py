@@ -60,7 +60,7 @@ GATES = [
     # only at y=1, so a lamp at y=3 is invisible by design and was never
     # physics. The probe is dust-only now and says so.
     ('stair_rise', ['scratch/stair.py'], 600,
-     'vertical rise dust agrees 15/15 14/14 13/13'),
+     'rise agrees incl lamp (3D io key)'),
     ('stair_fall', ['scratch/stairdown.py'], 600,
      'isolated fall agrees 14/14 13/13'),
     ('lid', ['scratch/lid.py'], 600,
