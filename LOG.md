@@ -4832,3 +4832,36 @@ New tools: `scratch/lamp_pin_check.py` (lamps == declared pins, 0 missing /
 0 extra on 4 banked builds), `scratch/rig_read.py` (live lever-set + lamp-read
 verdict), `scratch/repaste_add8.py`, `scratch/forceload_add8.py`,
 `scratch/sign_probe*.py`, `scratch/forceload_probe.py`.
+
+## 2026-10-05 (lever indicators) -- 16 blocks, live-verified 16/16
+
+Asked for a lamp on the wire that drives each lever. The composer makes that
+catastrophically expensive, measured both ways:
+
+| approach | cost |
+|---|---|
+| one buffer band per bit (24 bands) | **135,260 blocks** (16 long cross-field stitches) |
+| all 16 buffers in band 0 | 20,390 for band 0 alone, and the bank stitch then dies (`no ground for A2`) |
+| **lamp placed beside the lever** | **16 blocks** |
+
+A floor lever powers every adjacent block, so an indicator lamp in the free
+cell west of each lever shows that bit with no wire, no gate, no router.
+`scratch/lever_lamps.py` is that post-pass: 46,502 -> 46,518 blocks, adds 16
+`io['lamps']` pins named `<bit>L`.
+
+Gates: `lever_lamps.py --check` runs the engine's own answer over 64 spread
+vectors -- 64 checks, 0 wrong (a lamp that disagreed with its bit would fail
+here, not in the game). `verify2` dual-engine PASS on the new pkl
+(sim n=4 1s, cmc n=4 35s).
+
+Live on the 1.21 rig: 16/16 lit with all levers on, 0/16 with all off, and
+A0=1 alone lights exactly one lamp (A0L). That is the whole feature working
+in real Minecraft.
+
+Two rig quirks cost time here, both measured not guessed:
+- `setblock` on an existing **lever** returns "Could not set the block" even
+  when the state differs and the block is a valid floor lever. `setblock ... air`
+  first, then the lever, always works. Hit on 2 of 16 cells.
+- A 46k-block build spans 2,394 chunks and `forceload` caps at 256 per call.
+  RCON replying "no response" only means the server was busy -- the command
+  ran. Verified by a repaste that reported 3 errors and left 60/60 present.
