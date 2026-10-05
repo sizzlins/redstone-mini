@@ -54,14 +54,16 @@ GATES = [
     # agree on; if any of them ever FAILS, a physics rule moved. notmin.py is
     # deliberately NOT here -- it fails by design (Finding 3) until the
     # constant-lever source category exists.
-    ('wireconn', ['scratch/wireconn.py'], 600,
+('wireconn', ['scratch/wireconn.py'], 600,
      'params do not overrule geometry'),
     # stair_rise is deliberately NOT here although its dust agrees: sim leaves
     # its lamp dark while cmc lights it, and that lamp split is an open
-    # question (riser context vs tip rule), not a settled shape. Locking it in
-    # would enshrine whichever engine is wrong. It stays a standalone probe.
+    # question, not a settled shape. Locking it in would enshrine whichever
+    # engine is wrong. It stays a standalone probe.
     ('stair_fall', ['scratch/stairdown.py'], 600,
      'isolated fall agrees 14/14 13/13'),
+    ('lid', ['scratch/lid.py'], 600,
+     'straight wire under a lid agrees'),
     ('hier_alu1', ['scratch/hier_verify.py', 'recipes/alu1.txt'], 3000,
      'bands + stitch + 32/32, exit 0'),
     ('hier_alu4', ['scratch/hier_verify.py', 'recipes/alu4.txt'], 5400,
