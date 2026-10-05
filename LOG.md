@@ -4953,3 +4953,6 @@ Proven and banked from the same session, unchanged: 41 signs live on the rig
 (16 levers, 16 indicators, 9 sums; text verified by `data get block`), and 16
 lever-side indicator lamps for 16 blocks (sim 64/64, dual-engine PASS, live
 16/16 on, 0/16 off, A0-alone lights exactly one).
+
+## 2026-10-05 (night loop) -- lamp_pins is now a GATE, and it has been seen red
+scratch/lamp_pin_check.py added to coldstart GATES (16 gates now). Why it earns a slot: the rig reads lamps by looking the pin coordinate up in the BLOCK list, so a pin whose lamp is elsewhere is read at a non-lamp cell and reports dark for a lit lamp -- a gate that looks green because it never read what it claimed to read. Negative-tested, not just green-tested: injected a ghost pin at (9999,9999) and the tool printed MISSING and exited 1. A gate only ever seen passing is untested. coldstart --quick 15/15 green.

@@ -69,6 +69,15 @@ GATES = [
      'dust-cobble-dust joint agrees (49k last mile: direct stacks never link)'),
     ('repchain', ['scratch/repchain.py'], 600,
      'R1 -> 7 dust -> R2 chain agrees (repeater input sensing)'),
+    # Lamp blocks must sit AT the declared io['lamps'] pins. The rig reads
+    # lamps by looking the pin coordinate up in the block list, so a pin whose
+    # lamp lives elsewhere is read at a cell that is not a lamp and reports
+    # "dark" for a lit lamp -- the same shape as the sampled-green trap: the
+    # gate looks green because it never read the block it claimed to read.
+    ('lamp_pins', ['scratch/lamp_pin_check.py',
+                   'scratch/alu4merge_g.pkl', 'scratch/alu1glass.pkl',
+                   'scratch/alu4glass7.pkl'], 900,
+     'every lamp block sits on its declared pin (0 missing / 0 extra)'),
     ('hier_alu1', ['scratch/hier_verify.py', 'recipes/alu1.txt'], 3000,
      'bands + stitch + 32/32, exit 0'),
     ('hier_alu4', ['scratch/hier_verify.py', 'recipes/alu4.txt'], 5400,
