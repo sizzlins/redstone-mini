@@ -4794,3 +4794,6 @@ XOR-carry add8 (49070) -> NAND carry (C = NOT((NOT ca) AND (NOT u))): bands 1231
 
 ## 2026-10-05 (day loop 11) -- chunk budget scales with chunk size
 Kill mechanism re-read: secs bounds one chunk from its start message; over budget the worker is terminated and owned chunks record failed (honest, retried later). secs=400 fit 64-vector chunks but allowed 0.39s/vector at 1024/chunk -- the hier RED 2 chunks were load-timeout kills, proven by green retry. Fix: secs = max(secs, ceil(nvec/nchunks)*2.0s) (~4x slowest-green observed; small builds unchanged: 400/400/400 verified by formula + alu1 sweep green). Prevents kill-retry churn on 65k builds; never kills anything that survives today.
+
+## 2026-10-05 (day loop 12) -- review fix: numba-fail fallback goes to table engine
+Self-review of _vec_child engine wiring found a silent cliff: ENGINE=numba with numba unimportable fell all the way to slow _run_vec with no word. Now falls through to the table engine (always present). All other paths verified equivalent by construction (conditions only widen on the previously-dead branch). alu1 sweep green after.

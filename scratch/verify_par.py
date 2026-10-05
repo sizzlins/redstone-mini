@@ -96,8 +96,12 @@ def _vec_child(conn, blocks, io, recipe, jobs):
                 run = lambda v, _p: _nbrun(v, _p)   # noqa: E731
                 _rs_mod = _nbrun
             except ImportError:
-                warm_on = False
-        elif (hold is None and _eng != "slow"):
+                # ponytail: fall through to the table engine, never silently
+                # to slow. Previously a missing numba dropped all the way to
+                # _run_vec with no word; the table engine is always present
+                # wherever this file runs.
+                pass
+        if hold is None and _eng != "slow" and _rs_mod is None:
             try:
                 from simvec import run_scalar as _rs_default
                 run = lambda v, _p: _rs_default(v, _p)   # noqa: E731
