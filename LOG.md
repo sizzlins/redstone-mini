@@ -4765,3 +4765,6 @@ _cold ran verdict + a second _expose refresh run (16 wasted runs/sweep + one per
 
 ## 2026-10-05 (night loop 8) -- warm verdict-neutral; port error-path identical
 Warm chain is verdict-neutral across lanes: alu4 GREEN stays GREEN (1024/1024 fresh), alu1 GREEN stays GREEN (32/32 fresh), cpu4merge2 RED stays RED with byte-identical signature in all three engines (warm/cold/slow: same 2 chunks, same Y3 vector). No action on cpu4 itself (GA/parallax lane). Observation for GA: on that Y3 vector with FRESH _BOUT, slow returns Y3-wrong while py+nb raise TORCH BURNOUT at the same cell (658,1,133); under sweep _BOUT accumulation all three return Y3-wrong. So single-vector burnout verdicts are _BOUT-history-dependent (tbl_diff clears per vector for exactly this reason). Port fidelity now: 20+ green vectors identical incl ticks + same burnout cell on red. Next: full-gate consolidation + report watch.
+
+## 2026-10-05 (day) -- compose elapsed prefixes on restart/rung prints
+User add8 route thrashing (precede reset per strategy, replayed B0 restarts) with no per-attempt timing. Added _T0 clock at compose() entry + t=Ns prefixes on restart/ladder/sim-red/terr prints (7 lines, behavior-neutral: strings only, _el() empty outside compose runs). Self-test green (buffers ok). Next compose run shows where seconds go per attempt.

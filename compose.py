@@ -1754,7 +1754,7 @@ def _compose_once(recipe):
                     continue
                 last_pair = (net, owner)
                 precede.add((net, owner))
-                print(f"compose restart {_attempt + 1}: {net} sealed by {owner}; precede={sorted(precede)}", flush=True)
+                print(f"{_el()}compose restart {_attempt + 1}: {net} sealed by {owner}; precede={sorted(precede)}", flush=True)
                 ww, su, so, sb = wsnap
                 ctx.wires.clear()
                 ctx.wires.update(ww)
@@ -3885,6 +3885,15 @@ _COMPOSE_SECS = float(os.environ.get("REDSTONE_COMPOSE_SECS", "0") or 0)
 # _compose_once's restart loop (rule 7). None when unset or outside compose().
 _DEADLINE = None
 
+# Compose-start clock for elapsed prefixes on progress prints (diagnostics
+# only: proves WHERE seconds go across restarts/rungs). Set at compose()
+# entry; _el() is "" outside a compose run so probes are unaffected.
+_T0 = None
+
+
+def _el():
+    return f"t={time.monotonic() - _T0:.0f}s " if _T0 is not None else ""
+
 # Routing/geometry failures worth retrying with more room (NOT logic or
 # sim failures — those are deterministic and spread cannot fix them).
 _RETRYABLE = ("no ground", "no route", "OPEN ", "blocked", "lamp spot taken",
@@ -3902,10 +3911,11 @@ def compose(recipe):
     escalates. The build may sprawl across chunks (wires run long,
     repeaters carry them).
     """
-    global _SPREAD, _ORDER, _JOGS, _DEADLINE, _TERR
+    global _SPREAD, _ORDER, _JOGS, _DEADLINE, _TERR, _T0
     last = None
     deadline = time.monotonic() + _COMPOSE_SECS if _COMPOSE_SECS else None
     _DEADLINE = deadline
+    _T0 = time.monotonic()
     # REDSTONE_FORCE="spread,order,jog" pins one rung (diagnostics: bisect a
     # single config instead of climbing the whole ladder).
     force = os.environ.get("REDSTONE_FORCE", "").strip()
@@ -3982,7 +3992,7 @@ def compose(recipe):
                         or (deadline and time.monotonic() > deadline)
                         or not any(k in str(e) for k in _RETRYABLE)):
                     raise
-                print(f"compose {jog} spread {spread} {order}"
+                print(f"{_el()}compose {jog} spread {spread} {order}"
                       f"{' terr' if terr else ''} failed "
                       f"({str(e)[:60]}); retrying", flush=True)
                 continue
@@ -3998,7 +4008,7 @@ def compose(recipe):
                 if (i == len(attempts) - 1
                         or (deadline and time.monotonic() > deadline)):
                     raise
-                print(f"compose {jog} spread {spread} {order} sim-red "
+                print(f"{_el()}compose {jog} spread {spread} {order} sim-red "
                       f"({str(e)[:60]}); retrying", flush=True)
                 continue
             return _res
@@ -4018,7 +4028,7 @@ def compose(recipe):
                     if ((deadline and time.monotonic() > deadline)
                             or not any(k in str(e) for k in _RETRYABLE)):
                         raise
-                    print(f"compose {jog} spread {spread} {order} terr failed "
+                    print(f"{_el()}compose {jog} spread {spread} {order} terr failed "
                           f"({str(e)[:60]}); retrying", flush=True)
         # ponytail: last is None only if attempts was empty (no rung ran).
         # Raising None is a TypeError; name the real wall instead.
@@ -4027,6 +4037,7 @@ def compose(recipe):
         raise last
     finally:
         _DEADLINE = None
+        _T0 = None
         _TERR = 0
 
 
