@@ -251,6 +251,12 @@ def main():
     vecs = [dict(zip(r["inputs"], vals))
             for vals in itertools.product([0, 1], repeat=len(r["inputs"]))]
     chunks = [vecs[i::nchunks] for i in range(nchunks)]
+    # ponytail: scale the chunk budget with chunk size. secs=400 fit 64-vector
+    # chunks (6.25s/vector); at 1024/chunk it allows 0.39s/vector and kills
+    # legitimate slow chunks under load (measured: a 541s green chunk killed
+    # at 400, retried green -- pure waste). Floor 2.0s/vector (~4x the
+    # slowest green observed); small builds keep secs unchanged.
+    secs = max(secs, -(-len(vecs) // max(1, nchunks)) * 2.0)
     key = lambda i: f"{nchunks}:{i}"
     # ponytail: empty chunks are vacuously green (finer nchunks than
     # vectors leaves holes). Queueing them would spawn a child per hole
