@@ -116,8 +116,17 @@ def main():
                 "16", "400", str(per_call)]
         if nchunks:
             args.append(nchunks)
-        r = subprocess.run(args,
-                           cwd=os.path.dirname(HERE), timeout=900, capture_output=True, text=True)
+        # ponytail: a round that outruns the 900s cap is INCOMPLETE, not
+        # failed -- verify_par caches finished chunks, so the next round
+        # resumes. Previously TimeoutExpired propagated and killed the whole
+        # gate (seen on 65k-vector add8); continuing is the staged design.
+        try:
+            r = subprocess.run(args,
+                               cwd=os.path.dirname(HERE), timeout=900, capture_output=True, text=True)
+        except subprocess.TimeoutExpired:
+            print("verify round hit 900s cap; progress cached, continuing",
+                  flush=True)
+            continue
         print(r.stdout[-1500:], flush=True)
         if "VERIFY OK" in r.stdout:
             return 0
