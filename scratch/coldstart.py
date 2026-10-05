@@ -78,6 +78,9 @@ GATES = [
                    'scratch/alu4merge_g.pkl', 'scratch/alu1glass.pkl',
                    'scratch/alu4glass7.pkl'], 900,
      'every lamp block sits on its declared pin (0 missing / 0 extra)'),
+    ('pin_lamp', ['scratch/pin_lamp_check.py'], 900,
+     'a LAMP pin is a ROUTED load: tap wire present, lamp follows the sum, '
+     'negative test reproduces the dark-lamp bug'),
     ('hier_alu1', ['scratch/hier_verify.py', 'recipes/alu1.txt'], 3000,
      'bands + stitch + 32/32, exit 0'),
     ('hier_alu4', ['scratch/hier_verify.py', 'recipes/alu4.txt'], 5400,

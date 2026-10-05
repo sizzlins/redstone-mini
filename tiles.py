@@ -3,7 +3,7 @@
 import functools
 from types import SimpleNamespace
 
-from core import DIRS
+from core import DIRS, pin_tap_cell
 
 
 def new_ctx(blocks, solid, rings, wires, junctions, repeaters, pos, recs, sup):
@@ -525,10 +525,20 @@ def place_not(ctx, place, g, i, ox, gz, pos):
 
 
 def _tap_pinned(ctx, pos, name, tx, tz, W, D):
-    """Route `name` to a lamp the recipe pinned at (tx, tz).
+    """Place the lamp a recipe pinned at (tx, tz) and reserve its tap cell.
 
-    The tap cell is chosen as the free neighbour of the pinned lamp that
-    already carries (or can carry) the net, walking outward from the lamp.
+    Ordering matters here and it is easy to get backwards. In compose.py
+    `tap_lamps` runs BEFORE routing (compose.py:1207) and `build_netspec`
+    before that (compose.py:1124). So at this point the tap cell cannot already
+    carry the net -- the router has not run yet. What makes the pin electrical
+    is the LOAD that `build_netspec` now registers from `recipe['lamps_at']`:
+    the astar run afterwards drives the net to exactly this cell. This function
+    only has to put the lamp on it and keep the cell reserved so nothing else
+    takes it.
+
+    The cell comes from `core.pin_tap_cell`, the same rule build_netspec used to
+    choose the routing goal, so goal and tap cannot drift apart.
+
     Fails LOUD rather than silently relocating: a pin the user asked for that
     cannot be honoured must not become a lamp somewhere else.
     """
@@ -537,25 +547,22 @@ def _tap_pinned(ctx, pos, name, tx, tz, W, D):
     lx = (tx, tz)
     if lx in ctx.solid or (lx[0], 1, lx[1]) in ctx.wires:
         return False
-    src = pos.get(name)
-    for dx, dz in ((1, 0), (-1, 0), (0, 1), (0, -1)):
-        fx = (tx + dx, tz + dz)
-        if not (0 <= fx[0] < W and 0 <= fx[1] < D):
-            continue
-        if fx in ctx.solid or (fx[0], 1, fx[1]) in ctx.wires:
-            continue
-        if any(ctx.wires.get((fx[0] + ax, 1, fx[1] + az)) not in (None, name)
-               for ax, az in DIRS):
-            continue
-        stamp_wire(ctx, [fx], name)
-        ctx.blocks.append((lx[0], 1, lx[1], "minecraft:redstone_lamp"))
-        ctx.solid[lx] = ("lamp", name)
-        for ddx, ddz in DIRS:
-            ring(ctx, lx[0] + ddx, lx[1] + ddz, own(name))
-        ctx.recs.append(("OUT", name, [name], fx))
-        pos[name] = fx
-        return True
-    return False
+    fx = pin_tap_cell(name, {"lamps_at": {name: (tx, tz)}})
+    if not (0 <= fx[0] < W and 0 <= fx[1] < D):
+        return False
+    if fx in ctx.solid or (fx[0], 1, fx[1]) in ctx.wires:
+        return False
+    if any(ctx.wires.get((fx[0] + ax, 1, fx[1] + az)) not in (None, name)
+           for ax, az in DIRS):
+        return False
+    stamp_wire(ctx, [fx], name)
+    ctx.blocks.append((lx[0], 1, lx[1], "minecraft:redstone_lamp"))
+    ctx.solid[lx] = ("lamp", name)
+    for ddx, ddz in DIRS:
+        ring(ctx, lx[0] + ddx, lx[1] + ddz, own(name))
+    ctx.recs.append(("OUT", name, [name], fx))
+    pos[name] = fx
+    return True
 
 
 def tap_lamps(ctx, recipe, pos, W, D):

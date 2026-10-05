@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import tiles as _tiles
 from tiles import footprint
 
-from core import DIRS, TORCH_BACK, base
+from core import DIRS, TORCH_BACK, base, pin_tap_cell
 from recipe import expand_gates
 
 # ponytail: pop cap bounds worst-case search per astar call (a sealed field
@@ -917,9 +917,19 @@ def build_netspec(recs, recipe, pos):
             for sig, (rr, bb) in zip(a, reps):
                 _load(sig, bb)
         elif op == "OUT":
-            pass  # lamp taps the driver wire; no stub
+            pass  # an unpinned lamp sits on its own driver; nothing to route
         else:
             raise RuntimeError(f"bus: unsupported {op}")
+    # A pinned lamp (LAMP <name> AT <x> <z>) IS a real load. build_netspec
+    # runs before tap_lamps in both callers (compose.py:1124 before 1207), so
+    # the pin cannot come from an OUT rec -- it has to be read off the recipe
+    # here, or the pin is a placement feature pretending to be an electrical
+    # one and the lamp sits dark on a wire nobody drove. That was the whole
+    # bug: the tap was stamped and nothing routed to it.
+    for _name in (recipe.get("lamps_at") or {}):
+        if _name not in recipe["outputs"]:
+            raise RuntimeError(f"LAMP pinned a non-output: {_name}")
+        _load(_name, pin_tap_cell(_name, recipe))
     for name in recipe["inputs"]:
         netspec.setdefault(name, {'drv': None, 'loads': []})
     if "1" in netspec:

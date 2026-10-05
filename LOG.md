@@ -5136,4 +5136,54 @@ engines were right all along and I was measuring my own garbage.
 World state now: z 803..973 = add8 pitch-2 (the good one, `/tp 2 68 820`);
 z 404..483 = add2opt re-pasted and intact; z 3..293 = four-deep stale add8
 debris, ignore it. One build per region from now on -- the paste log is the
-thing to read first next time, not the circuit.
+thing to read first next time, not the circuit.## A LAMP pin is now a real electrical endpoint -- the original request
+
+The one thing still on the books from the original brief ("take the wire that
+powers the sum lamp all the way to the levers ending in lamps") was blocked on
+a real bug, and the bug was one line of intent in the wrong place.
+
+**What was wrong.** `LAMP <name> AT <x> <z>` stamped a lamp and one dust tap
+and routed **nothing** to it. So the pin was a *placement* feature pretending to
+be an electrical one, and every pinned lamp read dark -- exactly what three
+previous attempts measured. The dead giveaway was in the code all along:
+
+```python
+elif op == "OUT":
+    pass  # lamp taps the driver wire; no stub
+```
+
+`build_netspec` never gave the pin a load, so the router had no goal out there.
+
+**Why nobody spotted it sooner:** the ordering is the whole trap, and it is
+opposite in the two callers. `compose.py` builds netspec at **1124** and calls
+`tap_lamps` at **1207**, both BEFORE routing -- so the pin must reach netspec
+through the **recipe**, not through the recs the tap stamps. `layout.py` builds
+netspec at **1387** and never calls `tap_lamps` at all. A fix that puts the load
+in the `OUT` branch compiles, runs, and achieves precisely nothing.
+
+**The fix, three small pieces:**
+1. `core.pin_tap_cell(name, recipe)` -- one rule for *where* the wire lands
+   (the lamp's west neighbour), imported by both callers so the router's goal
+   and the lamp's tap cannot drift. Fixed rather than "first free neighbour"
+   because the two stages straddle the router and a free-cell search answers
+   differently either side of it.
+2. `layout.build_netspec` registers a **load** for every pinned output, and
+   rejects a `LAMP` on a non-output loudly.
+3. `tiles._tap_pinned` uses that same cell and keeps its loud-failure contract.
+
+**Measured, add8 band S0 with its lamp pinned into the lever row:**
+**1,054 blocks, routed in 0.1s** -- against **135,260 blocks** for the naive
+"one buffer band per readout" route. Nine of those runs is roughly +9,000 on
+44,650, not +90,000.
+
+**Gate added** (`pin_lamp`, so coldstart is 16/16): builds the pin, asserts a
+wire exists beside the lamp, asserts sim's read of *that lamp* follows the sum
+(2 lit / 2 dark, 0 disagreements), and asserts the unpinned recipe still builds.
+It has a **negative test**: stub out `layout.pin_tap_cell` and the build must
+break -- it does, loudly, because downstream code walks the loads and hits the
+hole. A gate that cannot fail is decoration.
+
+S7 and COUT are the next step: their bands consume carries produced by earlier
+bands, so they cannot be composed standalone, and `hier_bands` does not yet
+carry `lamps_at` into sub-recipes with the coordinate translation that a
+per-band frame needs. That propagation is the remaining work, not the pin.
