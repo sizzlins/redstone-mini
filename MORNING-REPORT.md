@@ -288,3 +288,17 @@ directions, narrowed past sources/locks/decay/params/settling/rise/fall to a
 cobble-lidded joint; basic lid agrees so it needs staircase+lid combined.
 `coldstart` runs 8 gates green in ~5 min; `--probes` reports the 3 known
 divergences without touching the exit code.
+
+## Red-build census (all 28 characterized, same night)
+
+| class | count | builds | meaning |
+|---|---|---|---|
+| both red | 22 | alu4_build/bank/fresh/av, alu4ctrl1-6, alu1_current, cpu4bank/merge* etc. | stale/broken artifacts, red in both engines |
+| sim red, cmc green | 3 | cpu4merge2, cpu4retry_merge (TORCH BURNOUT guard, by design); **not_full** (sim blind to constant lever, Finding 3) | sim refuses or cannot see |
+| sim green, cmc red | 3 | alu4mergeNEW/NEW4 (cmc structural support refusal, closed); **stackfail** (cmc miscomputes its AND -- sim proves the recipe on all 8) | cmc refuses or miscomputes |
+
+No uncharacterized reds. `coldstart` 12/12 green including the 3 locked-in probes
+(wireconn, stair_rise with 3D lamp key, stair_fall, lid). The stair lamp "split"
+was my keying error throughout -- 2-tuple keys map to y=1, a lamp at y=3 needs
+its full (x,y,z); with the right key sim lights it. Fourth setup error caught
+by running.
