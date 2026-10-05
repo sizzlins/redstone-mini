@@ -5227,4 +5227,62 @@ That is a change in `hier_bands`/`hier_stitch`, not in the pin, and it is the
 next piece of work. Until it lands: **add8 is 19/19 live at the sum lamps where
 the circuits already end, plus 16 live indicator lamps at the levers.** The
 lever-row sum lamps are the one open item, with the cause now known rather than
-suspected.
+suspected.## Correction: the driver is NOT sealed. The limit is run LENGTH.
+
+The previous entry blamed the net's own 3x3 ring for walling in the driver.
+**That was wrong, and a test I wrote to try to falsify it did falsify it.** S0
+owns **0** ring cells in the merged field, and clearing cobble changed nothing.
+Keeping the wrong claim would have sent the next person to patch rings.
+
+What the driver map at (39,32) actually shows, and the probes that followed:
+
+```
+  north  24 blocks  OK      south  16 blocks  OK      east   8 blocks  OK
+  west   DEAD at 12 -- but x=36,37 on z=32 are SOLID, not sealed
+```
+
+So the first probe was simply aimed into a wall. `_walk`'s "no ground" is
+raised when it cannot *escape a seal*, and a solid pair 3 cells west looks
+exactly like that from inside.
+
+### The real limit, measured
+
+Routing each of the nine sum nets from its own driver to a lamp beside the
+lever row (`scratch/bank_lamps.py`, six candidate cells per net,
+nearest-the-levers first):
+
+```
+  S1    -> tap (5,7)  lamp (6,7)   282 cells      <-- the only success
+  S0, S2..S7, COUT -> NO ROUTE
+```
+
+**1 of 9.** The drivers are spread right across the field — S2 at x=535, S7 at
+x=1925, COUT at x=1997 — and S1 is the only one near enough. S1's 282-cell run
+succeeded; the next one out did not. So the practical ceiling of this approach
+is roughly **a few hundred cells of routed run**, and the request needs runs of
+**~500 to ~2,000**.
+
+That is not a bug to fix, it is a budget. And it is why the original estimate was
+135,260 blocks: routing nine bits from where they are produced, all the way back
+to the input bank, is genuinely a cross-field routing problem.
+
+### What would actually work, and it already exists in this codebase
+
+The stitch already solves exactly this shape for cross-band nets: route each net
+to its **own band's edge** (short, local, always works), then carry them
+together along **reserved streets** to the consumer. So:
+
+1. per band, run each sum net a few cells to a reserved port on that band's
+   north edge — cheap and local;
+2. post-merge, run **one trunk** west along a reserved street at the bank's
+   latitude, carrying all nine, and drop a repeater into each lever-row lamp.
+
+Nine 2,000-cell runs become nine short runs plus one long street. That is the
+design, and the pin mechanism is now proven good enough to hang the nine lamps
+off the end of it.
+
+**Where the user's original request stands:** the sum lamps are correct and
+live-verified **where the circuits end** (19/19, overflow included), plus 16
+live lever indicators. Mirroring all nine bits back to the levers is the one
+open item, and it now has a measured cost ceiling and a known-good pattern to
+follow — instead of three reverted attempts and a wrong theory.

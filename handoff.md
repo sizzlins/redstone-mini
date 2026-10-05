@@ -87,24 +87,25 @@ carry), alu8.txt, add8b0-7.txt (band seeds). New tools: census_world.py
 7. **PMC profile download blocked** — Cloudflare challenge, no headless
    bypass. Mirror had 2 maps; GitHub BatPU/BatPU-2/Graphing-Calculator cloned
    to D:\put gitrepos here\. Survey at survey/REPORT.md + census.txt.
-8. **Sum lamps at the lever row — root cause FOUND, fix is forward
-   reservation.** The pin mechanism is DONE and gated (`pin_lamp`, 1,054 blocks
-   per run in-band). What blocks the 9-lamp version is NOT a pin bug and NOT
-   distance: on the real merged field (via `REDSTONE_HIERDUMP2`) `compose.lwire`
-   from S0's driver `(39,32)` dies **12 blocks out** with `no ground for S0`.
-   That message means the router failed to *escape a seal* — its recovery is to
-   hop a foreign dust column (compose.py:630-640), and at a driver the net's own
-   3x3 ring (1,550 ring cells) is the wall. The own-ring that stops shorts also
-   **walls the net in**, and no green build noticed because every load is placed
-   *before* it is ringed.
-   **Fix:** reserve a street from the bank to each sum driver at compose time,
-   the same trick that makes the lever bank work (`_bankstreets` reserves
-   corridors; the stitch aims into the real gap). Reserving after the fact
-   cannot work — the ring is already a wall. This is `hier_bands`/`hier_stitch`
-   work, not pin work.
-   Ruled out: `sup` keying (it is `(x,y,z)` as `_walk` reads it, and holds only
-   the 1,592 paid hop supports), distance/attenuation (dies at 12), and the pin
-   itself (gated).
+8. **Sum lamps at the lever row — measured cost ceiling, not a bug.** The pin
+   mechanism is DONE and gated (`pin_lamp`, 1,054 blocks per run in-band).
+   Routing the nine sum nets post-merge from their own drivers to lamps beside
+   the levers (`scratch/bank_lamps.py`, 6 candidates per net) gets **1 of 9**:
+   only S1 routes, 282 cells. The drivers are spread to x=1925/1997, so the runs
+   needed are ~500–2,000 cells and the router's practical ceiling is a few
+   hundred. Two of my own hypotheses are FALSIFIED and should not be revisited:
+   - ~~the driver is sealed by its own 3x3 ring~~ — **wrong**. S0 owns 0 ring
+     cells; the driver routes 24 north / 16 south / 8 east. `_walk`'s "no
+     ground" fires when it cannot escape a seal, and a solid pair 3 cells west
+     looks identical from inside. The first probe only ran west into a wall.
+   - ~~`shift` is only known after compose~~ — true for a per-band pin,
+     irrelevant post-merge.
+   **The pattern that works already exists here:** the stitch routes each net to
+   its own band's edge, then carries them together along reserved streets. So:
+   run each sum net a few cells to a reserved north-edge port per band, then run
+   ONE trunk west along a reserved street at bank latitude and drop a repeater
+   into each lever-row lamp. Nine 2,000-cell runs become nine short runs plus one
+   street.
 
 ## Files touched (this lane)
 
