@@ -4797,3 +4797,6 @@ Kill mechanism re-read: secs bounds one chunk from its start message; over budge
 
 ## 2026-10-05 (day loop 12) -- review fix: numba-fail fallback goes to table engine
 Self-review of _vec_child engine wiring found a silent cliff: ENGINE=numba with numba unimportable fell all the way to slow _run_vec with no word. Now falls through to the table engine (always present). All other paths verified equivalent by construction (conditions only widen on the previously-dead branch). alu1 sweep green after.
+
+## 2026-10-05 (reg8 blocked) -- latch+fanout past router wall both paths
+reg8.txt (8x D-latch bit + WE/RE, micro1 pattern): hier bands sim-RED (latch never sets in partition: partition path breaks the loop), flat RED (WE sealed by D6/D7, D6 no-ground at x=1174). Single latch bit composes (micro1 greens) -- shared WE/RE fanout + loops together wall the router. Evidence: band0 standalone 1291 blocks but Y0 stuck dark; flat ladder 175s then bridge-support fail. NOT attempted: 8 discrete single-bit cells + hand-merged buses (stitch-class work), decoder-addressed writes. Owner: router fanout (opt lane) or hand-assembly.
