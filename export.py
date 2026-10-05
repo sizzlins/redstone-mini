@@ -110,7 +110,57 @@ def export_schem(blocks, path, oy=64):
 
 
 
-def export_mcfunction(blocks, path, oy=64):
+def sign_snbt(text, kind="minecraft:oak_sign", facing=None):
+    """1.21 sign NBT, verified live on 1.21.11 (see LOG.md 2026-10-05).
+
+    Four facts that each cost a probe:
+      * `rotation` was REMOVED in 1.21 -- wall signs take `facing`, and
+        `oak_sign` takes no facing at all.
+      * BOTH front_text and back_text must be present or the setblock is
+        refused outright ("Could not set the block").
+      * `messages` must carry FOUR slots. A one-slot list is accepted and then
+        silently dropped, which reads as "the text did not save".
+      * `TextComponent:'...'` is accepted and ignored. front_text.messages is
+        the real key.
+    """
+    q = '"%s"' % str(text).replace('"', "'")
+    e = '""'
+    msgs = "[%s,%s,%s,%s]" % (q, e, e, e)
+    blk = '"black"'
+    side = "[facing=%s]" % facing if facing else ""
+    return ("minecraft:%s%s{front_text:{messages:%s,color:%s,"
+            "has_glowing_text:0b},back_text:{messages:%s,color:%s,"
+            "has_glowing_text:0b}}" % (kind.split(":")[1], side, msgs, blk,
+                                      msgs, blk))
+
+
+def label_lines(io, oy=64, lever_off=(-2, 0), lamp_off=(0, 2)):
+    """(stone pad, sign) setblock lines labelling every lever and lamp.
+
+    Signs, not lamps: a label must not cost redstone. One stone pad + one
+    standing sign per pin, both outside the circuit, so labelling a build
+    changes no power path -- sim and cmc see the same circuit before and
+    after. Positions are offsets in the BUILD frame, so the caller gets them
+    for free from io.
+    """
+    lines = []
+    for key, name in sorted((io.get("levers") or {}).items(), key=str):
+        x, z = int(key[0]), int(key[1])
+        px, pz = x + lever_off[0], z + lever_off[1]
+        lines.append("setblock %d %d %d minecraft:stone" % (px, oy, pz))
+        lines.append("setblock %d %d %d %s" % (px, oy + 1, pz,
+                                              sign_snbt(name)))
+    for key, name in sorted((io.get("lamps") or {}).items(), key=str):
+        k = tuple(key) if isinstance(key, (list, tuple)) else (key,)
+        lx, lz = k[0], k[1] if len(k) == 2 else k[2]
+        px, pz = lx + lamp_off[0], lz + lamp_off[1]
+        lines.append("setblock %d %d %d minecraft:stone" % (px, oy, pz))
+        lines.append("setblock %d %d %d %s" % (px, oy + 1, pz,
+                                              sign_snbt(name)))
+    return lines
+
+
+def export_mcfunction(blocks, path, oy=64, io=None):
     order = {"minecraft:cobblestone": 0, "minecraft:stone": 0, "minecraft:redstone_block": 1,
              "minecraft:lever": 2, "minecraft:redstone_lamp": 2}
     def key(b):
@@ -120,6 +170,10 @@ def export_mcfunction(blocks, path, oy=64):
         f.write("# big builds: raise gamerule maxCommandChainLength (e.g. 200000) first.\n")
         for x, y, z, bid in sorted(blocks, key=key):
             f.write(f"setblock {x} {oy + y} {z} {full_state(bid)}\n")
+        if io:
+            f.write("# --- labels: stone pad + sign per pin, no redstone ---\n")
+            for line in label_lines(io, oy):
+                f.write(line + "\n")
 
 
 
