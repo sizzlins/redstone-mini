@@ -1,0 +1,43 @@
+{
+ "doc": "D:\\redstone-mini\\scratch\\_sweep_alu4mergeNEW.v2doc.json",
+ "pkl": "D:\\redstone-mini\\scratch\\alu4mergeNEW.pkl",
+ "recipe": "D:\\redstone-mini\\recipes\\alu4.txt",
+ "vec": 0,
+ "engine": "22aaa530071c3300",
+ "n_vectors": 4,
+ "argv": [
+  "D:\\redstone-mini\\recipes\\alu4.txt",
+  "D:\\redstone-mini\\scratch\\alu4mergeNEW.pkl",
+  "--doc",
+  "D:\\redstone-mini\\scratch\\_sweep_alu4mergeNEW.v2doc.json",
+  "--max-vectors",
+  "4",
+  "--sim-timeout",
+  "600",
+  "--cmc-timeout",
+  "900",
+  "--diff-all"
+ ],
+ "unrepresentable_levers": [],
+ "sim": {
+  "rc": 0,
+  "timeout": false,
+  "secs": 1.1,
+  "ok": true,
+  "n": 4,
+  "raised": null,
+  "fails": []
+ },
+ "cmc": {
+  "rc": 1,
+  "timeout": false,
+  "secs": 5.1,
+  "ok": false,
+  "n": null,
+  "fails": null,
+  "stage": "support",
+  "popped": 24,
+  "stderr": null
+ },
+ "ok": false
+}

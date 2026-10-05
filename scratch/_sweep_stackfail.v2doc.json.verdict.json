@@ -1,0 +1,100 @@
+{
+ "doc": "D:\\redstone-mini\\scratch\\_sweep_stackfail.v2doc.json",
+ "pkl": "D:\\redstone-mini\\scratch\\stackfail.pkl",
+ "recipe": "D:\\redstone-mini\\recipes\\stackfail.txt",
+ "vec": 0,
+ "engine": "22aaa530071c3300",
+ "n_vectors": 4,
+ "argv": [
+  "D:\\redstone-mini\\recipes\\stackfail.txt",
+  "D:\\redstone-mini\\scratch\\stackfail.pkl",
+  "--doc",
+  "D:\\redstone-mini\\scratch\\_sweep_stackfail.v2doc.json",
+  "--max-vectors",
+  "4",
+  "--sim-timeout",
+  "600",
+  "--cmc-timeout",
+  "900",
+  "--diff-all"
+ ],
+ "unrepresentable_levers": [],
+ "sim": {
+  "rc": 0,
+  "timeout": false,
+  "secs": 0.1,
+  "ok": true,
+  "n": 4,
+  "raised": null,
+  "fails": []
+ },
+ "cmc": {
+  "rc": 1,
+  "timeout": false,
+  "secs": 0.4,
+  "ok": false,
+  "n": 4,
+  "fails": [
+   {
+    "vec": {
+     "a": 1,
+     "b": 1,
+     "c": 0
+    },
+    "got": {
+     "t": false,
+     "c2": false,
+     "y": false
+    },
+    "want": {
+     "c2": false,
+     "t": true,
+     "y": true
+    },
+    "ok": false,
+    "bad": [
+     "t",
+     "y"
+    ]
+   }
+  ],
+  "stage": null,
+  "popped": null,
+  "stderr": null
+ },
+ "diff": {
+  "vectors": 4,
+  "cells": 956,
+  "mismatches": 0,
+  "repeaters": 140,
+  "rep_mismatches": 0,
+  "per_vector": [
+   {
+    "vec": "0",
+    "cells": 239,
+    "mismatches": 0,
+    "rep_mismatches": 0
+   },
+   {
+    "vec": "1",
+    "cells": 239,
+    "mismatches": 0,
+    "rep_mismatches": 0
+   },
+   {
+    "vec": "2",
+    "cells": 239,
+    "mismatches": 0,
+    "rep_mismatches": 0
+   },
+   {
+    "vec": "3",
+    "cells": 239,
+    "mismatches": 0,
+    "rep_mismatches": 0
+   }
+  ],
+  "examples": []
+ },
+ "ok": false
+}

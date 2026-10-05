@@ -4747,3 +4747,6 @@ Full --diff-all re-gate of alu4merge_g at 1200 ticks: SIM ok=True n=64 13s, CMC 
 
 ## 2026-10-05 (GA night loop, cont.) -- slab support is a cmc boundary, out of scope
 slabfall.py (faller on cobble slab): cmc structural REFUSAL at support stage, pops dust-on-slab [2,2,0] and [3,1,0]. sim accepts slab support (sup3). No banked build uses slabs, so this cannot explain alu4; kept as refusal probe (exit 2), not a gate. Glass-vs-slab discriminator stays open until cmc models slab support. Assumption: banked builds are slab-free (spot-checked alu4merge_g block kinds; full census in sweep).
+
+## 2026-10-05 (GA night loop, cont.) -- sweep refreshed at 1200 ticks: 21 green / 28 red / 2 DIFFs, all characterized
+Full sweep --diff (99 builds, 77s, engine 22aaa530): 21 green both, 28 failing (same 28), DIFFs only alu4bank_ins (both-red opposite-sign, 21563/103260) and not_full (Finding-3, 9/20). 4 stale-engine rows re-gated fresh. stackfail re-gated: sim=True cmc=False with 0/956 dust and 0/140 rep diffs -- functional lamp-level split, gate refuses, stays characterized. verify_par.py shows M in tree -- co-tenant work, untouched.
