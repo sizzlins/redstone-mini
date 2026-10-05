@@ -4782,3 +4782,6 @@ Symptom: add8-flat 1122s, 31 dead rungs (scratch/add8_run.log). Bottleneck prove
 
 ## Attempt ledger: cpu4 probe inconclusive (no bottleneck found)
 Bounded flat/hier probe (COMPOSE_SECS=600, Temp-only) to find a live ladder witness. Finding: cpu4 routes HIERARCHICAL (lockstep band rungs, t=15-76s restarts normal), not the flat grind -- killed by my 700s tool timeout, not compose failure. No pathology evidenced; no witness; no action. Self-inflicted: first attempt lacked __main__ guard and fork-bombed spawn workers (my Temp script only, cleaned; GA evolve untouched). Rule re-learned: every probe gets __main__ guard before launch.
+
+## 2026-10-05 (day loop 9) -- first exhaustive add8 sweep: 65536/65536 green
+GA banked add8merge (OR-less carry, 49k blocks) with sampled dual-engine only. Ran first FULL sweep (verify_par warm default, nchunks=64, 1024/chunk): VERIFY OK 65536 vectors, 64 chunks green, exit 0. Slowest chunk 540.9s (straggler skew, same class as HIER_NCHUNKS note). Warm chain held across 1024+ chains. No code change; verification value only. Next: straggler distribution for chunk sizing.
