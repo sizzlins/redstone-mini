@@ -4959,3 +4959,28 @@ scratch/lamp_pin_check.py added to coldstart GATES (16 gates now). Why it earns 
 
 ## 2026-10-05 (night loop) -- labels are now an EXPORT feature, not an ad-hoc script
 export.py gains sign_snbt() + label_lines() and export_mcfunction(..., io=None) emits a stone pad + standing sign per lever and per lamp. Additive: io=None reproduces the previous file byte for byte, and export.py self-test still passes. 41 labels = 82 lines for add8, zero redstone, and the circuit is untouched (signs are not redstone blocks, so sim and cmc see the same build before and after). The 1.21 syntax facts are in sign_snbt's docstring, each one bought with a probe: no rotation, facing only on wall signs, BOTH text sides required, FOUR message slots, TextComponent silently ignored. Verified end to end by pasting a GENERATED line at a scratch cell and reading the text back -- not by trusting the formatter. The two 900,64,103 refusals in that test are the known identical-state quirk, not a failure.
+
+## 2026-10-05 (night loop) -- alu8: ALL 8 BANDS ROUTE for the first time; merge oscillates
+
+The OR-tile family that broke add8/add4 (and whose recs go stale in bands,
+logged above) was also the ONLY thing keeping alu8 band 0 red. Rewrote all 46
+OR gates as NAND (`a OR b` -> `NOT(NOT a AND NOT b)`), the same move that made
+add8's carry green.
+
+- recipe logic: 0 mismatches over 40 (A,B,OP,SUB) combinations
+- **band ladder: 8/8 green** -- was 7/8 with band 0 NO GREEN RUNG on every
+  rung at every spread for the last several sessions
+- band cost rises, as expected: 9,721 -> 13,134 per bit band, 0 -> 8,768 for
+  band 0. NAND is 3 gates where OR is 1; the win is that it routes at all.
+
+The merge still fails: `STITCH` completes (205,979 blocks) but the all-zeros
+smoke reports `sim not settling`, churn=52,985, with `loop_torches` listed --
+a genuine ring oscillator in the merged field, not a settle-time artefact.
+`max_gap=205,950` says the merge is also one enormous net. So alu8 is now
+"every band routes, merge oscillates", a real advance from "band 0 never
+routes" and a precisely-scoped remaining problem: the 8 long carry stitches in
+a 206k field create a loop the per-stitch guards do not catch.
+
+Committed as an incomplete build, stated as such: the recipe is
+logic-correct and band-green, and the merge oscillation is the open item.
+Not claiming a working ALU.
