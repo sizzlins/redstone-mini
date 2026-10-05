@@ -4901,3 +4901,55 @@ Delivered and proven instead: 41 signs live on the rig (16 levers, 16
 indicators, 9 sums), text verified by `data get block`; 16 lever-side
 indicator lamps for **16 blocks**, sim 64/64, dual-engine PASS, live 16/16 on
 / 0/16 off / A0-alone lights exactly one.
+
+## CORRECTION (immediate, same session) -- io lamps do NOT drop readouts
+
+The claim in the entry above that `io["lamps"]` has no COUT/COUTR key after a
+merge is WRONG. I keyed the lookup by NAME; the dict is keyed by CELL -> name.
+Measured on `scratch/add8rd1merge.pkl`: 10 lamps, all present, including
+`((19, 241), "COUTR")` and `((2188, 296), "COUT")`.
+
+So there is ONE structural limit, not two: a pin is honoured at compose time
+in BAND-LOCAL coordinates, and `finish_assembly` shrink-wraps every band by
+its own `(minx, minz)`, so an authored build coordinate cannot survive to the
+merge. The fix is a post-merge pinned-tap pass -- route the net's driver to a
+free neighbour of the pin, stamp the lamp there -- plus shifting the pin map
+by the same `minx/minz` that `finish_assembly` applies.
+
+Lesson re-learned: verify the shape of a data structure before writing a
+conclusion about it into the log. Two of my three "structural limits" were my
+own harness bugs.
+
+## 2026-10-05 (night loop) -- sum readouts: THIRD attempt, reverted, root cause found
+
+Third attempt at the operator's actual request (the wire that powers each sum
+lamp run back to the lever row, ending in lamps there). This one got furthest
+and found the real blocker, which is NOT the pin:
+
+1. Pin coordinates that are RELATIVE to another feature in the same band do
+   survive `finish_assembly` (one `minx/minz` moves both). Band 0's levers
+   are at band-local (2..6, 2..152); pins authored at (2..26, 160) landed at
+   merged (153..177, 182) -- i.e. still north of the lever row, as intended.
+   So the "build-absolute pin" worry from the previous entry was solved by
+   pinning relatively, with no merge-coordinate arithmetic at all.
+2. **The real blocker: a pinned lamp is DARK.** Band 0 composed 11,775 blocks
+   and produced all 9 lamp blocks at the pins, but the band sim gate reads
+   `S1R`/`COUTR` False when the net is high. `tap_lamps` stamps ONE tap cell
+   next to the pin and expects the router to connect the buffer's driver to
+   it; compose's comment says taps are stamped BEFORE routing so routes dodge
+   them, and for a tap ~160 cells from its driver the router evidently
+   satisfies the load without actually carrying power (or the ring reserved
+   around the pin blocks the approach). Either way the pin is a placement
+   feature pretending to be an electrical one, and it fails the one gate that
+   matters.
+
+Reverted `tiles.py` and `recipes/add8.txt` to HEAD. No unproven code banked.
+The feature needs a real electrical endpoint for a remote lamp -- a repeater
+buffer whose output IS the pinned cell, or a one-wire tap that the router
+verifies as powered -- not a bare dust cell. That is a genuine piece of router
+work, not a recipe change, and it is now scoped precisely in this log.
+
+Proven and banked from the same session, unchanged: 41 signs live on the rig
+(16 levers, 16 indicators, 9 sums; text verified by `data get block`), and 16
+lever-side indicator lamps for 16 blocks (sim 64/64, dual-engine PASS, live
+16/16 on, 0/16 off, A0-alone lights exactly one).
