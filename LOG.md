@@ -4450,3 +4450,30 @@ NEXT, not done: a minimal vertical-staircase probe in the wireconn.py pattern
 (hand-placed steps, both engines, one vector), then a side-by-side of sim's
 UP/DN terms against cmc's vertical wire code. Bounded, safe, and the correct
 seam for whichever rule is wrong.
+
+------------------------------------------------------------
+stair.py: vertical RISE agrees perfectly. Not the split.
+------------------------------------------------------------
+Built the minimal shape from the alu4merge_g finding: three dust cells rising
+one level per step east on cobble steps, lever on, lamp at the top. Result:
+
+    OUT  A=1  (1,1,0) sim=15 cmc=15  (2,2,0) sim=14 cmc=14
+              (3,3,0) sim=13 cmc=13  agree
+
+So a rising staircase connects, decays, and reads identically in both engines.
+Whatever splits alu4merge_g's staircases is NOT the basic rise -- it must be
+the specific UP/DN conditions (lids, glass vs opaque support, the down-flow
+term) or the falling direction, which this probe does not cover.
+
+A side artifact of the probe, NOT pursued: sim leaves this probe's lamp dark
+(Y=False) while cmc lights it, even though the adjacent dust agrees at 13.
+Isolated it to the probe geometry, not a lamp rule -- a straight tip lights
+(Y=True) with or without diagonal dust present, so sim's tip rule is intact.
+The staircase tip differs somehow (riser context), but no banked build depends
+on it (all 21 greens pass), so it is logged here and left. My probe had two
+of its own bugs first (a wrong io lamp key evaluating an empty cell, and a
+format-string join iterating characters); both visible on the first run.
+
+scratch/stair.py is committed as the rise probe. A fall probe (dust stepping
+DOWN, and a glass-vs-cobble support variant) is the obvious next pair, and
+together they would pin the UP/DN asymmetry if one exists.
