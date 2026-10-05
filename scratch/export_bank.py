@@ -135,6 +135,18 @@ def main():
     blocks = d["blocks"]
     size = d.get("size")
     io = d["io"]
+    if size is None:
+        # ponytail: hand-built probe artifacts (not_full.pkl and its kin) carry
+        # no size because no router measured them. Deriving bounds here beats
+        # crashing on the third of three exports after two files are already
+        # on disk -- which is precisely the "fail halfway" this file exists to
+        # prevent. A wrong size only mislabels the html viewport, never the
+        # blocks, so this fallback cannot corrupt an export.
+        xs = [b[0] for b in blocks]
+        zs = [b[2] for b in blocks]
+        size = (max(xs) - min(xs) + 1, max(zs) - min(zs) + 1)
+        print("note: no size in pkl, derived %s from block bounds"
+              % (size,), flush=True)
     lev = io.get("levers", {})
     xs = [c[0] for c in lev] or [0]
     zs = [c[1] for c in lev] or [0]
