@@ -4622,3 +4622,28 @@ classified against the artifact:
   can ever be misread again -- the failure is loud, not silent.
   Cross-model review skipped: non-interactive context (overnight autonomous
   loop, operator asleep). Announced per the skill.
+
+------------------------------------------------------------
+stairglass.py: MATERIAL splits them. sim=0 vs cmc=13 on dust-on-glass.
+------------------------------------------------------------
+Same fall as stairdown.py (which agrees 14/14 13/13 on cobble), but the riser
+and the faller both sit on GLASS. Result:
+
+    SIM  A=1 -> Y=False (want True) WRONG
+    OUT  rise (2,2,0) sim=14 cmc=14  fall (3,1,0) sim=0 cmc=13  DISAGREE
+
+The rise agrees even on glass; the FALL onto glass is sim=0 vs cmc=13. Clean
+A/B against stairdown.py: the ONLY variable is support material under the run
+(cobble vs glass). So the split is sim.py:399'"'"'s material condition (UP needs
+the upper on opaque conductive; dust on glass/slab never feeds down) against
+whatever cmc does -- and cmc powers it.
+
+Which is right needs the game or the wiki, and is NOT claimed here. What IS
+claimed, because it is measured: the two engines implement different rules for
+down-flow onto transparent support, and alu4merge_g'"'"'s staircases run over
+mixed support. That is now the leading concrete hypothesis for the 49k diff,
+replacing the vaguer "support/lid conditions".
+
+scratch/stairglass.py is the failing probe (exit 1). Together stair.py (rise,
+dust agrees), stairdown.py (fall on cobble, agree), stairglass.py (fall on
+glass, DISAGREE) form a complete material matrix for the down-flow question.
