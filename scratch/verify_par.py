@@ -82,12 +82,24 @@ def _vec_child(conn, blocks, io, recipe, jobs):
         # differential A/B on the same cache key.
         run = lambda v, _p: _run_vec(v, hold, _p)   # noqa: E731
         warm_on = os.environ.get("REDSTONE_VERIFY_WARM", "1") == "1"
-        if (hold is None
-                and os.environ.get("REDSTONE_VERIFY_ENGINE", "fast")
-                != "slow"):
+        _eng = os.environ.get("REDSTONE_VERIFY_ENGINE", "fast")
+        # ponytail: _rs_mod is the chain engine (warm _warm/_expose calls);
+        # run is the verdict engine. numba is chain-capable too, so warm
+        # stays on there; slow path has neither (both stay authority-only).
+        _rs_mod = None
+        if hold is None and _eng == "numba":
             try:
-                from simvec import run_scalar
-                run = lambda v, _p: run_scalar(v, _p)   # noqa: E731
+                from simvec_numba import run_scalar as _nbrun
+                os.environ["REDSTONE_NB_LAMPS_ONLY"] = "1"
+                run = lambda v, _p: _nbrun(v, _p)   # noqa: E731
+                _rs_mod = _nbrun
+            except ImportError:
+                warm_on = False
+        elif (hold is None and _eng != "slow"):
+            try:
+                from simvec import run_scalar as _rs_default
+                run = lambda v, _p: _rs_default(v, _p)   # noqa: E731
+                _rs_mod = _rs_default
             except ImportError:
                 warm_on = False
         # ponytail: warm-start chain is a sweep-only fast path, not a verdict
@@ -105,7 +117,7 @@ def _vec_child(conn, blocks, io, recipe, jobs):
             g = run(v, pst)[0]
             if warm_on:
                 try:
-                    from simvec import run_scalar as _rs
+                    _rs = _rs_mod
                     _ce = {}
                     _rs(v, pst, _expose=_ce)
                     _chain[0] = _ce
@@ -125,7 +137,7 @@ def _vec_child(conn, blocks, io, recipe, jobs):
                 _s = None
                 _saved = None
             try:
-                from simvec import run_scalar as _rs
+                _rs = _rs_mod
                 _exp = {}
                 _got = _rs(v, pst, _warm=_chain[0], _expose=_exp)[0]
             except Exception:  # noqa: BLE001 -- incl RuntimeError: cold decides
