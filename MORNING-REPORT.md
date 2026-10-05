@@ -302,3 +302,6 @@ No uncharacterized reds. `coldstart` 12/12 green including the 3 locked-in probe
 was my keying error throughout -- 2-tuple keys map to y=1, a lamp at y=3 needs
 its full (x,y,z); with the right key sim lights it. Fourth setup error caught
 by running.
+
+## 2026-10-05 GA night loop -- 49k CLOSED, coldstart 14/14 green
+49k-cell alu4merge_g diff is CLOSED as cmc settling, not a rule gap. Single-vector ladder: vec47 2260 cells @400 ticks -> 146 @600 -> 0 @800 -> 0 @1200/@1600; vec62/vec29 0 @1600. Full 64-vector re-gate at 1200 ticks: dust 0/1957248, repeaters 0/279552, DUAL-ENGINE PASS (sim 13s, cmc 865s). Fix: verify2.py default --ticks 400->1200 (one line; tiny probes cost the same seconds). New probes, all in coldstart GATES and green: stairlid.py (dust-cobble-dust joint from 1097,1-3,182 agrees -- direct stacks never link), repchain.py (R1->7dust->R2 agrees at 400 and 1600), repface.py (all 4 facings agree -- facing convention exonerated, closes that open item). coldstart --quick 14/14 green. Still open and UNCHANGED (need operator/game, not unilateral): glass down-flow stairglass sim=0 cmc=13, non-pin lever notmin, cpu4 untouched. Red census unchanged: 28/28 characterized. Assumption: 1200 ticks covers all banked builds (largest gated is 129953-block cpu4retry_merge; re-gate on touch).

@@ -4741,3 +4741,6 @@ vec47 single-vector diff: 2260 cells @400 ticks -> 146 @600 -> 0 @800 -> 0 @1200
 
 ## 2026-10-05 (GA night loop, cont.) -- facing exonerated on all 4 sides
 repface.py now tests east/west/south/north, lever on the input side per sim convention, lamp on the output: ALL 4 AGREE (dust 15/15, rep 1/1, lamp lit, both engines). Assumption: none -- this is a direct observation, no inference. Consequence: the 11 independent repeater splits in the LOG note stay downstream/context effects, never a convention gap; no facing change in either engine. Assumption for the 49k story stands: settling (vec47 2260@400 -> 146@600 -> 0@800, vec62/vec29 0@1600).
+
+## 2026-10-05 (GA night loop, close) -- 64-vector PROOF: 0/1957248 dust, 0/279552 repeaters
+Full --diff-all re-gate of alu4merge_g at 1200 ticks: SIM ok=True n=64 13s, CMC ok=True n=64 865s, DUAL-ENGINE PASS. The 49814-cell finding is retracted as a coverage artifact squared: first 4-of-1024 sampling, then 400-tick settling. stairglass (0v13) and notmin re-confirmed DIVERGE on tiny builds -- rule gaps, not settling, still correctly contained/gated. Verdict JSON committed as the receipt.
