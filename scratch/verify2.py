@@ -106,7 +106,9 @@ def unrepresentable_levers(blocks, io):
 
 def build_doc(recipe_p, pkl_p, out_p, max_vectors):
     from recipe import parse_recipe, eval_net
-    r = parse_recipe(open(recipe_p).read())
+    import hashlib
+    rtext = open(recipe_p).read()
+    r = parse_recipe(rtext)
     m = pickle.load(open(pkl_p, 'rb'))
     ins, outs = r['inputs'], r['outputs']
     combos = list(itertools.product([0, 1], repeat=len(ins)))
@@ -132,6 +134,14 @@ def build_doc(recipe_p, pkl_p, out_p, max_vectors):
         'sampled': sampled,
         'n_inputs': len(ins),
         'max_vectors': max_vectors,
+        # Cache key: a doc is only reusable for the SAME recipe text and the
+        # SAME build. Reusing a doc built for a different recipe silently
+        # gates the wrong netlist (measured: a nonexistent recipe path gated
+        # green against a stale doc). The recipe hash catches edits and swaps;
+        # the block count catches build swaps cheaply.
+        'recipe': os.path.basename(recipe_p),
+        'recipe_sha': hashlib.sha256(rtext.encode('utf8')).hexdigest()[:16],
+        'n_blocks': len(m['blocks']),
     }
     json.dump(doc, open(out_p, 'w'))
     return doc, len(doc['blocks'])
@@ -266,8 +276,32 @@ def main():
                  ' (SAMPLED)' if doc['sampled'] else '', doc_p), flush=True)
     else:
         doc = json.load(open(doc_p))
-        print('doc: reused %s (%d blocks, %d vectors)'
-              % (doc_p, len(doc['blocks']), len(doc['vectors'])), flush=True)
+        # A cached doc is keyed on recipe text + build, not just its path. A
+        # wrong or edited recipe must rebuild, never reuse -- otherwise the
+        # gate scores the wrong netlist and reports it as the right one.
+        import hashlib
+        try:
+            rsha = hashlib.sha256(open(recipe_p, 'rb').read()).hexdigest()[:16]
+        except OSError:
+            rsha = None
+        nblk = len(pickle.load(open(pkl_p, 'rb'))['blocks']) \
+            if os.path.exists(pkl_p) else None
+        if rsha is None:
+            print('doc: CANNOT READ recipe %s -- refusing to gate against a '
+                  'doc I cannot verify. Fix the path.' % recipe_p, flush=True)
+            return 2
+        if doc.get('recipe_sha') not in (None, rsha) or \
+                doc.get('n_blocks') not in (None, nblk):
+            print('doc: STALE (recipe or build changed since %s was built) -- '
+                  'rebuilding instead of reusing.' % doc_p, flush=True)
+            doc, nblocks = build_doc(recipe_p, pkl_p, doc_p, max_vectors)
+            print('doc: %d blocks, %d vectors%s -> %s'
+                  % (nblocks, len(doc['vectors']),
+                     ' (SAMPLED)' if doc['sampled'] else '', doc_p), flush=True)
+        else:
+            print('doc: reused %s (%d blocks, %d vectors)'
+                  % (doc_p, len(doc['blocks']), len(doc['vectors'])),
+                  flush=True)
         # ponytail: --max-vectors was silently ignored whenever the doc already
         # existed, so `--max-vectors 1` against a cached 4-vector doc still ran
         # all 4 and the caller had no way to tell. A cached doc is a cache
