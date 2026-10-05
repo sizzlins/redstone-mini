@@ -1,0 +1,62 @@
+IN A0, A1, A2, A3, A4, A5, A6, A7, B0, B1, B2, B3, B4, B5, B6, B7
+OUT S0, S1, S2, S3, S4, S5, S6, S7, COUT
+BAND 0
+x0 = A0 XOR B0
+S0 = x0 AND x0
+C1 = A0 AND B0
+BAND 1
+x1 = A1 XOR B1
+S1 = x1 XOR C1
+c1a = A1 AND B1
+u1 = x1 AND C1
+t2 = c1a XOR u1
+w2 = c1a AND u1
+C2 = t2 XOR w2
+BAND 2
+x2 = A2 XOR B2
+S2 = x2 XOR C2
+c2a = A2 AND B2
+u2 = x2 AND C2
+t3 = c2a XOR u2
+w3 = c2a AND u2
+C3 = t3 XOR w3
+BAND 3
+x3 = A3 XOR B3
+S3 = x3 XOR C3
+c3a = A3 AND B3
+u3 = x3 AND C3
+t4 = c3a XOR u3
+w4 = c3a AND u3
+C4 = t4 XOR w4
+BAND 4
+x4 = A4 XOR B4
+S4 = x4 XOR C4
+c4a = A4 AND B4
+u4 = x4 AND C4
+t5 = c4a XOR u4
+w5 = c4a AND u4
+C5 = t5 XOR w5
+BAND 5
+x5 = A5 XOR B5
+S5 = x5 XOR C5
+c5a = A5 AND B5
+u5 = x5 AND C5
+t6 = c5a XOR u5
+w6 = c5a AND u5
+C6 = t6 XOR w6
+BAND 6
+x6 = A6 XOR B6
+S6 = x6 XOR C6
+c6a = A6 AND B6
+u6 = x6 AND C6
+t7 = c6a XOR u6
+w7 = c6a AND u6
+C7 = t7 XOR w7
+BAND 7
+x7 = A7 XOR B7
+S7 = x7 XOR C7
+c7a = A7 AND B7
+u7 = x7 AND C7
+t8 = c7a XOR u7
+w8 = c7a AND u7
+COUT = t8 XOR w8

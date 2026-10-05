@@ -161,3 +161,42 @@ Shared-core touched deliberately: simvec.py once (error path, `for c in
 cset:` — cannot change any verdict); sim.py NEVER.
 NOT touched: evo_*, compact.py, enum_*, verify_par.py, compose.py, layout.py,
 memo.json, rig_verify.py, rcon.py, dustcmp.py, cmc/, reference repos (read-only).
+
+## Addendum 2026-10-05 (GA night loop, same session continues)
+
+F3 RETRACTED AND CLOSED: the 49k diff is cmc settle ticks, not staircases.
+vec47 single-vector ladder: 2260 cells @400 ticks -> 146 @600 -> 0 @800 ->
+0 @1200/@1600 (vec62/vec29 0 @1600). Full 64-vector re-gate at 1200 ticks:
+SIM ok n=64 13s, CMC ok n=64 865s, dust 0/1957248, repeaters 0/279552,
+DUAL-ENGINE PASS (receipt: scratch/alu4merge_g.v2doc.json.verdict.json).
+Durable fix: verify2.py default --ticks 400->1200 (one line in the shared
+gate; tiny probes cost the same seconds). My "2x ticks: 21619->21563"
+elimination above tested the wrong build scale (alu4bank_ins, both-red);
+on the lamp-green alu4merge_g the discriminator answers the other way.
+
+Open items update: #1 CLOSED (stairlid.py: dust-cobble-dust joint from
+1097,1-3,182 agrees -- direct stacks never link, upper stays 0/0 both
+engines). #4 CLOSED (repface.py: all 4 facings agree, dust 15/15, rep 1/1
+-- facing convention exonerated, no engine change). #2 UNCHANGED
+(stairglass 0v13 re-confirmed, tiny build -- rule gap, still needs
+wiki/game). #3 UNCHANGED (notmin signature re-confirmed, containment
+holds). #5 UNCHANGED (cpu4 other lane). NEW: slab support is a cmc
+structural boundary (slabfall.py: cmc pops dust-on-slab; 0 slabs in
+2,522,792 banked blocks -- provably out of scope). NEW: carry-OR blind
+spot in hier stitch (add8/add4 C2+ dead while C1 lives; OR-less carry
+greens -- full note in LOG.md, engine owner's lane, not fixed here).
+
+Commits since (mine): d6b74e7 (ticks + stairlid/repchain, coldstart 14/14),
+4ba4214 (repface x4), a72e5d5 (64-vector proof + report), dc399cd
+(slabfall), 01ea4db (sweep refreshed at 1200: 21 green / 28 red all
+characterized / 2 DIFFs), d714dbe (full coldstart 15/15 incl hier_alu4
+1024/1024 in 207s + slab census + report). Co-tenant live (82fa638 numba,
+verify_par.py + simvec_numba.py uncommitted -- untouched).
+
+Current state: coldstart.py 15/15 green (was 13/13: +stairlid, +repchain).
+sweep 99 builds at 1200 ticks: 21 green both, 28 red (same 28), DIFFs only
+alu4bank_ins (both-red opposite-sign) and not_full (Finding 3). New probes:
+stairlid.py repface.py repchain.py (gates, green) slabfall.py (refusal
+probe, exit 2, not a gate). Recipes: add8.txt (OR-less ripple-carry, 8
+bands). Kill the stale claims above on next rewrite: F3, open #1, open #4,
+"12 gates" counts, and the settling elimination line.
