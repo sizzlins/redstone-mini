@@ -1,0 +1,17 @@
+# Recovered recipe for scratch/stackfail.pkl (2026-10-05).
+#
+# stackfail was the one real build no recipe matched (in=a,b,c out=c2,t,y),
+# so the sweep could never gate it. Its truth table, read out of sim on all
+# 8 vectors, is unambiguous:
+#   c2 = c            (buffered passthrough)
+#   t  = a AND b
+#   y  = a AND b
+# i.e. an AND gate with c carried through, almost certainly a failed stacking
+# experiment (hence the name). This file lets the gate score it instead of
+# skipping it. If the build was MEANT to compute something else, this recipe
+# is wrong and the gate will say so -- that is the point.
+IN a, b, c
+OUT c2, t, y
+c2 = c AND c
+t = a AND b
+y = a AND b

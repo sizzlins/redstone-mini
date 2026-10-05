@@ -64,6 +64,17 @@ def engine_stamp():
     return h.hexdigest()[:16]
 
 
+def keystr(k):
+    """An io pin key as 'x,z' or 'x,y,z'. ponytail: build_doc assumed 2-tuples
+    and crashed with `TypeError: not all arguments converted` on the first
+    build carrying a 3D lamp key (stackfail's (51,6,35)). sim itself accepts
+    both shapes (_y maps 2-tuples to y=1 and passes 3-tuples through), so the
+    gate must too -- a gate that crashes on a key shape is a gate that cannot
+    see a whole class of builds."""
+    return ','.join(str(int(v)) for v in (k if isinstance(k, (tuple, list))
+                                          else (k,)))
+
+
 def build_doc(recipe_p, pkl_p, out_p, max_vectors):
     from recipe import parse_recipe, eval_net
     r = parse_recipe(open(recipe_p).read())
@@ -85,8 +96,8 @@ def build_doc(recipe_p, pkl_p, out_p, max_vectors):
     doc = {
         'blocks': [[int(x), int(y), int(z), b]
                    for (x, y, z, b) in m['blocks']],
-        'levers': [['%d,%d' % k, v] for k, v in io['levers'].items()],
-        'lamps': [['%d,%d' % k, v] for k, v in io['lamps'].items()],
+        'levers': [[keystr(k), v] for k, v in io['levers'].items()],
+        'lamps': [[keystr(k), v] for k, v in io['lamps'].items()],
         'vectors': vectors,
         'expected': expected,
         'sampled': sampled,

@@ -4506,3 +4506,33 @@ isolated fall; that is the version committed.
 Both stair.py (rise, agree) and stairdown.py (fall, agree) now stand as
 regression coverage for the simple shapes. The open question narrows to
 support/lid variants (glass-vs-cobble under the faller, a lid over the joint).
+
+------------------------------------------------------------
+stackfail.pkl: the last hole is closed. It is GREEN.
+------------------------------------------------------------
+Read its truth table out of sim on all 8 vectors (2464 blocks, in=a,b,c
+out=c2,t,y): c2=c, t=a AND b, y=a AND b. An AND with a buffered passthrough,
+almost certainly a failed stacking experiment. Wrote recipes/stackfail.txt for
+exactly that function -- if the build was MEANT to compute something else, the
+gate will now say so rather than skipping it.
+
+Gating it exposed a REAL gate crash, twice. verify2.build_doc formatted io pin
+keys with `'"'"'%d,%d'"'"' % k`, assuming 2-tuples. stackfail mixes 2-tuples
+{(28,22),(52,21)} with a 3D key {(51,6,35)} (stacked decks keep lamps at y!=1;
+sim.py:1143 already handles both via _y). First crash:
+
+    TypeError: not all arguments converted during string formatting
+
+Fixed with keystr() (formats by key length), which I then broke by replacing
+build_doc's own `def` line instead of preceding it:
+
+    NameError: name '"'"'build_doc'"'"' is not defined
+
+Both visible on the first run, because I ran it. A gate that crashes on a key
+shape cannot see a whole class of builds; now it handles both.
+
+    SIM : ok=True n=8  CMC : ok=True  DIFF: 0/239 cells, 0/35 repeaters
+    DUAL-ENGINE VERDICT: PASS
+
+Coverage is now complete: every real circuit build in the tree gates, and this
+one is green.
