@@ -116,18 +116,23 @@ def _vec_child(conn, blocks, io, recipe, jobs):
         _chain = [None]
 
         def _cold(v):
-            g = run(v, pst)[0]
-            if warm_on:
+            # ponytail: single run serves verdict AND chain refresh. The old
+            # code ran run() then a second _expose run (16 wasted runs/sweep
+            # plus one per fallback); one call with _expose does both.
+            if warm_on and _rs_mod is not None:
                 try:
-                    _rs = _rs_mod
                     _ce = {}
-                    _rs(v, pst, _expose=_ce)
+                    g = _rs_mod(v, pst, _expose=_ce)[0]
                     _chain[0] = _ce
-                except Exception:  # noqa: BLE001 -- chain breaks, verdict stands
+                    return g
+                except RuntimeError:
+                    _chain[0] = None
+                    raise
+                except Exception:  # noqa: BLE001 -- engine bug: authority decides
                     _chain[0] = None
             else:
                 _chain[0] = None
-            return g
+            return run(v, pst)[0]
 
         def _fast(v):
             if not warm_on or _chain[0] is None:
