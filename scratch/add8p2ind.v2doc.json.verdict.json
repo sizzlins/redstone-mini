@@ -1,0 +1,38 @@
+{
+ "doc": "scratch/add8p2ind.v2doc.json",
+ "pkl": "scratch/add8p2ind.pkl",
+ "recipe": "recipes/add8.txt",
+ "vec": 0,
+ "engine": "22aaa530071c3300",
+ "n_vectors": 16,
+ "argv": [
+  "recipes/add8.txt",
+  "scratch/add8p2ind.pkl",
+  "--max-vectors",
+  "16",
+  "--cmc-timeout",
+  "2400"
+ ],
+ "unrepresentable_levers": [],
+ "sim": {
+  "rc": 0,
+  "timeout": false,
+  "secs": 2.2,
+  "ok": true,
+  "n": 16,
+  "raised": null,
+  "fails": []
+ },
+ "cmc": {
+  "rc": 0,
+  "timeout": false,
+  "secs": 332.3,
+  "ok": true,
+  "n": 16,
+  "fails": [],
+  "stage": null,
+  "popped": null,
+  "stderr": null
+ },
+ "ok": true
+}

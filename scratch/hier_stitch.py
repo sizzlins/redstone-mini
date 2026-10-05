@@ -14,8 +14,34 @@ from recipe import parse_recipe
 from sim import sim_verify
 
 
+def _apply_bank_pin(src):
+    """Lever-bank pitch pin, same `<recipe>.bank` sibling hier_bands reads.
+
+    The bank is laid during the MERGE, not per band, so hier_bands setting the
+    env is not enough -- this is a separate process and needs its own read.
+    Without this the pin prints, takes effect nowhere, and the build comes out
+    at the default pitch looking like the pin silently failed.
+    """
+    import os as _os
+    if _os.environ.get("REDSTONE_BANK_PITCH"):
+        return None
+    try:
+        with open(_os.path.splitext(src)[0] + ".bank") as f:
+            val = next((ln.strip() for ln in f
+                        if ln.strip() and not ln.strip().startswith("#")), "")
+    except OSError:
+        return None
+    if val:
+        _os.environ["REDSTONE_BANK_PITCH"] = val.split()[0]
+        print("BANK PITCH: %s (from %s.bank)"
+              % (_os.environ["REDSTONE_BANK_PITCH"],
+                 _os.path.basename(src)), flush=True)
+    return None
+
+
 def main():
     pkl, src = sys.argv[1], sys.argv[2]
+    _apply_bank_pin(src)
     log = open(os.path.join(os.path.dirname(pkl), "stitch.log"), "a",
                buffering=1)
     log.write(f"--- {time.strftime('%H:%M:%S')} {pkl} {src}\n")

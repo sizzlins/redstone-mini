@@ -3280,8 +3280,14 @@ def compose_hier_parts(built, gates, recipe):
             # staircase, so the gap has to hold it: 4 apart leaves 3 clear
             # cells and the bridge support lands on the next row's wire
             # (measured: "bridge support lands on wire at (8,1,-23)").
+            # REDSTONE_BANK_PITCH makes the gap measurable instead of folklore.
+            # The operator asked why the levers are 10 apart when 1 would do;
+            # the honest answer is that the ROW is a routing corridor, not a
+            # control panel, and the gap has to fit a 5-cell hop. This gate
+            # exists so "does 6 / 8 still route" is a run, not an argument.
+            _pitch = int(os.environ.get("REDSTONE_BANK_PITCH", "10"))
             for _i, _n in enumerate(sorted(_names, key=lambda n: -_reach[n])):
-                _rows[_n] = _bz0 - 16 - 10 * _i
+                _rows[_n] = _bz0 - 16 - _pitch * _i
             for _try in range(400):
                 _cells = [(_cx, _rows[_n]) for _n in _names]
                 if not any(

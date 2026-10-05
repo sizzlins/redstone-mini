@@ -5023,3 +5023,57 @@ Cost ledger for the feature, all measured, for whoever picks it up:
 | all readouts in band 0, no pin | 20,390 (band 0) | bank stitch dies |
 | pin, no ring, load registered | 819 (band 0) | composes, lamp dark (no driver) |
 | pin + repeater endpoint | not built | the actual fix |
+
+## 2026-10-05 (night loop) -- lever-bank pitch: 10 -> 2, and it is SMALLER
+
+The operator asked why the levers sit 10 blocks apart when 1 would do. The
+honest answer: the lever bank is a set of north-south ROUTING CORRIDORS, not a
+control panel. Each input gets its own row, and the drop from that row to its
+band's stub crosses every row south of it, so the gap has to hold a 5-cell hop
+staircase. The code said so; nobody had measured the range.
+
+Made it measurable instead of folklore: `REDSTONE_BANK_PITCH` (default 10,
+unchanged) plus a `<recipe>.bank` sibling pin, same convention as the existing
+`<recipe>.skip`. Two gotchas cost an hour and are worth writing down:
+- the bank is laid during the MERGE, not per band, so `hier_bands` setting the
+  env is not enough -- `hier_stitch` is a separate process and needed the same
+  read. The pin printed, took effect nowhere, and the build came out at pitch
+  10 looking like a silent failure.
+- a commented block above the value is the `.skip` convention, so the reader
+  must take the first non-comment line, not test the whole file for `#`.
+
+Measured on add8 (all smoke 4/4):
+
+| pitch | blocks | lever row | verdict |
+|---|---|---|---|
+| 10 (old default) | 46,502 | z 3..153 | green |
+| 6 | 45,542 | z 3..93 | green |
+| 4 | 45,062 | z 3..63 | green (the "4 fails" note was stale) |
+| 3 | 44,822 | z 3..48 | green |
+| **2** | **44,634** | **z 3..33** | **green, dual PASS 0/610,816 dust** |
+| 1 | -- | -- | STITCH RED: `wire B0 touches A0` -- adjacent lever cells share dust, so 1 is physically impossible, not merely tight |
+
+Pinned to 2 via `recipes/add8.bank`, and re-verified end to end: 44,634 blocks
+dual-engine PASS (32 vectors, 0/610,816 dust, 0/86,848 repeaters); +16
+indicator lamps = **44,650 blocks, 1,868 fewer than this morning** (-4.0%),
+lamp_pins 25/25, indicators 64/64.
+
+**Not a new default**, and the reason is the useful part: at pitch 2 `alu1` is
+green but **`alu4` is RED** (`hier stitch A2: no ground for A2`). The pitch is
+load-bearing per build, so it ships as a per-recipe pin. That is exactly why it
+needed to be an env gate first.
+
+### Live paste, honestly
+
+Pasted the pitch-2 build at z+300: **50/50 sampled blocks present**. The
+indicator lamps are **perfect live** (A2L/A3L track their levers across every
+vector). The SUM lamps do not read correctly: some latch lit, and clearing them
+re-latches within a read cycle. Same signature as the 46k build earlier -- a
+44k-block build pasted in 6,000-block function chunks is not reliably complete,
+and the fragments that remain can hold a lamp lit. So:
+
+**add2opt (3,730 blocks) is still the only build with in-game proof of
+correctness (2/2).** add8 at 44,650 is verified by sim + cmc (0 cells differ)
+and *not* by the game. A latched-lamp clear pass after paste is the next thing
+to try if you want that closed; the paste itself is the suspect, not the
+circuit -- the same build is bit-identical in both engines.

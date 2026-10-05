@@ -1,0 +1,9 @@
+# lever-bank row pitch for add8, in blocks. Measured on this recipe:
+#   10 -> 46,502 blocks, lever row z 3..153 (10 apart)
+#    6 -> 45,542 blocks, z 3..93
+#    4 -> 45,062 blocks, z 3..63
+#    2 -> 44,634 blocks, z 3..33   <-- this file: dual-engine PASS,
+#                                      0/610,816 dust cells over 32 vectors
+#    1 -> STITCH RED (wire B0 touches A0: adjacent lever cells share dust)
+# alu4 is RED at 2, so this is a per-recipe pin, not a new default.
+2

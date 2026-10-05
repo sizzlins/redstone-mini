@@ -239,6 +239,29 @@ def main():
                 continue
             jobs.append((len(jobs), sub, f, secs))
             meta.append((b, f))
+    # ponytail: per-recipe lever-bank pitch pin, same convention as
+    # <recipe>.skip: a `<recipe>.bank` sibling holding an integer sets
+    # REDSTONE_BANK_PITCH for this recipe only, so a measured win outlives the
+    # shell that found it. Measured 2026-10-05 on add8: pitch 10 = 46,502
+    # blocks, pitch 2 = 44,634 blocks and dual-engine PASS (0/610,816 dust over
+    # 32 vectors) -- but alu4 is RED at pitch 2 (its A2 stitch dies "no ground
+    # for A2"), so 2 is a per-build win, not a new default. Env still wins, so
+    # an A/B needs no file edit.
+    if not os.environ.get("REDSTONE_BANK_PITCH"):
+        try:
+            with open(os.path.splitext(src)[0] + ".bank") as _f:
+                # first non-comment, non-empty line -- same convention as
+                # <recipe>.skip, which allows a commented block above the value.
+                _bp = next((ln.strip() for ln in _f
+                            if ln.strip() and not ln.strip().startswith("#")),
+                           "")
+            if _bp:
+                os.environ["REDSTONE_BANK_PITCH"] = _bp.split()[0]
+                print("BANK PITCH: %s (from %s.bank)"
+                      % (os.environ["REDSTONE_BANK_PITCH"],
+                         os.path.basename(src)), flush=True)
+        except OSError:
+            pass
     t0 = time.time()
     results = _run_all(jobs)
     print(f"{len(jobs)} band-rungs in {time.time()-t0:.0f}s (parallel)", flush=True)
