@@ -11,7 +11,10 @@ Usage:
     --doc PATH        reuse/write the cmc JSON doc (default: temp next to pkl)
     --vec N           vector index for the per-cell differential (default 0)
     --diff            run the per-cell differential (sim dust vs cmc dust)
-    --ticks N         cmc settle ticks (default 400)
+    --ticks N         cmc settle ticks (default 1200: 400 leaves 2260
+                      cells diffing on vec47 of the 71k-block alu4merge_g;
+                      800 gates it to zero, 1200 keeps headroom; tiny probes
+                      cost the same seconds either way)
     --max-vectors N   cap vectors in the doc (default 64, exhaustive below)
     --sim-timeout S   hard kill for the sim child (default 900)
     --cmc-timeout S   hard kill for the cmc child (default 900)
@@ -243,7 +246,7 @@ def main():
         return 2
     recipe_p, pkl_p = a[0], a[1]
     doc_p = None
-    vec, diff, ticks = 0, False, 400
+    vec, diff, ticks = 0, False, 1200
     diff_all = False
     max_vectors = 64
     sim_to, cmc_to = 900, 900
