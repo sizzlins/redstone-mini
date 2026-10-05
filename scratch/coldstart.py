@@ -72,6 +72,19 @@ GATES = [
 
 QUICK_SKIP = {'hier_alu4'}
 
+# Known-divergence probes. EXPECTED to fail until their physics is settled
+# (Finding 3, the glass down-flow); a FAIL here is information, not a
+# regression. They run under --probes, are reported as DIVERGE vs AGREE, and
+# never touch the exit code. A probe nobody runs is the same as no probe.
+PROBES = [
+    ('notmin', ['scratch/notmin.py'], 600,
+     'non-pin lever: sim blind, cmc powers (Finding 3)'),
+    ('stairglass', ['scratch/stairglass.py'], 600,
+     'down-flow onto glass: sim=0 vs cmc=13'),
+    ('stair_rise', ['scratch/stair.py'], 600,
+     'rise dust agrees; lamp split open (standalone)'),
+]
+
 
 def run(name, argv, timeout, why):
     t0 = time.time()
@@ -138,6 +151,17 @@ def main():
         rows.append(run('sweep', ['scratch/sweep.py', '--diff',
                                   '--out', 'scratch/sweep.json'],
                         7200, 'sim AND cmc per-cell over every build'))
+
+    if '--probes' in a:
+        print('\n=== known-divergence probes (informational: DIVERGE expected) '
+              '===', flush=True)
+        for name, argv, timeout, why in PROBES:
+            r = run(name, argv, timeout, why)
+            print('  %-9s %-14s rc=%-3s %5.1fs  %s'
+                  % ('AGREE' if r['ok'] else 'DIVERGE', name, r['rc'],
+                     r['secs'], why), flush=True)
+            for l in r['tail']:
+                print('    | %s' % l[:150], flush=True)
 
     bad = [r for r in rows if not r['ok']]
     print('\n' + '=' * 70)
