@@ -4395,3 +4395,58 @@ re-implementing it:
 
 So the documented gate command earns its green. That closes the last open item
 from my cold start. MORNING-REPORT.md updated to say so, credited as theirs.
+
+------------------------------------------------------------
+CORRECTION: the alu4 per-cell "0 diff" was measured at 4 of 1024 vectors.
+------------------------------------------------------------
+The optimisation agent (d74fd3d) ran verify2 --diff-all on scratch/
+alu4merge_g.pkl at 64 vectors: dust 49814/1957248 cells, repeaters
+7280/279552. I reproduced it to the digit:
+
+    DUAL-ENGINE VERDICT: FAIL   (sim=True cmc=True diff=49814/1957248 cells)
+
+My sweep ran 4 vectors: 0/122328. Both true; the divergent region (one
+contiguous x 1082..1095 / y 1..3 / z 167..183 block, sim 12..15 vs cmc 0 --
+opposite sign to 38b872f) sits on vectors outside my sample. Both engines pass
+functionally, so it is internal wire state that does not move the lamps.
+
+Structural fix, not just a corrected number: scratch/sweep.py row_from_verdict
+now carries n_vectors, vectors_sampled, engine and cmc_stage, because a gate
+that looks exhaustive but is sampled WILL be read as exhaustive. Second time
+tonight after the CACHED-rows-with-no-numbers bug.
+
+------------------------------------------------------------
+alu4merge_g 49k diff, LOCALIZED to vertical staircases.
+Both directions. This is the finding; the audit stops here.
+------------------------------------------------------------
+Per-vector: vec 0-3 give 0 (those four are what the 10/4 sweep sampled),
+others 0..2260 in quantized steps (970, 85, 1055, 273...), i.e. a FIXED region
+lighting by different amounts per vector. 2260 cells on vec 47 resolve into
+components whose boundary "sources" form STAIRCASES: y oscillating 1,2,3,2,1
+while x advances, clean 15->7 decay in one engine and 0 in the other:
+
+  (1091,1,182)=15 (1092,2,182)=14 (1093,3,182)=13 (1094,2,182)=12
+  (1095,1,182)=11 (1096,2,182)=10 (1097,3,182)=9 (1098,2,182)=8
+  (1099,1,182)=7     -- sim powers, cmc 0 on all nine
+
+and the reverse elsewhere:
+
+  (1244,1,210) sim=0/cmc=15, (1244,2,211) sim=0/cmc=14  -- cmc powers, sim 0
+
+So it is vertical (up/down/diagonal) dust connectivity, bidirectional, on
+staircases -- not sources (the repeater ON/OFF split at (1082,1,172) is
+downstream: its input wire already disagrees 15/0 with sides dead in both),
+not locks, not decay, not params-vs-geometry (wireconn.py refuted that), and
+not settling (2x cmc ticks moves 21619->21563, i.e. 56 cells).
+
+sim's side of this lives at sim.py:393-411: the UP term (this cell reads the
+higher dust) needs the upper on opaque conductive, the DN term (reads the lower
+dust) needs support, lids cut only when opaque, direct stacks never link.
+That is a lot of hand-tuned conditions, any one of which cmc may implement
+differently -- and the bidirectional split is exactly what two different
+hand-tunings of the same staircase produce.
+
+NEXT, not done: a minimal vertical-staircase probe in the wireconn.py pattern
+(hand-placed steps, both engines, one vector), then a side-by-side of sim's
+UP/DN terms against cmc's vertical wire code. Bounded, safe, and the correct
+seam for whichever rule is wrong.
