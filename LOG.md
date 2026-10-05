@@ -4723,3 +4723,6 @@ What IS claimed (measured, convention-free): 318/329 repeater disagreements
 are downstream of dust that already disagrees, and the dust disagreement is
 the staircase/lid story above. The 11 need a facing-convention test (one
 repeater, known input side, both engines) before anyone cites them.
+
+## 2026-10-05 (night loop 1) -- warm-start chain: verify_par sweep 44.3s->32.0s (1.39x)
+run_scalar gains optional _warm/_expose (default None = byte-identical; tbl_diff IDENTICAL, diff_engine ALL IDENTICAL). Warm reuses prev vector final levels as start, same seeding/ring. Proto 2.30-2.33x per-vector, lamps/live/torch/rep/comp identical on 8+16 chained, ticks differ (verdict-irrelevant). Sweep fresh paths: cold 44.34/44.26s vs warm 31.82/32.12s, two pairs, VERIFY OK 1024/1024 x4. _vec_child chains per worker with cold fallback on mismatch/raise, _BOUT snapshotted/restored. Assumption: combinational fixed point unique regardless of start; latch builds use slow path (hold not None). Escape: REDSTONE_VERIFY_WARM=0. coldstart --quick 12/12 green on 42b4d5b. Next: Gray-code within-chunk order.
