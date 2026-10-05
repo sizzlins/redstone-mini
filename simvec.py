@@ -861,7 +861,8 @@ def _comp_out_s(c, st, pw, pbs, tl, ron, con, vec):
 
 
 def run_scalar(vec, ctx, init=None, until=None, tick_cap=None, step_cap=None,
-               stall=None, snap_at=None, target_hits=None):
+               stall=None, snap_at=None, target_hits=None, _warm=None,
+               _expose=None):
     """One vector, scalar, over the precomputed tables.
 
     Returns sim._run_vec's 6-tuple exactly (lamps, live, torch, ticks, rep,
@@ -914,12 +915,23 @@ def run_scalar(vec, ctx, init=None, until=None, tick_cap=None, step_cap=None,
     # natural type -- and reading one is a bounds-checked index returning an
     # interned small int, where the old code hashed a 3-tuple per lookup
     # (1244222 dict.get calls per vector).
-    pw = bytearray(nid)
-    pb = bytearray(nid)
-    pbs = bytearray(nid)
-    tl = bytearray(nid)
-    ron = bytearray(nid)
-    con = bytearray(nid)
+    if _warm is None:
+        pw = bytearray(nid)
+        pb = bytearray(nid)
+        pbs = bytearray(nid)
+        tl = bytearray(nid)
+        ron = bytearray(nid)
+        con = bytearray(nid)
+    else:
+        # ponytail: warm start is differential-simulation probing only, not a
+        # verdict path. Same seeding/ring below, just initial levels copied
+        # from the previous vector's final state. Default None is byte-identical.
+        pw = bytearray(_warm["pw"])
+        pb = bytearray(_warm["pb"])
+        pbs = bytearray(_warm["pbs"])
+        tl = bytearray(_warm["tl"])
+        ron = bytearray(_warm["ron"])
+        con = bytearray(_warm["con"])
     tsched = bytearray(nid)
     rsched = bytearray(nid)
     ksched = bytearray(nid)
@@ -1223,6 +1235,10 @@ def run_scalar(vec, ctx, init=None, until=None, tick_cap=None, step_cap=None,
         for t in list(want):
             if want[t] is None:
                 want[t] = dict(final)
+    if _expose is not None:
+        _expose.clear()
+        _expose.update(pw=bytes(pw), pb=bytes(pb), pbs=bytes(pbs),
+                       tl=bytes(tl), ron=bytes(ron), con=bytes(con))
     return (lamps,
             {cell[j]: pw[j] for j in dust_ids if pw[j]},
             {cell[j]: 1 if tl[j] else 0 for j in torch_ids},
