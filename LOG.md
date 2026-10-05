@@ -4729,3 +4729,6 @@ run_scalar gains optional _warm/_expose (default None = byte-identical; tbl_diff
 
 ## 2026-10-05 (night loop 2) -- Gray contiguous chunks REFUTED, reverted
 Hypothesis: contiguous Gray-code chunks (adjacent vectors 1 bit apart) beat strided binary for warm chains. Measured fresh paths: gray 31.47s vs strided 30.94s -- tied, gray marginally worse. Likely cause: strided spreads hard vectors evenly (load balance); contiguous concentrates difficulty, one slow worker sets the wall. Proven same-set/exact-1-bit in scratch (deleted after). Reverted via checkout (file back to 42b4d5b, no cache void beyond banked warm). Lesson: order for BALANCE first, adjacency second. Next: worker-count sweep (fewer workers = longer chains + fewer table builds vs less parallelism).
+
+## 2026-10-05 (night loop 3) -- worker count in warm era: 16 stays
+Fresh paths, warm on: workers=8 -> 55.57s, workers=16 -> ~32s (31.82/32.12 earlier), workers=20 -> 31.44s. Matches handoff plateau (machine-bound, not code). Gate command unchanged (16). No code change, test pkls + caches removed.
