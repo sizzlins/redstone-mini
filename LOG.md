@@ -5077,3 +5077,63 @@ correctness (2/2).** add8 at 44,650 is verified by sim + cmc (0 cells differ)
 and *not* by the game. A latched-lamp clear pass after paste is the next thing
 to try if you want that closed; the paste itself is the suspect, not the
 circuit -- the same build is bit-identical in both engines.
+## THE in-game failures were MY OWN PASTES OVERLAPPING -- add8 is now 19/19 LIVE
+
+Every in-game add8 result so far (0/4, latched lamps, S-bits hot with all
+levers off, "our sim disagrees with vanilla") had one cause, and it was not the
+circuit: **I pasted builds on top of each other and measured the union.**
+
+Found by reading the paste history instead of the circuit. The rig's datapack
+still held every function that had ever been pasted, with their coordinates
+printed:
+
+```
+build.mcfunction  n= 3730  x    3.. 325  y 64..67  z 404.. 483   <- add2opt
+build1..4         n=11626  x    3..2007  y 64..67  z   3.. 293   <- add8, FOUR
+                                                                 copies, shifted
+                                                                 0/0/1/2 in z
+p0..p7            n=44650  x    2..2007  y 64..67  z 303.. 473   <- tonight's add8
+```
+
+Three overlaps, all mine:
+1. `build1..4` are the **same add8 pasted four times** with z offsets 0, 0, 1,
+   2 -- stacked on itself. That is the "lamps latch / 0/4" from earlier.
+2. add2opt (z 404..483) sat **inside** tonight's add8 (z 303..473). Overlap
+   z 404..473, x 3..325.
+3. So the cells that first diverged from sim -- x 39..42, z 108..138 -- are
+   precisely inside add2opt's box. Their block *types* were right (add8 pasted
+   last) but add2opt's blocks that add8 does not claim stayed behind and powered
+   add8's wires. Hence: correct-looking paste, hot wires, dark lamps.
+
+Two of my own tools lied to me while I chased this, both worth remembering:
+- `execute if block <wire NBT>` compares the **full block string**, but the game
+  recalculates wire `east/west/south/north/power` on placement, so a
+  full-string compare returns false for a perfectly good wire. That produced a
+  fake "present=False / the paste did not land" reading. Compare the **type**
+  only (`minecraft:redstone_wire`), like the presence sampler already did.
+- `rig_read` sets the levers and reads immediately, with no lever readback and
+  too short a settle, so a slow carry chain reads as a wrong bit. Replaced by
+  `scratch/live_check.py`, which **reads every lever back**, waits 20s, and
+  checks the 16 indicators as well as the 9 sum lamps.
+
+### The proof
+
+add8 pitch-2 + 16 indicators, pasted alone at **z+800** (world z 803..973),
+44,650 blocks:
+
+```
+LIVE VERDICT: 19/19 vectors green
+```
+
+including every power of two, 0x0F, 0xF0, 0x55, 0xAA, 0x1F, 0x7F, 0x8F, 0xFE,
+and **0xFF -> 255 with COUT lit**. All 16 indicators correct on every vector, no
+lever ever stuck.
+
+So the headline is no longer "sim and cmc agree": **the 8-bit adder computes
+correct sums in real Minecraft, overflow included, at 44,650 blocks.** The
+engines were right all along and I was measuring my own garbage.
+
+World state now: z 803..973 = add8 pitch-2 (the good one, `/tp 2 68 820`);
+z 404..483 = add2opt re-pasted and intact; z 3..293 = four-deep stale add8
+debris, ignore it. One build per region from now on -- the paste log is the
+thing to read first next time, not the circuit.
