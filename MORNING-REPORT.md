@@ -46,6 +46,7 @@ measured interleaved in one process so machine load cannot flatter it.
 | 6 | **Boolean edges wake only on a zero crossing.** 57.4% of edges only care *whether* a cell is lit, not how much | **1.06x**, `_cob_state_s` calls halved (149k→62k/vector) |
 | 7 | `verify_par`: a worker owns a *group* of chunks, so tables are built once per worker, not once per chunk | ~1–5% (see retracted #2) |
 | 8 | `REDSTONE_ASTAR_MARGIN` env gate (default **unchanged** at 64) | answers your queued question; 64 is load-bearing |
+| 9 | Drop the `cid` dict from the hot tables (it existed to serve 5 lamp lookups/vector; those are now precomputed `lamp_ids`) | 40.6 → 38.1 MB |
 
 Headline: **full 1024-vector alu4 sweep, 16 workers, cold: 108.7s → 35.7s (3.0x)**.
 Per worker: tables 112.5 MB → 40.6 MB, peak heap 230.8 MB → 75.6 MB.
@@ -138,9 +139,18 @@ mean anything. `scratch/tbl_diff.py` now takes a `REDSTONE_TBLDIFF_REF` so a
 micro-opt is A/B'd against the engine it replaces, and a byte-identical
 reference must read 1.00x before I trust it. Two of my own probes (`tbl_equiv`,
 `wake_miss`) also had the target/reader direction inverted and reported
-confident nonsense until I fixed them — the engine had the same inversion once,
-and `REDSTONE_WAKE_EXACT=0` / `REDSTONE_WAKE_BOOL=0` / `REDSTONE_SERIES_VERIFY=1`
-are the escape hatches if anyone doubts any of it.
+confident nonsense until I fixed them — the engine had the same inversion once.
+
+**Stronger caveat, learned late:** even the interleaved ratio is biased LOW by
+up to 40% on this box. Null check on byte-identical code reads 0.61x–0.96x,
+never 1.00x — probably thermal throttling on the laptop CPU, with the reference
+always running cooler first. So every shipped win above was measured *against*
+that bias (the true wins are at least as large), every "null" rejection might
+be masking a small real win (reverting was still correct — unmeasurable wins do
+not ship), and fine distinctions are unmeasurable here until the null reads
+1.00x. The micro-opt loop is therefore suspended; correctness gates are immune
+and keep running. `REDSTONE_WAKE_EXACT=0` / `REDSTONE_WAKE_BOOL=0` /
+`REDSTONE_SERIES_VERIFY=1` are the escape hatches if anyone doubts any of it.
 
 ### Tools I added (each says what it is for in its docstring)
 
