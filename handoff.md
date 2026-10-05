@@ -87,16 +87,24 @@ carry), alu8.txt, add8b0-7.txt (band seeds). New tools: census_world.py
 7. **PMC profile download blocked** — Cloudflare challenge, no headless
    bypass. Mirror had 2 maps; GitHub BatPU/BatPU-2/Graphing-Calculator cloned
    to D:\put gitrepos here\. Survey at survey/REPORT.md + census.txt.
-8. **Sum lamps at the lever row — architecture, not a pin bug.** The pin
-   mechanism is DONE and gated (`pin_lamp`, 1,054 blocks per run). What blocks
-   the 9-lamp version is that `hier_bands` composes each band in its OWN frame
-   and `_last_shift` (compose.py:1797) is only known AFTER that band is
-   composed and centred. A per-band pin therefore cannot know where the merged
-   lever bank will be, and `hier_bands` does not pass `lamps_at` into
-   sub-recipes at all. The fix is a **post-merge routing pass** in the merged
-   field: after the stitch places the bank, drive each sum net to a lamp at the
-   bank. S0's band proves the shape works standalone; S7/COUT cannot even be
-   composed alone (they consume earlier bands' carries).
+8. **Sum lamps at the lever row — root cause FOUND, fix is forward
+   reservation.** The pin mechanism is DONE and gated (`pin_lamp`, 1,054 blocks
+   per run in-band). What blocks the 9-lamp version is NOT a pin bug and NOT
+   distance: on the real merged field (via `REDSTONE_HIERDUMP2`) `compose.lwire`
+   from S0's driver `(39,32)` dies **12 blocks out** with `no ground for S0`.
+   That message means the router failed to *escape a seal* — its recovery is to
+   hop a foreign dust column (compose.py:630-640), and at a driver the net's own
+   3x3 ring (1,550 ring cells) is the wall. The own-ring that stops shorts also
+   **walls the net in**, and no green build noticed because every load is placed
+   *before* it is ringed.
+   **Fix:** reserve a street from the bank to each sum driver at compose time,
+   the same trick that makes the lever bank work (`_bankstreets` reserves
+   corridors; the stitch aims into the real gap). Reserving after the fact
+   cannot work — the ring is already a wall. This is `hier_bands`/`hier_stitch`
+   work, not pin work.
+   Ruled out: `sup` keying (it is `(x,y,z)` as `_walk` reads it, and holds only
+   the 1,592 paid hop supports), distance/attenuation (dies at 12), and the pin
+   itself (gated).
 
 ## Files touched (this lane)
 

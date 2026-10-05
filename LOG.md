@@ -5186,4 +5186,45 @@ hole. A gate that cannot fail is decoration.
 S7 and COUT are the next step: their bands consume carries produced by earlier
 bands, so they cannot be composed standalone, and `hier_bands` does not yet
 carry `lamps_at` into sub-recipes with the coordinate translation that a
-per-band frame needs. That propagation is the remaining work, not the pin.
+per-band frame needs. That propagation is the remaining work, not the pin.## Why the sum lamps cannot reach the lever row yet: the driver is SEALED
+
+Followed the pin fix to its real blocker, with the merged field rather than
+guessing. `REDSTONE_HIERDUMP2` dumps the post-stitch merged ctx, so this ran on
+the actual 44,634-block pitch-2 add8 -- real `wires`, `solid`, `rings`,
+`repeaters`, `sup` -- not a rehydrated guess.
+
+**Post-merge routing works in principle, and fails for one specific reason.**
+`compose.lwire` from S0's real driver `(39,32)` to a free cell **12 blocks away**
+dies with `no ground for S0`. Twelve. Not the ~1,000-block run to the bank --
+it never gets out of its own neighbourhood.
+
+The message is misleading, and that is the finding. `_walk` only raises "no
+ground" at the point where it has already **failed to escape a seal**: its
+recovery strategy is to find a *foreign* dust column ahead of or behind the
+travel axis and hop it (`compose.py:630-640`). At a driver there is no foreign
+column left to find -- the cell is walled by the net's **own 3x3 ring** (1,550
+ring cells in this build) and by its own boosters.
+
+So the own-ring that protects a net from foreign shorts also **walls it in**.
+Every green build so far never noticed, because a net's load is always placed
+*before* it is ringed. A run that has to leave the driver afterwards cannot.
+
+Ruled out on the way, so nobody re-chases them:
+- `sup` being rehydrated wrong: it is keyed `(x,y,z)` exactly as `_walk` reads
+  it, and it holds only paid hop supports (1,592 entries for 19,088 wire
+  cells), not general ground. Not the cause.
+- Distance/attenuation: it dies at 12 blocks. Not boosters.
+- The pin mechanism: proven separately, gated, 1,054 blocks per run in-band.
+
+**The fix is forward reservation, which this codebase already does for the
+lever bank.** The bank works because `_bankstreets` reserves corridors between
+bands and the stitch aims into the real gap instead of the midpoint. A sum net
+that must reach the bank needs the same thing: a reserved street from the bank
+to each sum driver, kept clear at compose time. Reserving it after the fact
+cannot work -- by then the ring is already a wall.
+
+That is a change in `hier_bands`/`hier_stitch`, not in the pin, and it is the
+next piece of work. Until it lands: **add8 is 19/19 live at the sum lamps where
+the circuits already end, plus 16 live indicator lamps at the levers.** The
+lever-row sum lamps are the one open item, with the cause now known rather than
+suspected.
