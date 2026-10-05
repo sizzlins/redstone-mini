@@ -4771,3 +4771,5 @@ User add8 route thrashing (precede reset per strategy, replayed B0 restarts) wit
 
 ## 2026-10-05 (day) -- add8 compose autopsy: 1122s, 31 failed rungs, ladder deterministic
 User add8 route thrashing; ran it with t= prefixes (scratch/add8_run.log, 27KB). Costliest rungs: short-1-inputs 142s, short-3-gates 137s, short-2-inputs 118s, long-1-inputs 102s -- all full route + blame-restarts dying on OPEN dust. Repeat waste proven: long-1-gates re-dies on cell (226,1,62) 27s after short-1-gates proved it; spread 8/10 order-pairs fail byte-identically 1s apart. Late rungs fail fast on no-ground with x-coords exploding 609->4504 (placement radiating outward, doomed); final raise order-cycle. Bottleneck: no cross-rung memory + late failure detection. Fix direction: remember fatal OPEN signatures across rungs, abort identical repeats. User original run will fail identically (deterministic ladder) -- told to kill it.
+
+## Correction: the long add8 compose is GA-agent run, not operator run -- left untouched. My timed run (add8_run.log) was a separate process, failed 1122s as analyzed. No kill action taken or needed.
