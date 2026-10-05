@@ -999,8 +999,19 @@
   "n_recipes": 3
  },
  {
+  "gate": "ok",
+  "gate_rc": 1,
+  "secs": 5.6,
+  "sim": true,
+  "cmc": false,
+  "sim_raised": "",
+  "blocks": 41031,
+  "n_vectors": 4,
+  "vectors_sampled": true,
+  "engine": "897f7c78610f2d0e",
+  "cmc_stage": "support",
   "pkl": "D:\\redstone-mini\\scratch\\alu4mergeNEW.pkl",
-  "status": "not-gated",
+  "recipe": "recipes\\alu4.txt",
   "inputs": [
    "A0",
    "A1",
@@ -1013,17 +1024,22 @@
    "OP0",
    "OP1"
   ],
-  "outputs": [
-   "COUT",
-   "Y0",
-   "Y1",
-   "Y2",
-   "Y3"
-  ]
+  "n_recipes": 3
  },
  {
+  "gate": "ok",
+  "gate_rc": 1,
+  "secs": 5.5,
+  "sim": true,
+  "cmc": false,
+  "sim_raised": "",
+  "blocks": 41031,
+  "n_vectors": 4,
+  "vectors_sampled": true,
+  "engine": "897f7c78610f2d0e",
+  "cmc_stage": "support",
   "pkl": "D:\\redstone-mini\\scratch\\alu4mergeNEW4.pkl",
-  "status": "not-gated",
+  "recipe": "recipes\\alu4.txt",
   "inputs": [
    "A0",
    "A1",
@@ -1036,13 +1052,7 @@
    "OP0",
    "OP1"
   ],
-  "outputs": [
-   "COUT",
-   "Y0",
-   "Y1",
-   "Y2",
-   "Y3"
-  ]
+  "n_recipes": 3
  },
  {
   "status": "cached-unstamped",
@@ -1508,18 +1518,29 @@
   "n_recipes": 1
  },
  {
+  "gate": "ok",
+  "gate_rc": 1,
+  "secs": 0.6,
+  "sim": true,
+  "cmc": false,
+  "sim_raised": "",
+  "blocks": 2464,
+  "n_vectors": 4,
+  "vectors_sampled": true,
+  "engine": "897f7c78610f2d0e",
+  "cmc_stage": null,
+  "diff_cells": 0,
+  "diff_total": 956,
+  "diff_rep": 0,
+  "diff_rep_total": 140,
   "pkl": "D:\\redstone-mini\\scratch\\stackfail.pkl",
-  "status": "no-recipe",
+  "recipe": "recipes\\stackfail.txt",
   "inputs": [
    "a",
    "b",
    "c"
   ],
-  "outputs": [
-   "c2",
-   "t",
-   "y"
-  ]
+  "n_recipes": 1
  },
  {
   "pkl": "D:\\redstone-mini\\scratch\\xor_miss3.pkl",
