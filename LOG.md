@@ -5399,3 +5399,27 @@ the lever pitch is a permanent ladder, the pin mechanism is fixed and gated.
 The nine sum lamps at the levers remain the one open item, now with the
 obstruction identified: the lamp strip and the input corridor are the same
 ground, so the signals must arrive from a different altitude.
+
+## Opt-lane heartbeat (2026-10-06, HEAD 3b4ff9d, co-tenant tree dirty)
+
+Re-earned gates on the shared HEAD, no code touched (all files below are
+prior sessions' + co-tenant's; `git status` shows only their scratch/add8*
++ bank_*.py mods, LOG clean before this entry):
+
+- `scratch/diff_engine.py`: ALL IDENTICAL (alu4 3.75-4.30x table-vs-authority
+  on vec000-003, small builds 3.5-6.5x, side-lock diode green).
+- `compose.py`: buffers ok. `compose_check.py`: 144/322/224/214.
+- `nonhier_suite.py`: exit 0 (alu1 flat RED by design, rest GREEN;
+  micro1 2925, ctrl_decode 5499).
+- Null check `REDSTONE_TBLDIFF_REF=simvec python scratch/tbl_diff.py 8`:
+  8 vectors IDENTICAL, old 2.84s new 1.85s = **1.53x on identical code**.
+  Box still biased (prior band was 0.61-0.96x the other direction; this run
+  the second pass was warm). Either way null != 1.00x, so per the handoff
+  rule the micro-opt loop stays SUSPENDED -- only >20% structural wins are
+  measurable. Argmax-gated level edges (0.2% proven) and any other sub-1.1x
+  item must not be attempted until the null reads 1.00x.
+- No structural candidate open in this lane: warm chains + numba opt-in
+  shipped, bit-parallel cut with measured 5.6% regression (do not restore),
+  router ladder-memory needs a grinding witness (none: alu4/add8 green),
+  COMPOSE_SECS default needs operator word (do not ship silently),
+  alu4-vs-cmc + cpu4 are GA lane. Guard duty only.
