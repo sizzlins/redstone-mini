@@ -5569,6 +5569,16 @@ with a rule design in hand AND a quiet box AND GA's sweep done.
   holds (divergences=0); ratios stay noise. Null band honesty: single
   samples swing 0.91-1.01; trust best-of-3, ship only >~10%.
 
+## Fixed-cost probe (2026-10-06; killed in 2 min, numbers below)
+
+Last unmeasured block: per-sweep fixed costs (pool spawn excluded --
+will not spawn 16 workers while GA times cmc). Single-process, read-only:
+pickle dumps 0.02s / 3.7MB, loads 0.02s, parse_build 0.05s on 70k blocks.
+Tables build ~2s (known) dominates; per-worker fixed ~= 2.1s, parallel
+wall ~= 2-3s of a ~30s sweep = 7-10%, and halving tables (best realistic
+case) buys 3-5%. Below the >~10% bar. KILLED: the sweep wall is
+per-vector physics, fixed costs are not the lever. Do not re-derive.
+
 ## 2026-10-06 (gates/builds lane): bank lamps DONE 9/9, 65536/65536
 
 Operator request completed: the 9 sum wires run to the lever row and end
