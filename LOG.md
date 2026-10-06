@@ -5549,3 +5549,99 @@ a PERFECT skip rule). Argmax, the only known schedule-time rule, captures
 surgery + full-gate proof + engine edit while GA is live) for under 10%.
 Do not re-derive: the 44% is real but unreachable cheaply; revisit only
 with a rule design in hand AND a quiet box AND GA's sweep done.
+
+## Reorg + GA sweep passed (2026-10-06; staged, not mine, untouched)
+
+- GA's 65k sweep is DONE and GREEN: bank lamps exist, add8_bankfull.pkl
+  (75,599 blocks) verifies 65536/65536 sim + dual-engine passes. His pid
+  6236 is gone. Full note in notes/to-opt-agent.md §2026-10-06 (zero engine
+  files touched on his side; handoff.md lamp-corridor theory retracted).
+- "They organized the repo" = 22 staged (not committed) force-adds:
+  instruments (evolve/compact/compose_check+status/dense_status/
+  nonhier_suite/recipe_check+equiv/tbl_sizes/tickdiff/blockhash/gen_pack/
+  levercheck/mapdump/regiondiff/router_hash) + bank outputs (bankfull pkl,
+  v2doc JSONs) + his bank_rows/lamp_check mods + .gitignore/handoff/export
+  tweaks. All staged by his hand. TOUCHING NOTHING: no commit, no unstage,
+  no checkout. Staged-but-uncommitted is his working state.
+- Re-null on the emptier box: 0.91x IDENTICAL (was 0.97x). His note
+  explains it: cmc grinding 75k-block docs right now (880s runs, a 2400s
+  timeout), so the box is still loaded from a new direction. Identity
+  holds (divergences=0); ratios stay noise. Null band honesty: single
+  samples swing 0.91-1.01; trust best-of-3, ship only >~10%.
+
+## 2026-10-06 (gates/builds lane): bank lamps DONE 9/9, 65536/65536
+
+Operator request completed: the 9 sum wires run to the lever row and end
+in lamps there, plus the 16 indicators and signs all ship in one export.
+`scratch/add8_bankfull.pkl` (75,599 blocks), `build_add8bank.{mcfunction,
+schem,html}` (50 signs). Did NOT paste on the rig (needs a fresh region +
+player; z 803..973 stays the live-proven build) and did NOT commit (not
+requested). Zero engine files touched -- opt lane unaffected.
+
+### Evidence (strongest first)
+- `verify_par.py bankrouted`: exhaustive sim 65536/65536, 64 chunks
+  green. (Bankfull delta is 16 inert lamps, gated next line.)
+  verify2 bankrouted --diff-all:
+  SIM 64/64, CMC 64/64, 0/2087168 dust + 0/298240 repeaters differ.
+- `bank_lamp_check.py`: 9/9 bank lamps correct on 16 vectors, 0 wrong.
+- `verify2.py bankfull` (exact export bytes): DUAL PASS 16v sim+cmc.
+  (64v doc: sim 44s PASS, cmc 2400s TIMEOUT -- load, not physics; 16v cmc
+  PASS 1073s. Timeout reported, not waived.)
+- `lever_lamps.py --check bankfull`: 64/64 indicators.
+
+### Four real bugs in scratch/bank_rows.py (all measured, all fixed there)
+1. Frame mix: dump carries BLOCK-space blocks + MERGE-space tables
+   (shift=(8,104)). Rehydration routed on phantom ground (overlap was
+   551/19088). Now shifts to merge frame + 19088/19088 gate, shifts back.
+2. Missing emission: stamp_wire fills dicts only; the dump shipped zero
+   new wire/repeater blocks (19088->19088, 2714->2714). Now emits
+   wire_bid/repeater-facing/stone-pads exactly as finish_assembly, in
+   place (no re-shrink-wrap).
+3. No boosters: lwire plants none; 2000-cell rows arrive dark. Now plants
+   every-8 + end_boost on the full path with an order-built flow map.
+4. Shared x=8 drop column: each leg crossed earlier taps (S3 died
+   "no ground (8,279)->(8,27)" once S0-S2 owned it). Now one column per
+   net + lamp-cell reservation up front (foreign-owned ring; wandering
+   legs stomped S4/S5's sites twice before this).
+
+### Retracted: the "structural obstruction"
+Handoff's "lamp strip IS the input corridor" mixed block-frame lever
+latitudes (z=3..33) with merge-frame drop coordinates -- the same frame
+class that cost two sessions before. Real geometry: lamps at merge
+(-8, -99..-83), taps (-9), columns (-28..-12), all in the empty west
+margin (32 occupants, all levers/stubs at x=-5/-4). Zero crossings by
+construction: eastern-first order, staggered row-ends (row i starts east
+of all existing columns), lanes eastern->southern, lamps
+eastern->ascending; proof by case analysis in bank_rows docstring.
+Routes in ~2s (nothing to avoid).
+
+### Harness bug that hid all of this
+`bank_lamp_check.py` fed the sim all-zero input on every vector:
+`{n for _, n in levers.values()}` unpacks 'A0' into ('A','0'). Every
+prior "84 wrong" (mine and the handoff's) was the harness, plus 3-tuple
+lamp keys into a 2-tuple-keyed io map. Both fixed; the check is honest
+now (and the indicator section skips lamps absent from io instead of
+failing vacuously).
+
+### For opt (also in notes/to-opt-agent.md)
+No engine edits, no kills, evo/compact/memo untouched. cmc timing on
+75k-block docs is very load-sensitive right now (880s / TIMEOUT /
+1073s for the same shape) -- noted for their measurements, not mine.
+
+## 2026-10-06 (repo organization, gates/builds lane)
+Operator asked for an organized repo. Did the safe half; the risky half
+needs opt's lane to be quiet first.
+- `.gitignore`: `scratch/`+`notes/` now ignore CONTENTS (`/*`), with
+  `!` exceptions for ~80 load-bearing files (all coldstart gates, hier
+  pipeline, verify/dual-engine/probe suites, rig + evo lanes, agent
+  mail/handoffs, bank deliverables). 19 newly staged (rest were already
+  tracked). Nothing committed.
+- Moved 595 run-debris files (`scratch/*.log/*.err`) to
+  `scratch/runs/archive-20261006/`. No `.pkl`/`.json` touched (caches
+  and sweep verdicts are inputs, not exhaust). 4 `.out` left in place.
+- NOT moved: gates stay at `scratch/*.py` paths. ~60 probes do
+  `from rcon import Rcon`, coldstart/hier_verify call `scratch/*.py`
+  by path, and opt may invoke gates directly -- renaming needs all
+  three lanes quiet. Staged plan: `gates/` + `rig/` + `scratch/evo/`
+  moves with import/path updates, verified by coldstart, when directed.
+- Verified: `coldstart --quick` 16/16 green after the reorg.
