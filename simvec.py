@@ -30,6 +30,26 @@ from layout import dust_points
 # precomputed tables cannot disagree with the engine that uses them.
 _LEVPOW = _os.environ.get("REDSTONE_LEVER_POWER", "1") == "1"
 
+# ponytail: optional C accelerator for the dust handler (~34% of vector
+# time by cProfile; Cython port 1.46-1.51x whole-vector, proven identical
+# by the full diff_engine suite). Opt-in REDSTONE_DUST_CY=1, default OFF:
+# the default path is unchanged with the accelerator absent, so the only
+# fingerprint cost is this file's own edit (announced in LOG). Source:
+# scratch/_dustcy.pyx; binary: scratch/_dustcy.cp314-win_amd64.pyd
+# (platform-locked; rebuild: python scratch/_dustcy_build.py).
+_DUST_CY = None
+if _os.environ.get("REDSTONE_DUST_CY", "") == "1":
+    try:
+        import importlib.util as _ilu
+        _p = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)),
+                           "scratch", "_dustcy.cp314-win_amd64.pyd")
+        _spec = _ilu.spec_from_file_location("_dustcy", _p)
+        _mod = _ilu.module_from_spec(_spec)
+        _spec.loader.exec_module(_mod)
+        _DUST_CY = _mod.dust_lvl_c
+    except Exception:                         # noqa: BLE001
+        _DUST_CY = None
+
 
 def _orth(c):
     return ((c[0] + 1, c[1], c[2]), (c[0] - 1, c[1], c[2]),
@@ -761,6 +781,12 @@ def _dust_lvl_s(c, st, pw, pbs, tl, ron, con, vec):
     return lv
 
 
+# Resolved once: the C dust handler when opted in, else the Python one.
+# A module-global alias (not a per-call branch) keeps the hot call one
+# global lookup either way.
+_dust_fn = _DUST_CY if _DUST_CY is not None else _dust_lvl_s
+
+
 def _cob_state_s(c, st, pw, tl, ron, vec):
     # ponytail: strong sources first and return immediately. Every strong
     # source also sets weak power, so once one fires the answer is exactly
@@ -1071,7 +1097,7 @@ def run_scalar(vec, ctx, init=None, until=None, tick_cap=None, step_cap=None,
                     f"({steps} steps run) - wedged, not oscillating")
             k = kind[c]
             if k == 0:                       # dust
-                v = _dust_lvl_s(c, st, pw, pbs, tl, ron, con, vec)
+                v = _dust_fn(c, st, pw, pbs, tl, ron, con, vec)
                 if pw[c] != v:
                     # ponytail: a boolean edge only needs waking if this
                     # change CROSSED zero. A wire decaying 15->14->13 wakes

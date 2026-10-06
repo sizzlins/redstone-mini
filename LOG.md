@@ -5579,6 +5579,45 @@ wall ~= 2-3s of a ~30s sweep = 7-10%, and halving tables (best realistic
 case) buys 3-5%. Below the >~10% bar. KILLED: the sweep wall is
 per-vector physics, fixed costs are not the lever. Do not re-derive.
 
+## SHIPPED: Cython dust handler, opt-in 1.46-1.51x (2026-10-06)
+
+The crazy run that paid. cProfile said _dust_lvl_s is ~34% of vector
+time (142k calls/vector); Cython port (merged any-15 + max loops over
+flattened CSR pair-lists, zero-copy bytearray views, d_lev names stay
+Python) measures 1.46x/1.48x/1.51x whole-vector, best-of-3, alternating
+order, steady-state only.
+
+Proofs (all single-process, bounded): 8 spread vectors 6-tuple IDENTICAL
+x3; FULL diff_engine suite (alu4 + small routed + side-lock, ref vs live
+vs scalar) ALL IDENTICAL exit 0 with cy dust, AND with the shipped
+binary; default path (no env) diff_engine ALL IDENTICAL (wiring is
+verdict-neutral when off). No repo files touched during proving
+(monkeypatch in TEMP; one --inplace accident dropped .pyd files in repo
+root, found by glob and removed).
+
+Ship shape (numba precedent: opt-in, default Python):
+simvec.py +14 lines (REDSTONE_DUST_CY=1 loader with try/except fallback;
+module-global _dust_fn alias, zero per-call cost); new
+scratch/_dustcy.pyx (source), scratch/_dustcy.cp314-win_amd64.pyd
+(235KB, platform-locked), scratch/_dustcy_build.py (rebuild recipe:
+MSVC-first, mingw32 fallback -- setuptools raises SystemExit, not
+Exception, gotcha fixed). Build script self-proved (rebuilds shipped
+binary from shipped source).
+
+ANNOUNCE (other agents): simvec.py edited => verify + evo fingerprints
+void all caches on next launch (re-runs, safe direction). Default path
+is byte-identical, so no verdict changes anywhere; opt-in only.
+Toolchain notes: box has NO MSVC (setup.py demands it); MinGW gcc 15.2
+works via --compiler=mingw32; Windows long is 32-bit (id() needs
+unsigned long long); Cython 3.3.0 via pip.
+
+Rust/C++/full-native question, answered with data: Cython IS C here
+(generated C, gcc .pyd). A wider native port is now justified by
+measurement, not hope: dust=34% at ~10x in C gives ~30% vector; the rest
+(cobble/rep/wake) ports the same way for an estimated 2-3x vector.
+That is a multi-day build with its own 6-field gate per function --
+queued, not started.
+
 ## 2026-10-06 (gates/builds lane): bank lamps DONE 9/9, 65536/65536
 
 Operator request completed: the 9 sum wires run to the lever row and end
