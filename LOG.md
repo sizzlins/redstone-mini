@@ -5423,3 +5423,45 @@ prior sessions' + co-tenant's; `git status` shows only their scratch/add8*
   router ladder-memory needs a grinding witness (none: alu4/add8 green),
   COMPOSE_SECS default needs operator word (do not ship silently),
   alu4-vs-cmc + cpu4 are GA lane. Guard duty only.
+
+## Opt loop, sleep-shift (2026-10-06; operator asleep 8h; GA live -- HANDS OFF)
+
+GA recon (read-only; nothing of his touched, nothing committed but LOG):
+- GA pid 6236 runs `verify_par.py scratch/add8_bankrouted.pkl
+  recipes/add8.txt 16 400 0 64` + 16 spawn workers (all alive, ~185s CPU
+  each). That is the add8 65k exhaustive sweep: 16 inputs = 65536 vectors
+  over a 75583-block bank-routed build, 64 chunks x 1024. Expect 20-30+ min.
+- His dirty files (do not read past the name, do not edit, do not commit):
+  scratch/add8_bankrouted.pkl, add8bands.pkl, bank_lamp_check.py,
+  bank_rows.py, noground_why.py, paste_pitch2.py, recipes/add8b0-7.txt,
+  recipes/stitch.log (written today 07:21), build.*.bak,
+  build_testforce.UNGATED.txt. Also never: recipes/add8.txt (his verify
+  input), sim.py / simvec.py / verify_par.py / compose.py / layout.py /
+  tiles.py / recipe.py (his measurement + routing stack).
+- evo lane files (evolve.py, compact.py, memo.json at root) do not exist in
+  this tree; his live lane is bank-verify, not evo. No evo procs running.
+
+Loop iterations this shift (all read-only probes + instant gates; box has
+16 workers grinding, so wall times are noise and only counts/identity count):
+1. export.py profiled on alu4merge_g (70684 blocks, temp outputs only):
+   mcfunction 0.21s, html-nostate 0.54s. NOT a bottleneck. Dropped.
+2. export_schem first read 7.56s, then 0.06s twice same-process
+   (import mcschematic 0.12s warm; setBlock loop 0.03s + save 0.03s).
+   Verdict: the 7.56s was a disk-cold import + loaded-box outlier, not code.
+   DO NOT RE-DERIVE: schem export needs no optimization (0.06s warm).
+3. core.base already lru_cached (was half of check_shorts). Dead end.
+4. serve.py compiles per POST with no cache -- but it is an interactive
+   editor on tiny recipes, not a felt path; caching adds statefulness
+   nobody asked for. Dropped per rung 1.
+5. snapshot.py is off by default, IO-bound. Dropped per rung 1.
+6. Gates re-earned: export.py self-test ok (packed-states round-trip),
+   diff_engine ALL IDENTICAL on this HEAD (incl 1c17e24).
+
+Loop verdict, no code shipped: every remaining surface is measured-fast,
+suspended-by-null (argmax 0.2%), cut-with-evidence (bit-parallel),
+witness-gated (router ladder-memory), word-gated (COMPOSE_SECS 600), or
+GA-live (engine/compose/verify). Forcing a diff now would be the smallest
+change in the wrong place. Standing orders until the box quiets:
+poll GA pid 6236 (light `Get-Process -Id 6236` only); when it exits,
+re-run the identical-code null; if it reads 1.00x the micro-opt loop
+reopens (argmax-gated level edges first, interleaved A/B only).
