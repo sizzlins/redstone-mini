@@ -27,6 +27,45 @@ import simvec
 from recipe import parse_recipe
 
 
+def _same_program(a, b):
+    """AST equality (comments/whitespace-blind). Same test as refdrift.py."""
+    import ast
+    return ast.dump(ast.parse(a)) == ast.dump(ast.parse(b))
+
+
+def _freeze_ok():
+    """Refuse to compare when the comparison is meaningless (exit 2).
+
+    Two lies this prevents, both previously paid for in sessions:
+    a ref frozen before a physics change cries wolf on a correct
+    optimisation, and an UNCOMMITTED sim.py experiment FAILs a tree that
+    goes green after commit+mkref. Only sim.py is frozen, so only sim.py
+    is checked -- scratch dirt never trips it. Fail-open if git is down.
+    """
+    import subprocess
+    root = r"D:\redstone-mini"
+    try:
+        head = subprocess.run(["git", "show", "HEAD:sim.py"], cwd=root,
+                              capture_output=True, check=True,
+                              encoding="utf-8", errors="strict").stdout
+    except Exception as e:                        # noqa: BLE001
+        print("freeze check skipped (git unavailable: %s)" % e, flush=True)
+        return True
+    ref = open(root + r"\scratch\ref_sim.py", encoding="utf-8").read()
+    i = ref.index('"""', ref.index('"""') + 3) + 3
+    body = ref[i:].lstrip("\r\n").replace("\r\n", "\n")
+    if not _same_program(body, head.replace("\r\n", "\n")):
+        print("STALE REF: scratch/ref_sim.py differs from HEAD:sim.py -- "
+              "run scratch/mkref.py, then re-run", flush=True)
+        return False
+    live = open(root + r"\sim.py", encoding="utf-8").read()
+    if not _same_program(live, head.replace("\r\n", "\n")):
+        print("UNCOMMITTED sim.py: worktree differs from HEAD -- commit, run "
+              "scratch/mkref.py, then re-run", flush=True)
+        return False
+    return True
+
+
 def cmp_run(a, b, tag):
     """Exact comparison of two _run_vec results (or two exceptions)."""
     if isinstance(a, BaseException) or isinstance(b, BaseException):
@@ -98,6 +137,8 @@ def case(blocks, io, vec, tag):
 
 def main():
     n = int(sys.argv[1]) if len(sys.argv) > 1 else 4
+    if not _freeze_ok():
+        return 2
     allok = True
     print("== alu4 (34672 blocks, 1024 vectors) ==", flush=True)
     r = parse_recipe(open(r"D:\redstone-mini\scratch\cand_alu4hier.txt").read())

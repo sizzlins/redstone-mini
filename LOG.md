@@ -5524,6 +5524,24 @@ alu4merge_g, easy vec0 + hard vec585:
   (the 1M-dict.get era is confirmed dead), 126 _lev_s, 63 _comp_out_s.
 - Dust no-change fraction: 44.4% easy, 44.1% hard (~50-62k evals/vector).
 
+SHIPPED: diff_engine freeze pre-check (2026-10-06; gate lies loudly no more)
+
+Two session-eating lies, both documented in-tree (Note 5, LOG 10-04/10-05):
+a stale ref cries wolf on a correct optimisation, and an uncommitted
+sim.py experiment FAILs a tree that goes green after commit+mkref.
+diff_engine.main() now runs _freeze_ok() first: AST-compare (comments/
+whitespace-blind, same test as refdrift.py) ref_sim body vs HEAD:sim.py
+and worktree sim.py vs HEAD:sim.py. Mismatch -> message + exit 2
+(distinct from 1 = diverged), telling the runner exactly what to do
+(run mkref.py / commit + mkref). Only sim.py is checked, so GA's scratch
+dirt never trips it. Fail-open if git is down. coldstart treats rc != 0
+as step-fail, so a stale gate now fails loud with instructions.
+
+Verification: _same_program unit (code->False, comment/whitespace->True);
+clean-tree integration (check silent, ALL IDENTICAL, exit 0, twice);
+stale/dirty branches covered by unit core (repo files untouched -- no
+safe way to stage a stale ref without touching shared files).
+
 Verdict PARKED: no-change evals never wake anyone, so the waste is only
 the eval itself (~0.5us x 62k ~= 30ms of a ~500ms vector, ~=6% ceiling for
 a PERFECT skip rule). Argmax, the only known schedule-time rule, captures
