@@ -1,7 +1,9 @@
 # handoff (2026-10-05 — send this to the next session)
 
-Single entry point. Detail lives in `notes/handoff-opt2 agent.md` (this
-session), `notes/handoff-opt agent.md` (previous speed session),
+Single entry point. Detail lives in `notes/handoff-night-loop.md` (latest
+session: warm chains, numba opt-in, add8 65k green, router autopsy),
+`notes/handoff-opt2 agent.md` (prior speed session),
+`notes/handoff-opt agent.md` (previous speed session),
 `MORNING-REPORT.md` (repo root, operator-facing), and the repo-root `LOG.md`
 (append-only trace). Branch `phase2-design`, shared with a co-tenant agent —
 see "shared tree" at the end.
