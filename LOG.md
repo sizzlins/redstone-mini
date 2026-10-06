@@ -5344,4 +5344,58 @@ distant points across a dense field. Declaring them as cross-band nets and
 letting the existing stitch route them reuses the one path in this codebase
 that is proven over that distance, instead of hand-rolling a second router.
 That is the next piece of work, and it is a change to `hier_bands` spec
-generation, not to the router.
+generation, not to the router.## Bank lamps: 7/9 routed, and the resulting build FAILS both engines
+
+Reporting this as a failure, not a step forward.
+
+`bank_rows.py` reuses the one pattern that demonstrably carries the lever bank's
+own 16 inputs across this 2,000-wide field (compose.py:3377): **pre-stamp the
+long straight rows, then route only short drops.** By that method:
+
+- all 9 rows stamped cleanly
+- 7 of 9 nets routed their drops and got a lamp: S0 S1 S2 S3 S6 S7 COUT
+- S4 and S5 refused every lamp latitude
+- whole thing runs in **32 seconds**, repeatably
+
+Then the project's own gate:
+
+```
+doc: 47169 blocks, 16 vectors (SAMPLED)
+SIM : ok=False   CMC : ok=False
+DUAL-ENGINE VERDICT: FAIL
+```
+
+So the 7 lamps are geometrically placed and the adder they were added to no
+longer computes. **Not shippable.**
+
+**Why, and it is structural rather than a tuning problem.** The lamps go at the
+levers, and the levers' own latitude band is where the bank already routes its
+16 input rows: for the pitch-2 add8 bank the levers sit at z=3..33 and each
+input's stub runs east along its own row. My drops came down the x=8 corridor
+and then ran west along z=17..33 -- straight down that occupied corridor. The
+lamp position the user wants and the corridor the composer needs are the same
+strip of ground.
+
+That is the real constraint, and it is why three earlier attempts failed too: it
+is not the router, it is that **there is no free lane at the lever latitude.**
+A working version has to bring the nine signals in ABOVE or BELOW the bank rows
+(y=2 over the corridor, or a reserved street clear of z=3..33) and drop a
+repeater into each lamp from there.
+
+Also fixed along the way, all mine, all recorded because they cost time:
+- `lwire` MUTATES the field (repeaters, supports) even when it finally raises,
+  so any retry loop starts from a polluted field. An adaptive "try the next
+  lamp latitude" loop scored **1/9** for that reason alone. One attempt per net.
+- the first net to use the shared drop corridor owns it: COUT first scored 1/9,
+  westernmost-first scored 7/9.
+- z=23 and z=25 can never carry a wire -- they sit BESIDE the z=24 trunk, and
+  `stamp_wire` refuses a wire with a foreign net beside it.
+- my ad-hoc `_run_vec` readout said every lamp was dark, including the 16
+  indicators that were provably fine. The harness was wrong, not the build:
+  `verify2.py` is the authoritative path and the correct one to trust.
+
+**Standing state:** add8 at 44,650 blocks is 19/19 green LIVE on real redstone,
+the lever pitch is a permanent ladder, the pin mechanism is fixed and gated.
+The nine sum lamps at the levers remain the one open item, now with the
+obstruction identified: the lamp strip and the input corridor are the same
+ground, so the signals must arrive from a different altitude.
