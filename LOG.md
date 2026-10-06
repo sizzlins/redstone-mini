@@ -5465,3 +5465,49 @@ change in the wrong place. Standing orders until the box quiets:
 poll GA pid 6236 (light `Get-Process -Id 6236` only); when it exits,
 re-run the identical-code null; if it reads 1.00x the micro-opt loop
 reopens (argmax-gated level edges first, interleaved A/B only).
+
+## SHIPPED: tbl_diff order-bias fix (2026-10-06; null 1.53x -> 0.97x)
+
+The 1.53x null was not thermal noise. Root causes, both in the harness:
+1. Old-always-first per-vector ordering: the second engine won every pair
+   via warmup effects (page cache, arenas, boost), baking second-wins bias
+   into all ratios. Fix: alternate order per vector (old,new / new,old),
+   accumulate by ENGINE.
+2. One-time costs in the timed phase: each engine's tables build (~1.5-2.2s
+   on alu4) landed inside its first timed call and swamped the sim signal
+   on short runs. Fix: build both tables up front (timed separately,
+   REPORTED, not ratio'd) + one untimed warmup vector per engine. Timed
+   loop now measures steady-state per-vector cost only.
+3. sim._BOUT (process-global burnout counter) was cleared before the OLD
+   run only, so the NEW run always saw a hotter counter. Fix: clear before
+   EACH engine run (ONLY modes already did).
+
+File: scratch/tbl_diff.py (my lane instrument; nothing imports it, no
+fingerprint covers it, GA never runs it). Engine untouched.
+
+Verification (all single-process, bounded, seconds each):
+- Null REDSTONE_TBLDIFF_REF=simvec, 8 spread vectors: 0.97x IDENTICAL
+  (was 1.53x). Repeats: 0.96x, 1.01x on fault-control runs' untainted side.
+- Fault controls still red: FAULT=ticks -> DIVERGED exit 1 (4/4 vectors,
+  incl odd-order ones, proving the swapped compare path); FAULT=lamp ->
+  DIVERGED exit 1.
+- ONLY=new mode intact. Default REF (real simvec_old module): 4.26x
+  IDENTICAL, divergences=0 (sanity: old tuple engine is slower, as known).
+
+Consequence: micro-opt measurement is trustworthy again even on a loaded
+box (null band now ~0.96-1.01x). The suspend rule stays but its trigger is
+now honest: ship only wins that clear the null band with margin (>~10%),
+not >20%. Argmax (0.2% proven) stays parked: re-measuring it would burn
+GA-contended CPU to confirm a known no-op. NOT implementing it is the
+correct call, recorded here so nobody re-derives it.
+
+Sketch-folder recon (read-only; GA files not opened past names):
+- scratch/verify_breakdown.py: ran 8 easy vectors serial, mean 0.50s,
+  max/min 1.4x on loaded box. Confirms spread/hard vectors set sweep wall;
+  no new action (chunking already handles it).
+- scratch/poolcost.py: read only (spawns 16 workers; will not run while
+  GA holds 16).
+- scratch/bench_scalar.py: pre-existing syntax error line 59
+  (`flush=True)` paren) in the non-spread tail; spread mode exits before
+  it. Noted, not fixed: no current consumer, no churn without a reader.
+- GA still live (6236 + 16 workers ~355s CPU each); his files untouched.

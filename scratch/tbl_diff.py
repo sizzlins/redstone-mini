@@ -78,6 +78,28 @@ def main():
 
     told = tnew = 0.0
     bad = 0
+    # ponytail: the timed loop below measures STEADY-STATE per-vector cost
+    # only. Two one-time costs used to swamp it: each engine builds its tables
+    # (~1.8s on alu4) inside its first timed call, and the first vectors run
+    # cold (page cache, malloc arenas, boost ramp) while later ones run hot.
+    # With old-always-first ordering the second engine won every null by up
+    # to 1.53x on identical code. So: build both tables up front (timed
+    # separately, reported, not ratio'd), run one untimed warmup vector per
+    # engine, then alternate run order per vector (old,new / new,old) and
+    # accumulate by ENGINE, not position. The null must read ~1.00x.
+    t = time.monotonic()
+    simvec_old._tables(P)
+    t_tables_old = time.monotonic() - t
+    t = time.monotonic()
+    simvec._tables(P)
+    t_tables_new = time.monotonic() - t
+    _wvec = {ins[j]: (idxs[0] >> j) & 1 for j in range(len(ins))}
+    if hasattr(sim, "_BOUT"):
+        sim._BOUT.clear()
+    simvec_old.run_scalar(_wvec, P)
+    if hasattr(sim, "_BOUT"):
+        sim._BOUT.clear()
+    simvec.run_scalar(_wvec, P)
     # Negative control: a differ that has never reported a difference is not
     # evidence, it is an untested hypothesis. REDSTONE_TBLDIFF_FAULT=<field>
     # corrupts ONE value in the NEW result so the harness must go red.
@@ -87,7 +109,7 @@ def main():
     # counter, so whichever runs second sees a hotter counter -- a way to turn
     # a harness artefact into an apparent physics divergence.
     only = os.environ.get("REDSTONE_TBLDIFF_ONLY", "")
-    for i in idxs:
+    for pos, i in enumerate(idxs):
         vec = {ins[j]: (i >> j) & 1 for j in range(len(ins))}
         if only == "old":
             if hasattr(sim, "_BOUT"):
@@ -103,14 +125,26 @@ def main():
             print(f"vec{i:5d} NEW-only ticks={b[3]:5d} live={len(b[1]):6d} "
                   f"lamps={sum(1 for v in b[0].values() if v)}", flush=True)
             continue
+        # ponytail: alternate run order per vector and clear the shared
+        # sim._BOUT before EACH engine run. Old-always-first baked a
+        # second-wins warmup bias into every ratio, and the burnout counter
+        # is process-global, so the second engine also saw a hotter counter.
+        ra = simvec_old.run_scalar
+        rb = simvec.run_scalar
         if hasattr(sim, "_BOUT"):
             sim._BOUT.clear()
         t = time.monotonic()
-        a = simvec_old.run_scalar(vec, P)
-        told += time.monotonic() - t
+        first = ra(vec, P) if pos % 2 == 0 else rb(vec, P)
+        t_first = time.monotonic() - t
+        if hasattr(sim, "_BOUT"):
+            sim._BOUT.clear()
         t = time.monotonic()
-        b = list(simvec.run_scalar(vec, P))
-        tnew += time.monotonic() - t
+        second = rb(vec, P) if pos % 2 == 0 else ra(vec, P)
+        t_second = time.monotonic() - t
+        if pos % 2 == 0:
+            a, b, told, tnew = first, list(second), told + t_first, tnew + t_second
+        else:
+            b, a, tnew, told = list(first), second, tnew + t_first, told + t_second
         if fault == "ticks":
             b[3] = b[3] + 1
         elif fault == "live" and b[1]:
@@ -133,6 +167,8 @@ def main():
 
     print(f"\n{n} vectors: old {told:.2f}s  new {tnew:.2f}s  "
           f"speedup {told/max(1e-9,tnew):.2f}x  divergences={bad}")
+    print(f"tables build (one-time, excluded from ratio): "
+          f"old {t_tables_old:.2f}s  new {t_tables_new:.2f}s")
     if bad:
         print("TBL DIFF: DIVERGED")
         sys.exit(1)
