@@ -5511,3 +5511,23 @@ Sketch-folder recon (read-only; GA files not opened past names):
   (`flush=True)` paren) in the non-spread tail; spread mode exits before
   it. Noted, not fixed: no current consumer, no churn without a reader.
 - GA still live (6236 + 16 workers ~355s CPU each); his files untouched.
+
+## Census: no-change fraction (2026-10-06; parked with numbers, no surgery)
+
+Question: do the remaining evals have skip headroom? Method: zero file
+changes -- cProfile for exact call counts + monkeypatch wrappers counting
+value-changed vs same (physics untouched, wrappers restored after).
+alu4merge_g, easy vec0 + hard vec585:
+
+- 385k function calls/hard-vector: 154k list.append (wake queue, 40%),
+  142k _dust_lvl_s, 69k _cob_state_s, 13k _rep_on_s, 299 dict.get
+  (the 1M-dict.get era is confirmed dead), 126 _lev_s, 63 _comp_out_s.
+- Dust no-change fraction: 44.4% easy, 44.1% hard (~50-62k evals/vector).
+
+Verdict PARKED: no-change evals never wake anyone, so the waste is only
+the eval itself (~0.5us x 62k ~= 30ms of a ~500ms vector, ~=6% ceiling for
+a PERFECT skip rule). Argmax, the only known schedule-time rule, captures
+0.2% of it. The gap needs per-edge dirty-bit propagation (wake-graph
+surgery + full-gate proof + engine edit while GA is live) for under 10%.
+Do not re-derive: the 44% is real but unreachable cheaply; revisit only
+with a rule design in hand AND a quiet box AND GA's sweep done.
