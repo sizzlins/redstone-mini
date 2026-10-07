@@ -5618,6 +5618,30 @@ measurement, not hope: dust=34% at ~10x in C gives ~30% vector; the rest
 That is a multi-day build with its own 6-field gate per function --
 queued, not started.
 
+## EVO COOPERATION (2026-10-07; his campaign live, my edit parked uncommitted)
+
+- Found pid 23648: `evolve.py recipes/example_and.txt scratch/evo_pilot 3 0`
+  (pilot, 3 evals). Alive and progressing (log advanced to baseline
+  `verifies=True blocks=(144, 5)` during my watch; (144,5) tuple = his
+  REDSTONE_EVO_TICKS=1 path, not mine). His files/processes/workdir
+  untouched; nothing committed on his behalf.
+- My evolve.py worktree edit is ADDITIVE-ONLY (new _vec_equiv/_input_cols/
+  _eval_cols + functools import; call sites still on equivalent()).
+  Any process importing the file behaves bit-identically to before.
+  LEFT UNCOMMITTED on purpose: the 2-line call-site swap + commit wait
+  for his campaign to end. Merge-ready state recorded here.
+- PROOF (TEMP script, zero repo impact): columns exact n=1..8;
+  400/400 random-net agreements; LATCH/cycle fallbacks agree (incl same
+  exception type); alu4-10in 0.10s -> 0.00s; synthetic-16in 6.52s -> 0.03s
+  (217x). O(2^n) env-dicts -> O(gates) big-ints, exact.
+- Drive-by findings, NOT acted on (his lane, his call): topo() rejects
+  constant args ("0"/"1" fail the done-set test), so const-using mutants
+  die before equivalent ever sees them -- and no recipe in recipes/
+  uses consts, so the path is consistent today. Also the batch-gen
+  `while len(batch) < PERGEN` loop has no try-cap (his 684 CPU-s on a
+  3-eval pilot is consistent with spin, though it is progressing).
+  Both queued as his decisions, not my edits.
+
 ## 2026-10-06 (gates/builds lane): bank lamps DONE 9/9, 65536/65536
 
 Operator request completed: the 9 sum wires run to the lever row and end
@@ -5694,3 +5718,57 @@ needs opt's lane to be quiet first.
   three lanes quiet. Staged plan: `gates/` + `rig/` + `scratch/evo/`
   moves with import/path updates, verified by coldstart, when directed.
 - Verified: `coldstart --quick` 16/16 green after the reorg.
+
+## 2026-10-06 (rig saga: killer signs, server deaths, read flakiness)
+Pasted bank build at world z+1100 (fresh region, verified empty,
+forceloaded 16/16). What followed, in order:
+1. bank lamps dark + indicators wrong, sums right. Root cause, TWO:
+   (a) all 34 lamp lines sit in ONE paste chunk (bank6) that never
+   executed under saturation ("no response" = dropped); (b) the EXPORT
+   placed dense-lamp signs ON the next lamp (S1's sign on S0's lamp,
+   B0's on A0's -- lamp_off=(0,2) at 2-pitch). Fixed export.py
+   label_lines (pin+block avoid set, fallback offsets, pads skipped on
+   occupied y=0); sign audit 0 collisions; old sparse layouts
+   byte-identical except moved killer signs.
+2. Server died 3x: watchdog on 1500-fill clear (my fills, owned), then
+   twice silent (no log, no crash report). Fresh region + repaste +
+   per-chunk verification (38 chunks, all lamp/lever/sign lines checked).
+3. One CONFIRMED stale-link heal: adjacent dust 15-vs-0 at c7a's run,
+   fixed by air+restore nudge (identical repastes can't heal: no state
+   change = no neighbor updates). COUT lamp followed.
+4. CAVEAT on all fine live verdicts after that: single-shot RCON reads
+   FLIP (same cell wire/12, then air, then wire/12 minutes apart, no
+   writer). Late-vector reds + the whole S2/S7/x7/A7 chase below are
+   UNSOUND until reads are retried/quorum. Harness fix for next time:
+   retry every read 3x, treat persistent-fail as real (lever readback
+   already does this; lamp/dust reads do not).
+5. Standing evidence (multi-method, sound): design sim+cmc+exhaustive
+   green on exact bytes; bank machinery live green vec0-7 (sums+bank+
+   indicators, incl. operator's own run); killer-sign mechanism
+   (file+disk+type); power-cycle completed clean; presence 120/120,
+   200/200 east, 38/38 chunks, 60/60 criticals.
+6. NOT claimed: full-19 live green. Needs: healthy server (dies
+   unexplained -- check Event Viewer/RAM; my per-command RCON pattern
+   made 18k+ threads, now using one persistent connection), then
+   re-run the proof with retried reads. Operator ran live_lean
+   themselves: vec0-7 GREEN.
+
+## 2026-10-06 (rig: 19/19 LIVE GREEN + repair tally)
+The proof completed: all 19 vectors green live at z+1100 (sums +
+bank + indicators, lever readback every vector), incl. 255+255 = 510
+with COUT. The bank lamps the operator asked for work in real
+Minecraft, overflow included.
+Repairs since the last entry (each verified lamp-lit before/after):
+stale dust links healed by air+exact-restore at c7a, C1-nb, c1a,
+c2a-c6a corners (4), C1 booster outputs (2); missing wire+pad cells
+placed at (267,143), (545,143), (823,143), (1657,143), (1379,143); one
+side-locked booster replaced on x7's run. Total ~14 interventions, all
+the same two classes: paste gaps (missing blocks) and lost neighbor
+updates (present-but-disconnected) from the saturated first paste.
+Self-inflicted wounds owned: my power-cycle ran at UNTRANSLATED coords
+(forgot +1100) -- cycled dust near spawn instead of the build and may
+have touched old regions; ghost dust documented in the scrap zone, old
+builds verified untouched (proven build safe at z 803+, ghost z<403).
+Server died 5x total (1 watchdog on my fills, 4 silent); -Xmx6G, one
+persistent RCON connection per script from here on. Never giant fills,
+never 6000-command chunks under load again (2000 max, verified).
