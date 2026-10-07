@@ -38,8 +38,8 @@ spacing are done. The bank lamps are not, and §5 says exactly why.
 | **add8 + 16 lever indicators** | **GREEN LIVE, 44,650 blocks** | **19/19 vectors in real Minecraft**, overflow included |
 | full coldstart | **16/16 green** | new `pin_lamp` gate added |
 | lever spacing | **DONE, permanent** | pitch ladder: alu1 settles at 2, alu4 at 10 |
-| signs | **DONE in the exports** | 42 labels in `build_add8.*`; NOT pasted on the rig |
-| sum lamps at lever row | **NOT DONE** | 7/9 route geometrically, build then FAILS both engines |
+| signs | **DONE in the exports** | 50 labels in `build_add8bank.*`; NOT pasted on the rig |
+| sum lamps at lever row | **DONE, 9/9 green** | bank platform at merge x=-8, z=-99..-83 (block x=0, z=5..21): bank_lamp_check 0 wrong 16v; verify2 DUAL PASS sim+cmc 64v, 0/2M cells differ; verify_par 65536/65536; `build_add8bank.*` exported (75,599 blocks) |
 | alu8 | all 8 bands route (first time) | merge oscillates: churn 52,985, max_gap 205,950 |
 | cpu4 | red by inheritance, untouched | other lane |
 
@@ -48,6 +48,7 @@ spacing are done. The bank lamps are not, and §5 says exactly why.
 | region | what | state |
 |---|---|---|
 | **z 803..973** | **add8 pitch-2 + 16 indicators** | **19/19 green** — `/tp 2 68 818` |
+| **z 1103..1503** | **add8 + 9 bank lamps + 16 indicators + 50 signs (75,599 blocks)** | **19/19 vectors green live** (sums + bank + indicators, lever readback) — `/tp 2 70 1118` |
 | z 404..483 | add2opt | re-pasted, intact |
 | z 303..403 | orphaned first add8 paste | ignore |
 | z 3..293 | four-deep stale add8 debris | **ignore** — four copies stacked |
@@ -59,7 +60,13 @@ observers — so there is no tick-dependent failure mode.
 Harness to trust: `scratch/live_check.py` (reads every lever back, 20s settle,
 checks 16 indicators + 9 sum lamps). **Do not use `rig_read.py` for anything
 big** — it never reads the levers back and settles too briefly, so a slow carry
-chain reads as a wrong bit.
+chain reads as a wrong bit. For bank builds the settle must cover the ~2000-cell
+bank runs (~250 boosters ≈ 25s+ transit alone): poll-to-stable (two consecutive
+correct reads), not a fixed sleep. Lever sets must clear to air first
+(`setblock` on an existing lever returns "Could not set the block").
+Single-shot RCON reads FLIP under load — retry every read 3x and treat only
+persistent failure as real; one persistent RCON connection per script (a
+connection per command made 18k+ server threads and killed the server 4x).
 
 ---
 
@@ -166,13 +173,22 @@ directional source in both engines).
 
 ## 5. What we should do next
 
-**1. Bank lamps: change the altitude, not the plan.** The routing method is
-proven; only the approach corridor is wrong. Bring the nine signals in **above
-or below the bank rows** — a reserved street clear of z=3..33, or y=2 over the
-corridor — then drop a repeater into each lamp from there. Lamps stay at
-z=17..33, one block apart, which is inside the lever row's span. Expect ~2,500
-blocks for the nine runs. **Verify with `verify2.py` before anything else**;
-routing successfully is not correctness.
+**1. Bank lamps: DONE 2026-10-06, west-margin platform.** The "structural
+obstruction" (lamp strip IS the input corridor) is RETRACTED: it mixed
+block-frame lever latitudes (z=3..33) with merge-frame drop coordinates.
+Real fix, four bugs, all in `scratch/bank_rows.py` (zero engine files):
+frame-fixed rehydration (shift=(8,104), 19088/19088 gate), wire/repeater
+block emission (stamp_wire fills dicts only -- the dump shipped zero new
+electrical blocks), tap beside the lamp (not on its cell), booster
+planting (lwire plants none; 2000-cell rows arrive dark), lamp-cell
+reservation, one drop column per net. Lamps at merge (-8, -99..-83),
+alongside the levers in the empty west margin, zero crossings by
+construction (eastern-first + staggered row-ends + monotonic lanes/lamps,
+proof in LOG). Reproduce: `python scratch/bank_rows.py` (9/9, seconds)
+then `python scratch/bank_lamp_check.py` (0 wrong). Also fixed while
+there: `bank_lamp_check` fed the sim all-zero input forever
+(`{n for _, n in levers.values()}` unpacks 'A0' into chars) and used
+3-tuple lamp keys -- every prior "84 wrong" was the harness, not the build.
 
 **2. Paste the labelled export on the rig.** The 42 signs exist in
 `build_add8.mcfunction` / `.schem` but the rig copy was pasted as raw blocks, so

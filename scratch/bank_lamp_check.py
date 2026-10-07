@@ -33,12 +33,14 @@ def main():
     if d.get('failed'):
         print('ABSENT : %s  (routed no lamp -- stated, not hidden)' % d['failed'])
 
-    # register the new lamp cells so sim reads them
+    # register the new lamp cells so sim reads them (2-tuple keys, the io
+    # convention: a 3-tuple key maps to the wrong cell in _parse_build and
+    # reads dark -- measured, not assumed).
     lamps = dict(io['lamps'])
     new_cells = {}
     for name, _lane, lamp in placed:
         cell = (lamp[0], 1, lamp[1])
-        lamps[cell] = name + '@bank'
+        lamps[(lamp[0], lamp[1])] = name + '@bank'
         new_cells[name] = cell
     io['lamps'] = lamps
 
@@ -46,11 +48,14 @@ def main():
     P = _parse_build([tuple(b) for b in blocks], io)
     levers = io['levers']
     bits = ['A%d' % i for i in range(8)]
+    # ponytail: only check readouts that exist. out.get on an absent lamp is
+    # None, which reads as "wrong" whenever the bit is 1 -- a gate that fails
+    # on builds without indicators proves nothing about this build.
 
     bad = 0
     for v in VECTORS:
         vec = {n: (v >> i) & 1 for i, n in enumerate(bits)}
-        full = {k: vec.get(k, 0) for k in {n for _, n in levers.values()}}
+        full = {k: vec.get(k, 0) for k in set(levers.values())}
         out, live, _, _, _, _ = _run_vec(full, None, P)
         exp = v
         line = []
@@ -62,7 +67,9 @@ def main():
             if got != want:
                 bad += 1
                 line.append('%s=%s(want %s)' % (name, got, want))
-        ind = [n for n in bits if bool(out.get(n + 'L')) != bool(vec[n])]
+        ind = [n for n in bits
+               if (n + 'L') in set(lamps.values())
+               and bool(out.get(n + 'L')) != bool(vec[n])]
         if ind:
             bad += len(ind)
             line.append('indicators wrong: %s' % ind)

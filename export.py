@@ -134,7 +134,7 @@ def sign_snbt(text, kind="minecraft:oak_sign", facing=None):
                                       msgs, blk))
 
 
-def label_lines(io, oy=64, lever_off=(-2, 0), lamp_off=(0, 2)):
+def label_lines(io, oy=64, lever_off=(-2, 0), lamp_off=(0, 2), blocks=None):
     """(stone pad, sign) setblock lines labelling every lever and lamp.
 
     Signs, not lamps: a label must not cost redstone. One stone pad + one
@@ -142,21 +142,53 @@ def label_lines(io, oy=64, lever_off=(-2, 0), lamp_off=(0, 2)):
     changes no power path -- sim and cmc see the same circuit before and
     after. Positions are offsets in the BUILD frame, so the caller gets them
     for free from io.
+
+    ponytail: a sign must never land on another pin. With 2-pitch lamps the
+    default offset puts each sign exactly on the next lamp (measured: S1's
+    sign sat on S0's lamp and B0's on A0's, burying both -- the lamps read
+    dark forever). Fall back through neighbour offsets to the first cell
+    that holds no lever or lamp, loudly. Sparse layouts take the default
+    and come out byte-identical.
+
+    With blocks= (the caller's block list) the avoid set extends to every
+    y==1 cell and anything above it: a sign replacing a wire/repeater kills
+    the net, and pulling floor stone from under a pillar pops the pillar.
+    Pads are skipped where y==0 is already occupied (support exists).
+    blocks=None keeps the old pins-only behaviour.
     """
-    lines = []
-    for key, name in sorted((io.get("levers") or {}).items(), key=str):
-        x, z = int(key[0]), int(key[1])
-        px, pz = x + lever_off[0], z + lever_off[1]
-        lines.append("setblock %d %d %d minecraft:stone" % (px, oy, pz))
-        lines.append("setblock %d %d %d %s" % (px, oy + 1, pz,
-                                              sign_snbt(name)))
-    for key, name in sorted((io.get("lamps") or {}).items(), key=str):
+    def pin_cell(key):
         k = tuple(key) if isinstance(key, (list, tuple)) else (key,)
-        lx, lz = k[0], k[1] if len(k) == 2 else k[2]
-        px, pz = lx + lamp_off[0], lz + lamp_off[1]
-        lines.append("setblock %d %d %d minecraft:stone" % (px, oy, pz))
+        return (int(k[0]), int(k[1]) if len(k) == 2 else int(k[2]))
+
+    pins = ([(pin_cell(k), lever_off, n)
+             for k, n in sorted((io.get("levers") or {}).items(), key=str)]
+            + [(pin_cell(k), lamp_off, n)
+               for k, n in sorted((io.get("lamps") or {}).items(), key=str)])
+    taken = {(x, z) for (x, z), _, _ in pins}
+    y0occ = set()
+    if blocks is not None:
+        for x, y, z, _b in blocks:
+            if y == 1 or y == 2:
+                taken.add((x, z))
+            if y == 0:
+                y0occ.add((x, z))
+    lines = []
+    for (x, z), off, name in pins:
+        spot = None
+        for dx, dz in (off, (0, -2), (2, 0), (-2, 0), (0, 1), (0, -1),
+                       (1, 0), (-1, 0), (0, 3), (0, -3)):
+            if (x + dx, z + dz) not in taken:
+                spot = (x + dx, z + dz)
+                break
+        if spot is None:
+            print('label_lines: NO FREE CELL for %s near (%d,%d)' % (name, x, z))
+            continue
+        taken.add(spot)
+        px, pz = spot
+        if (px, pz) not in y0occ:
+            lines.append("setblock %d %d %d minecraft:stone" % (px, oy, pz))
         lines.append("setblock %d %d %d %s" % (px, oy + 1, pz,
-                                              sign_snbt(name)))
+                                               sign_snbt(name)))
     return lines
 
 
@@ -172,7 +204,7 @@ def export_mcfunction(blocks, path, oy=64, io=None):
             f.write(f"setblock {x} {oy + y} {z} {full_state(bid)}\n")
         if io:
             f.write("# --- labels: stone pad + sign per pin, no redstone ---\n")
-            for line in label_lines(io, oy):
+            for line in label_lines(io, oy, blocks=blocks):
                 f.write(line + "\n")
 
 

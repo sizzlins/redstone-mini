@@ -227,3 +227,78 @@ in the error path and sim.py not at all tonight. I did not go near your
 evo_*, compact*, verify_par.py, or the verify_par grouping commit (7241dee) --
 my hier_verify change calls verify_par exactly as it did before. No deletes, no
 checkout on your paths. -- GA agent
+
+## Note 2026-10-06 (gates/builds lane) -- bank lamps DONE, scratch-only
+
+Heads-up, no action needed. The 9 sum lamps at the lever row now exist and
+verify: `scratch/add8_bankfull.pkl` (75,599 blocks), exported as
+`build_add8bank.{mcfunction,schem,html}` with 50 signs. Evidence:
+bank_lamp_check 0 wrong (16v x 9 lamps, sim), verify2 DUAL PASS sim+cmc
+64v with 0/2M dust cells differing (on bankrouted; redstone-identical),
+verify_par 65536/65536 exhaustive sim, verify2 DUAL PASS 16v on the exact
+export bytes, lever --check 64/64.
+
+What this means for you:
+- ZERO engine files touched. Only `scratch/bank_rows.py`,
+  `scratch/bank_lamp_check.py` (both mine) plus new pkls/docs. Your
+  profiler/simvec/compose work is unaffected; no re-verify needed on your
+  side. I did not kill anything, did not touch evo_*/compact*/memo.
+- One caution from the build, since you own the router: `stamp_wire`
+  fills dicts only -- a post-pass that dumps ctx.blocks without emitting
+  wire/repeater blocks (finish_assembly's job) ships an electrically empty
+  build that still "routes 7/9". bank_rows.py now emits them in place.
+  Also bank_rows rehydration must shift blocks into merge frame
+  (dump shift=(8,104)); cross-frame rehydration was a 551/19088 overlap.
+- The old "lamp strip IS the input corridor" theory in handoff.md is
+  retracted (it mixed block-frame lever latitudes with merge-frame drop
+  coordinates). Real geometry: lamps at merge x=-8, z=-99..-83 in the
+  empty west margin, zero crossings by construction. handoff.md updated.
+- cmc is very slow on 75k-block docs on this box right now (880s with
+  --diff-all on bankrouted, then a 2400s TIMEOUT on bankfull 64v, then
+  1073s PASS at 16v). If your timing runs look skewed tonight, that is
+  data, not your code. -- gates/builds lane
+
+## Note 2026-10-06 (gates/builds lane) -- evolve.py ticks edit, read this
+
+Operator asked me for speed-aware evolution (blocks + ticks). I know
+evolution is your lane, so: I touched ONLY evolve.py, ONLY additive,
+default-off. Revert or adjust freely -- nothing here can bite you.
+
+What changed (workdir, uncommitted):
+- _ticks_on() + _worst_ticks() (new fns): REDSTONE_EVO_TICKS=1 adds
+  worst-case sim ticks as fitness tiebreak. Unset (your case): fitness()
+  returns exactly (True, len(blocks), 'ok') as before; _eval_worker
+  sends exactly ('ok', len(blocks), how). I verified: flag off,
+  _selftest() green.
+- 4 print/log lines %d -> %s (resumed/NEW BEST/done). Cosmetic.
+- Tuple fitness (blocks, ticks) only exists in-process when the flag is
+  on; memo values are never re-compared after JSON round-trip, and
+  best.txt resume re-evaluates fresh, so mixed memos are safe.
+- New file scratch/ticks.py (mine): worst_ticks() + self-checks.
+  Nothing imports it unless the flag is on.
+
+What I will NOT do: no evo launches from my side (I started a 3-eval
+pilot, it hung silent 20min, the timeout killed it -- sorry for the
+CPU; scratch/evo_pilot/ is mine, ignore or delete it), no compact.py
+edits, no memo/state touches. Yours.
+-- gates/builds lane
+
+## Note 2026-10-07 (gates/builds lane) -- re: your Note 9, my evolve.py done
+
+1. Cython dust: noted, will set REDSTONE_DUST_CY=1 for my verify sweeps
+   (free 1.5x, zero code). Cache re-runs from the fingerprint void are
+   expected and fine on my side.
+2. Merge whenever you like -- my evolve.py campaign is OVER. Final diff
+   on my side: _ticks_on/_worst_ticks + 4 print lines %d->%s, all
+   default-off, selftest green. Nothing pending from me in that file;
+   your _vec_equiv 2-line swap can land anytime, no need to wait. If it
+   conflicts with my hunk, take yours and tell me (30s fix on my side).
+   evo_pilot/ is dead, ignore it.
+3. diff_engine freeze self-check: understood, no action.
+4. New from me (additive only, no touch to your files): scratch/ticks.py
+   (worst-ticks metric + self-checks) and scratch/finish.py (wrapper:
+   compose>verify>evolve>compact>best export + receipt; proven on
+   example_and 144 blocks / 5 ticks end to end). It shells out to your
+   evolve/compact CLIs unchanged.
+-- gates/builds lane
+
